@@ -36,6 +36,12 @@ connected and a channel chosen). Only approval_request, approved, rejected, fulf
 chosen channel prefixed "[Deskhand demo to <name>]", email only to DESKHAND_LIVE_EMAIL_OVERRIDE. Hard cap 40 per day (UTC). Chaos, tests and Reset demo
 never send live. Failed deliveries show on the Connections tab with a Retry button. Approvers click the link in the message to open their Deskhand inbox.
 
+## Hosted demo (Embarko)
+Embarko has no login, so the app has its own password gate (HTTP Basic, any user name, password in `DESKHAND_DEMO_PASSWORD`) on every route. When
+hosted and no password is set, nothing is served. Data lives in `DATA_DIR` (main.py points the database there). One process only.
+Environment variable names: DESKHAND_INTEGRATION, DESKHAND_LIVE_DELIVERY, DESKHAND_BASE_URL, DESKHAND_TENANT_ID, DESKHAND_LIVE_EMAIL_OVERRIDE,
+DESKHAND_DEMO_PASSWORD, VIASOCKET_ORG_ID, VIASOCKET_PROJECT_ID, VIASOCKET_EMBED_SECRET, VIASOCKET_API_URL, VIASOCKET_RUN_URL. No ANTHROPIC_API_KEY.
+
 ## What is NOT done or NOT verified
 - Real viaSocket integration (Slack, Gmail, Keka). See docs/VIASOCKET_INTEGRATION.md and milestones M1.5 and M8.
 - The Claude classification path (app/classifier.py: classify_anthropic) has never been run against the live API. It is

@@ -12,6 +12,47 @@ from .db import Store
 
 vs.load_dotenv()
 app = FastAPI(title="Deskhand prototype")
+
+# ---------------- Password gate for the hosted demo (Embarko has no login of its own) ----------------
+# HTTP Basic, password from DESKHAND_DEMO_PASSWORD (any user name). Applies to EVERY route, including /api and /docs.
+# Fails closed: when hosted (Embarko sets APP_NAME) or DESKHAND_REQUIRE_PASSWORD=on and no password is set, nothing is served.
+_gate_failures = []
+
+
+def _gate_required():
+    return bool(os.environ.get("DESKHAND_DEMO_PASSWORD")) or bool(os.environ.get("APP_NAME")) or os.environ.get("DESKHAND_REQUIRE_PASSWORD") == "on"
+
+
+@app.middleware("http")
+async def password_gate(request, call_next):
+    if not _gate_required():
+        return await call_next(request)
+    from fastapi.responses import PlainTextResponse
+    import base64
+    import hashlib
+    import hmac
+    import time
+    pw = os.environ.get("DESKHAND_DEMO_PASSWORD", "")
+    if not pw:
+        return PlainTextResponse("Deskhand is locked: no demo password is configured.", status_code=503)
+    now = time.time()
+    _gate_failures[:] = [t for t in _gate_failures if now - t < 60]
+    if len(_gate_failures) >= 20:  # crude brute-force brake: too many wrong tries in the last minute
+        return PlainTextResponse("Too many attempts. Wait a minute.", status_code=429)
+    given = ""
+    h = request.headers.get("authorization", "")
+    if h.lower().startswith("basic "):
+        try:
+            given = base64.b64decode(h[6:]).decode("utf-8", "ignore").partition(":")[2]
+        except Exception:
+            given = ""
+    ok = hmac.compare_digest(hashlib.sha256(given.encode()).digest(), hashlib.sha256(pw.encode()).digest())
+    if not ok:
+        if h:
+            _gate_failures.append(now)
+        return PlainTextResponse("Password required.", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Deskhand demo"'})
+    return await call_next(request)
+
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 engine = Engine(Store(os.environ.get("DESKHAND_DB", "deskhand.db")))
 engine.live = dl.Delivery(engine)  # live delivery is OFF unless an admin switches it on (and the integration mode is viasocket)

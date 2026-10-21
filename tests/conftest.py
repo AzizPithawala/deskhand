@@ -17,6 +17,6 @@ def e():
 @pytest.fixture(autouse=True)
 def _no_live_anything(monkeypatch):
     """Tests never deliver live: delivery and the integration are forced to their safe defaults, and no worker thread runs."""
-    for k in ("DESKHAND_LIVE_DELIVERY", "DESKHAND_INTEGRATION", "DESKHAND_LIVE_EMAIL_OVERRIDE"):
+    for k in ("DESKHAND_LIVE_DELIVERY", "DESKHAND_INTEGRATION", "DESKHAND_LIVE_EMAIL_OVERRIDE", "DESKHAND_DEMO_PASSWORD", "APP_NAME", "DESKHAND_REQUIRE_PASSWORD"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("DESKHAND_DELIVERY_WORKER", "off")
