@@ -81,5 +81,10 @@ VERIFIED
 - App search `GET flow.sokt.io/func/scri12BSufQM?key=<name>` answers `{success, message, data:[...]}`, not a bare array as the skill text shows.
   Slack and Gmail each have one clear match (Slack's first hit is a lookalike named "slackkkk": pick by exact name, `Slack`).
 - Documents `documentation/<service_id>.md?format=http&org=..&project=..` download without sign-in for Slack and Gmail.
-UNVERIFIED (next, needs a person to sign in on the Connections tab)
-- Slack Get User Information and Send Message real responses; Gmail Send Email real response; enable/script_id behaviour; picker shapes.
+- Connect popup, enable and the Slack channel picker worked for a signed-in test account (connections list showed the connection, enable returned a runner).
+- Step 2a, Slack Send Message (action_version rowj2u3wc8h5) to the admin-picked channel: HTTP 200, body is Slack's own reply
+  `{ok:true, channel, ts, message:{...}, warning:"missing_charset"}` with no viaSocket envelope. Success needs `ok:true` and a `ts`.
+  The reply echoes our runner id (script_id) inside `message.metadata.event_payload`, so raw Slack replies must never be logged, shown or
+  returned. The adapter now returns only `ts` and `channel`, and every result is deep-scrubbed. The message arrived under the bot name "Deskhand".
+UNVERIFIED (next)
+- Slack Get User Information real response (found and not-found shapes); Gmail Send Email real response.

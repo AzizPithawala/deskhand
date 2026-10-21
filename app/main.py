@@ -337,4 +337,4 @@ def connection_test(b: ConnAct):
     else:
         raise HTTPException(404, "unknown test")
     engine.audit(None, b.actor_id, "integration_test", {"action": b.action, "mode": integ.mode, "outcome": r.kind, "code": r.code})
-    return {"mode": integ.mode, "outcome": r.kind, "code": r.code, "error": vs.redact(r.error), "data": r.data}
+    return {"mode": integ.mode, "outcome": r.kind, "code": r.code, "error": vs.redact(r.error), "data": vs.scrub(r.data)}

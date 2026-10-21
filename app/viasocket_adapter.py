@@ -63,6 +63,15 @@ def redact(text, extra=()):
     return _ID_LIKE.sub("[REDACTED]", out)
 
 
+def scrub(obj, extra=()):
+    """Deep-redact any structure before it is returned, logged or shown. Real Slack replies echo the runner id in message metadata."""
+    if isinstance(obj, dict):
+        return {k: ("[REDACTED]" if k in ("script_id", "auth_id", "proxy_auth_token") else scrub(v, extra)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [scrub(v, extra) for v in obj]
+    return redact(obj, extra) if isinstance(obj, str) else obj
+
+
 # ---------------- results ----------------
 SUCCESS, RETRYABLE, PERMANENT = "success", "retryable_failure", "permanent_failure"
 
@@ -317,6 +326,7 @@ class ViaSocketIntegration(Integration):
             return err
         r = self.client.run(c["script_id"], APPS[app]["actions"][action][0], input_data, expect)
         r.error = redact(r.error, self.conns.secrets())
+        r.data = scrub(r.data, self.conns.secrets())
         return r
 
     def slack_lookup_user(self, email):
@@ -336,8 +346,11 @@ class ViaSocketIntegration(Integration):
         channel = c["settings"].get("channel_id")
         if not channel:
             return Result(PERMANENT, error="No notification channel is chosen. Pick one on the Connections tab.", code="no_channel")
-        return self._run("slack", "send_message", {"destination": {"messageto": "channel", "channel_id": [channel]},
-                                                   "markdown_content": text[:3000], "bot_details": {"bot_name": "Deskhand"}}, _slack_sent_ok)
+        r = self._run("slack", "send_message", {"destination": {"messageto": "channel", "channel_id": [channel]},
+                                                "markdown_content": text[:3000], "bot_details": {"bot_name": "Deskhand"}}, _slack_sent_ok)
+        if r.ok:  # keep only what we need; the raw reply carries ids we must not pass on
+            r.data = {"ts": r.data.get("ts"), "channel": r.data.get("channel")}
+        return r
 
     def gmail_send(self, to, subject, body):
         c, err = self._conn("gmail")
@@ -346,7 +359,10 @@ class ViaSocketIntegration(Integration):
         data = {"to": to, "subject": subject[:200], "messageBody": body}
         if c["settings"].get("from"):
             data["from"] = c["settings"]["from"]
-        return self._run("gmail", "send_email", data, _gmail_sent_ok)
+        r = self._run("gmail", "send_email", data, _gmail_sent_ok)
+        if r.ok:
+            r.data = {"id": r.data.get("id"), "threadId": r.data.get("threadId")}
+        return r
 
 
 def get_integration(store, tenant=None):

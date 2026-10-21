@@ -210,3 +210,11 @@ def test_no_secret_or_viasocket_ids_in_client_code():
         assert bad not in html
     assert not re.search(r"\bscri[A-Za-z0-9]{6,}", html)
     assert not re.search(r"eyJ[A-Za-z0-9_-]{10,}\.", html)
+
+
+def test_slack_reply_that_echoes_the_runner_id_is_never_passed_on():
+    reply = {"ok": True, "ts": "1.2", "channel": "C1", "message": {"metadata": {"event_payload": {"script_id": SCRIPT}}}}
+    integ, _ = _integ(ok(reply), settings={("slack", "channel_id"): "C123"})
+    r = integ.slack_send("hello")
+    assert r.ok and SCRIPT not in json.dumps(r.data) and set(r.data) == {"ts", "channel"}
+    assert SCRIPT not in json.dumps(vs.scrub(reply)) and "[REDACTED]" in json.dumps(vs.scrub(reply))
