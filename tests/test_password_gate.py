@@ -25,7 +25,7 @@ def make(tmp_path, monkeypatch):
     return build
 
 
-ROUTES = ["/", "/api/state", "/api/dashboard", "/api/outbox", "/api/requests", "/api/audit", "/api/clock", "/api/connections?actor_id=e10",
+ROUTES = ["/static/app.css", "/static/app.js", "/static/fonts/Geist-Variable.woff2", "/", "/api/state", "/api/dashboard", "/api/outbox", "/api/requests", "/api/audit", "/api/clock", "/api/connections?actor_id=e10",
           "/api/connections/token?actor_id=e10", "/api/delivery?actor_id=e10", "/docs", "/openapi.json"]
 
 
@@ -67,3 +67,10 @@ def test_brute_force_brake(make):
     assert c.get("/api/state", headers=basic(PW)).status_code == 429  # even the right one waits out the minute
     main._gate_failures.clear()
     assert c.get("/api/state", headers=basic(PW)).status_code == 200
+
+
+def test_static_files_are_behind_the_gate_and_served_with_it(make):
+    c = make(DESKHAND_DEMO_PASSWORD=PW)
+    for r in ("/static/app.css", "/static/app.js", "/static/fonts/Geist-Variable.woff2", "/static/fonts/OFL.txt"):
+        assert c.get(r).status_code == 401
+        assert c.get(r, headers=basic(PW)).status_code == 200

@@ -218,11 +218,16 @@ def test_test_calls_validate_input_and_email_only_the_stored_address(client, mon
 
 
 def test_no_secret_or_viasocket_ids_in_client_code():
-    html = open("app/static/index.html", encoding="utf-8").read()
-    for bad in ("script_id", "proxy_auth", "EMBED_SECRET"):
-        assert bad not in html
-    assert not re.search(r"\bscri[A-Za-z0-9]{6,}", html)
-    assert not re.search(r"eyJ[A-Za-z0-9_-]{10,}\.", html)
+    import os
+    root = "app/static"
+    files = [os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.endswith((".html", ".js", ".css"))]
+    assert files
+    for path in files:
+        text = open(path, encoding="utf-8").read()
+        for bad in ("script_id", "proxy_auth", "EMBED_SECRET"):
+            assert bad not in text, (path, bad)
+        assert not re.search(r"\bscri[A-Za-z0-9]{6,}", text), path
+        assert not re.search(r"eyJ[A-Za-z0-9_-]{10,}\.", text), path
 
 
 def test_slack_reply_that_echoes_the_runner_id_is_never_passed_on():

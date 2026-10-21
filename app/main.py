@@ -4,6 +4,7 @@ import re
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import chaos, delivery as dl, viasocket_adapter as vs
@@ -54,6 +55,7 @@ async def password_gate(request, call_next):
     return await call_next(request)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=STATIC), name="static")  # css, js, fonts; the password gate middleware covers it too
 engine = Engine(Store(os.environ.get("DESKHAND_DB", "deskhand.db")))
 engine.live = dl.Delivery(engine, tenant=os.environ.get("DESKHAND_TENANT_ID", "acme-demo"))  # live-only: delivery starts by itself once Slack and Gmail are set up
 
