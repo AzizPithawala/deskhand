@@ -30,7 +30,7 @@ Static HTML, CSS and JS in `app/static` (no build step, no dependencies; the Gei
 (message or email; every request appears inline with its journey), **My requests**, **Needs you** (the approver queue, with a decision bar made for
 one-handed phone use), **Health** (dashboard, delivery, Connections and the Reliability lab) and **Audit**. "Act as", the demo clock, theme and Reset demo
 are in the **Demo controls** drawer. The request journey shows each stage, who holds it, how long it has waited and what happens next; every status has its
-own shape as well as a colour. Light and dark follow the system; reduced motion is respected.
+own shape as well as a colour. Light and dark follow the system; reduced motion is respected. The look follows the "Deskhand UI: premium" design canvas (deeper ground, light-weight display type, tinted banners, raised phone decision bar).
 
 ## Connections tab and delivery (live-only)
 Admin only (act as Arjun Patel), and the only setup. The admin connects Slack and picks the notification channel, then connects Gmail, picks the

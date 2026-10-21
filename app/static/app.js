@@ -91,6 +91,7 @@ function stagesFor(r, tl) {
     else if (r.status === 'CANCELLED') state = i < r.chain_index ? 'done' : (i === r.chain_index ? 'cancelled' : 'upcoming');
     else state = 'done';
     const st = { k: 'appr' + i, state, title: label, who: id };
+    if (chain.length > 1 && i === 1 && t.cost_threshold) st.because = `because the cost is above ₹${Number(t.cost_threshold).toLocaleString('en-IN')}`;
     if (state === 'done' && approved[i]) { st.who = approved[i].actor; st.time = approved[i].ts; }
     if (state === 'current') {
       const holder = r.escalated_to || id;
@@ -178,7 +179,7 @@ function journeyHTML(r, tl) {
     const changed = prev && prev[i] !== states[i];
     return `<li class="stage ${s.state}" aria-label="${esc(s.title)}: ${WORD[s.state]}">
       <div class="rail">${icon(NODE[s.state], 'node' + (changed ? ' pop' : ''))}<span class="thread${changed ? ' draw' : ''}"></span></div>
-      <div><div class="what"><span>${esc(s.title)}</span><span class="meta">${s.state === 'current' ? '' : esc(WORD[s.state])}</span></div>
+      <div><div class="what"><span>${esc(s.title)}</span><span class="meta">${s.because ? esc(s.because) : (s.state === 'current' ? '' : esc(WORD[s.state]))}</span></div>
         ${s.wait ? `<div class="note"><span class="wait">${esc(s.wait)}</span></div>` : ''}
         ${s.who && !s.wait && s.time ? `<div class="meta">${esc(nm(s.who))} · ${stamp(s.time)}</div>` : (s.time ? `<div class="meta">${stamp(s.time)}</div>` : '')}
         ${s.note ? `<div class="note meta">${esc(s.note)}</div>` : ''}</div></li>`;
@@ -321,7 +322,7 @@ function reqCard(r) {
 async function pageAsk() {
   const mode = store.get('dh_mode') === 'email' ? 'email' : 'chat';
   const m = $('#main');
-  m.innerHTML = `<div class="ask"><h1 class="sr">Ask</h1>
+  m.innerHTML = `<div class="ask"><h1 class="display">What do you need?</h1><p class="lede">Say it in one sentence. Deskhand finds the right person and keeps you posted.</p>
     <div class="seg2" role="group" aria-label="Channel"><button data-mode="chat" aria-pressed="${mode === 'chat'}">Message</button><button data-mode="email" aria-pressed="${mode === 'email'}">Email</button></div>
     ${mode === 'chat'
       ? `<form class="composer" id="cform"><label class="sr" for="q">Ask Deskhand</label><input class="field" id="q" placeholder="Ask for something in one sentence" autocomplete="off"><button class="btn primary" type="submit">Send</button></form>
@@ -453,7 +454,7 @@ function decisionHTML(it) {
   if (it.inbox_kind === 'approval') return `<div class="decide" data-id="${it.id}" data-mode="default">
       <div class="reason" hidden><label class="l" for="reason" id="reasonlabel">Reason (sent to ${esc(first(it.employee_id))})</label><textarea class="field" id="reason" rows="3"></textarea><div class="meta" id="reasonerr" role="alert" style="color:var(--rejected)"></div></div>
       <div class="row2"><button class="btn danger" data-do="reject">Reject</button><button class="btn primary" data-do="approve">Approve</button></div>
-      <div class="alt"><button class="btn small quiet" data-do="pend">Mark pending</button><button class="btn small" data-do="send" hidden>Send</button><button class="btn small quiet" data-do="cancel" hidden>Cancel</button></div></div>`;
+      <div class="alt"><button class="btn small quiet" data-do="pend">Mark pending</button><button class="btn" data-do="cancel" hidden>Cancel</button><button class="btn" data-do="send" hidden>Send</button></div></div>`;
   if (it.inbox_kind === 'task') return `<div class="decide" data-id="${it.id}"><div class="row2" style="grid-template-columns:1fr"><button class="btn primary" data-do="done">Mark as done</button></div><p class="meta" style="margin:10px 0 0">Never send credentials through chat or email. Grant access in the tool, then mark it done.</p></div>`;
   return `<div class="decide" data-id="${it.id}"><div class="row2" style="grid-template-columns:1fr"><button class="btn primary" data-do="replay">Replay</button></div><p class="meta" style="margin:10px 0 0">Replaying repeats the failed step once. It cannot create a duplicate.</p></div>`;
 }
@@ -472,6 +473,7 @@ function wireDecision(r) {
     const row = $('.row2', bar); if (row && mode !== 'default') row.hidden = true; else if (row) row.hidden = false;
     if (mode !== 'default') {
       $('#reasonlabel').textContent = mode === 'reject' ? `Reason for rejecting (required; sent to ${first(r.employee_id)})` : 'Note for the requester (optional)';
+      $('[data-do=send]', bar).textContent = mode === 'reject' ? 'Send rejection' : 'Send note';
       $('#reason').focus();
     }
   };
@@ -522,8 +524,8 @@ async function pageHealth() {
   let dv = null; try { dv = await api('/delivery?actor_id=' + who); } catch { /* admin only */ }
   const dd = dash.delivery || { used_today: 0, cap: 150, ready: {} };
   const working = dd.ready && dd.ready.slack && dd.ready.email;
-  const cell = (v, l, dim) => `<div class="${dim ? 'dim' : ''}"><div class="v">${v}</div><div class="meta">${esc(l)}</div></div>`;
-  $('#hstrip').innerHTML = `<div class="grid">${cell(working ? 'Working' : 'Not ready', 'delivery to Slack and email')}${cell(`${dd.used_today} / ${dd.cap}`, 'delivered today (daily cap)')}${cell(dash.total, 'requests')}${cell(dash.avg_decision_minutes == null ? '–' : (dash.avg_decision_minutes < 1 ? 'under 1' : dash.avg_decision_minutes), 'average minutes to a decision')}${cell(dash.hr_effects, 'leaves applied in HR')}</div>`;
+  const cell = (v, l, dim, cls = '') => `<div class="${dim ? 'dim' : ''}"><div class="v ${cls}">${v}</div><div class="meta">${esc(l)}</div></div>`;
+  $('#hstrip').innerHTML = `<div class="grid">${cell(working ? icon('s-done') + 'Working' : icon('s-pending') + 'Not ready', 'delivery to Slack and email', false, working ? 'ok' : 'warn')}${cell(`${dd.used_today} / ${dd.cap}`, 'delivered today (daily cap)')}${cell(dash.total, 'requests')}${cell(dash.avg_decision_minutes == null ? '–' : (dash.avg_decision_minutes < 1 ? 'under 1' : dash.avg_decision_minutes), 'average minutes to a decision')}${cell(dash.hr_effects, 'leaves applied in HR')}</div>`;
   paintDelivery(dv);
   const HEAD = ['duplicate_suppressed', 'own_message_ignored', 'breaker_opened', 'action_retry', 'action_failed', 'blocked_sensitive'];
   const rest = Object.keys(dash.guard).filter(k => !HEAD.includes(k));
