@@ -27,6 +27,43 @@ ALLOWED = {
 BACKOFF = [1, 4, 16]  # seconds, recorded in the audit log; the prototype does not sleep
 
 
+def split_email(raw):
+    """Emails arrive as 'Subject: ...\nbody'. Return (subject or None, body)."""
+    if raw.startswith("Subject:") and "\n" in raw:
+        head, body = raw.split("\n", 1)
+        return head[len("Subject:"):].strip() or None, body.strip()
+    return None, raw
+
+
+def _day(iso):
+    try:
+        return datetime.strptime(iso, "%Y-%m-%d").strftime("%a %d %b").replace(" 0", " ")
+    except (TypeError, ValueError):
+        return str(iso)
+
+
+LABELS = {"leave_type": "Leave type", "half_day": "Half day", "estimated_cost": "Estimated cost (INR)", "access_level": "Access level"}
+
+
+def details_view(d):
+    """Readable (label, value) pairs for people. No Python reprs, no empty values."""
+    rows = []
+    for k, v in d.items():
+        if v in (None, "", [], False):
+            continue
+        label = LABELS.get(k, k.replace("_", " ").capitalize())
+        if k == "dates":
+            val = ", ".join(_day(x) for x in v)
+        elif k == "balance":
+            label, val = "Leave balance", ", ".join(f"{a} {b}" for a, b in v.items())
+        elif v is True:
+            val = "yes"
+        else:
+            val = ", ".join(map(str, v)) if isinstance(v, list) else str(v)
+        rows.append((label, val))
+    return rows
+
+
 class InvalidTransition(Exception):
     pass
 
@@ -81,6 +118,11 @@ class Engine:
             return
         req = self.req(rid) if rid else None
         ch = channel or (req["channel"] if req else "chat")
+        if ch == "email":
+            first = (self.name(to_id) or "there").split()[0]
+            body = f"Hi {first},\n\n{body}\n\n— Deskhand"
+            if req and to_id == req["employee_id"]:
+                subject = "Re: " + (req["email_subject"] or f"Request #{rid}")
         key = f"{rid}:{kind}:{to_id}:{n}"
         self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at) "
                  "VALUES(?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now()))
@@ -92,6 +134,8 @@ class Engine:
             return None
         r["details"] = json.loads(r["details_json"] or "{}")
         r["chain"] = json.loads(r["chain_json"] or "[]")
+        r["email_subject"], r["message"] = split_email(r["raw_text"] or "")
+        r["details_view"] = details_view(r["details"])
         return r
 
     def name(self, eid):
@@ -244,14 +288,17 @@ class Engine:
     # ---------- routing ----------
     def _rewrite(self, r, emp, t):
         d = r["details"]
-        have = "; ".join(f"{k}: {v}" for k, v in d.items() if v not in (None, "", []))
-        missing = [k for k in t.get("details_needed", []) if k not in d or d.get(k) in (None, "", [])]
-        lines = [f"New request #{r['id']} from {emp['name']} ({emp['department']})", f"Type: {t['name']}"]
+        have = "; ".join(f"{a}: {b}" for a, b in r["details_view"])
+        aliases = {"justification": ["justification", "project", "reason"], "dates": ["dates"], "item": ["item", "tool", "resource"], "issue": ["issue"]}
+        missing = [k for k in t.get("details_needed", []) if not any(d.get(a) not in (None, "", []) for a in aliases.get(k, [k]))]
+        lines = [f"New request #{r['id']} from {emp['name']} ({emp['department']})", f"Request: {r['summary']}", f"Type: {t['name']}"]
         if have:
             lines.append(f"Details: {have}")
         if missing:
             lines.append(f"Not provided: {', '.join(missing)}")
-        lines.append(f'Original message: "{r["raw_text"]}"')
+        if r["email_subject"]:
+            lines.append(f'Email subject: "{r["email_subject"]}"')
+        lines.append(f'Original message: "{r["message"]}"')
         lines.append("Options: Approve, Reject (a reason is required), or Mark pending.")
         return "\n".join(lines)
 
@@ -281,7 +328,7 @@ class Engine:
         r = self.req(rid)
         self._notify(rid, chain[0], self._rewrite(r, emp, t), "approval_request", subject=f"Approval needed: {t['name']} #{rid}")
         extra = f" It needs {len(chain)} approvals, in order." if len(chain) > 1 else ""
-        self._notify(rid, emp["id"], f"I've sent your request #{rid} to {self.name(chain[0])} for approval.{extra} I'll update you here.", "submitted")
+        self._notify(rid, emp["id"], f"I've sent your request #{rid} to {self.name(chain[0])} for approval.{extra} I'll update you here.\nWhat I understood: {r['summary']}.", "submitted")
 
     def _answer_policy(self, emp, text):
         t = text.lower()
@@ -316,8 +363,9 @@ class Engine:
             return self.req(rid)
         self.s.q("UPDATE requests SET decided_at=? WHERE id=?", (self.now(), rid))
         self._set_status(rid, "APPROVED", actor_id, "all approvals given")
-        self._notify(rid, r["employee_id"], f"Your request #{rid} was approved by {self.name(actor_id)}.", "approved")
-        self._start_fulfilment(rid)
+        if self.d.type(r["type_code"])["fulfilment_kind"] == "auto_action":
+            self._notify(rid, r["employee_id"], f"Your request #{rid} was approved by {self.name(actor_id)}.", "approved")
+        self._start_fulfilment(rid, approved_by=actor_id)
         return self.req(rid)
 
     def reject(self, rid, actor_id, reason):
@@ -366,7 +414,7 @@ class Engine:
         return self.req(rid)
 
     # ---------- fulfilment and the guard ----------
-    def _start_fulfilment(self, rid):
+    def _start_fulfilment(self, rid, approved_by=None):
         r = self.req(rid)
         t = self.d.type(r["type_code"])
         self._set_status(rid, "FULFILLING", "system")
@@ -378,7 +426,8 @@ class Engine:
         emp = self.d.emp(r["employee_id"])
         note = " Do not send credentials in chat or email; grant access in the tool, then click Done." if r["type_code"] in ("software_seat", "access") else ""
         self._notify(rid, ful["id"], f"Task for request #{rid}: {t['name']} for {emp['name']}.{note}\nClick Done when finished.", "task", subject=f"Task: {t['name']} #{rid}")
-        self._notify(rid, emp["id"], f"{ful['name']} will take care of request #{rid}. I'll tell you when it's done.", "assigned")
+        lead = f"Your request #{rid} was approved by {self.name(approved_by)}. " if approved_by else ""
+        self._notify(rid, emp["id"], f"{lead}{ful['name']} will take care of it. I'll tell you when it's done.", "assigned")
 
     def _run_leave(self, rid):
         r = self.req(rid)
@@ -485,8 +534,11 @@ class Engine:
     def status_text(self, r):
         if r["status"] == "PENDING_APPROVAL":
             who = self.name(r["escalated_to"] or self.current_approver(r))
-            since = datetime.fromtimestamp(r["assigned_at"] or r["created_at"]).strftime("%d %b %H:%M")
-            return f"Pending with {who} since {since}"
+            ts = r["escalated_at"] if r["escalated_to"] and r["escalated_at"] else (r["assigned_at"] or r["created_at"])
+            since = datetime.utcfromtimestamp(ts).strftime("%d %b %H:%M")
+            return f"Pending with {who} since {since} UTC"
+        if r["status"] == "CLOSED":
+            return "Completed"
         return r["status"].replace("_", " ").title()
 
     def list_requests(self, status=None, employee=None):

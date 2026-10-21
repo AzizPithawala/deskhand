@@ -17,7 +17,7 @@ def _ensure_intake(e):
 def duplicate_x4(e):
     _ensure_intake(e)
     eid = "dup-" + uuid.uuid4().hex[:8]
-    outs = [e.ingest("chat", "e01", "Need a Claude seat for my work on the research project.", source_event_id=eid)["outcome"] for _ in range(4)]
+    outs = [e.ingest("chat", "e03", "Need a Claude seat for my work on the research project.", source_event_id=eid)["outcome"] for _ in range(4)]
     n = e.s.one("SELECT COUNT(*) c FROM requests WHERE source_event_id=?", (eid,))["c"]
     sup = e.s.one("SELECT COUNT(*) c FROM events WHERE type='duplicate_suppressed' AND data_json LIKE ?", (f"%{eid}%",))["c"]
     return _result("Same message delivered 4 times", [f"delivery {i + 1}: {o}" for i, o in enumerate(outs)],
@@ -31,17 +31,21 @@ def own_message(e):
 
 
 def burst(e):
+    ch = "chat-flood"  # a separate test channel from an unknown sender: trips the breaker without creating junk requests
     outs = []
     for i in range(int(e.s.get_setting("rate_limit_per_min")) + 3):
-        outs.append(e.ingest("chat", "e02", f"I need leave tomorrow, test {i}", source_event_id=f"burst-{uuid.uuid4().hex[:6]}-{i}")["outcome"])
+        outs.append(e.ingest(ch, "flood-bot", f"flood {i}", source_event_id=f"burst-{uuid.uuid4().hex[:6]}-{i}")["outcome"])
     tripped = "breaker_opened" in outs
     paused = "paused_breaker" in outs
     admin_notified = e.s.one("SELECT COUNT(*) c FROM outbox WHERE kind='breaker'")["c"] >= 1
-    return _result("Burst of messages (loop or flood)", [f"{len(outs)} events sent, last outcomes: {outs[-3:]}"],
+    e.reset_breaker(e.d.role_holder("admin")["id"])  # demo helper: normal chat keeps working afterwards
+    return _result("Burst of messages (loop or flood)",
+                   [f"{len(outs)} messages sent in under a minute. First {outs.index('breaker_opened')} accepted, then the breaker opened and the rest were paused.",
+                    "The admin was alerted. Breaker reset by the admin so the demo can continue."],
                    {"breaker tripped": tripped, "intake paused afterwards": paused, "admin notified": admin_notified})
 
 
-def _leave_request(e, emp="e01"):
+def _leave_request(e, emp="e03"):
     _ensure_intake(e)
     r = e.ingest("chat", emp, "I need leave tomorrow, family function", source_event_id="leave-" + uuid.uuid4().hex[:8])
     rid = r["request_ids"][0]
@@ -90,14 +94,42 @@ def hr_down_then_replay(e):
 
 def ai_budget(e):
     _ensure_intake(e)
+    original = e.s.get_setting("ai_budget_per_day")
     e.s.set_setting("ai_budget_per_day", 0)
     e.s.set_setting("ai_budget_exhausted_logged", "0")
-    r = e.ingest("chat", "e03", "Need a pack of notebooks and some pens.", source_event_id="budget-" + uuid.uuid4().hex[:6])
+    try:
+        r = e.ingest("chat", "e03", "Need a pack of notebooks and some pens.", source_event_id="budget-" + uuid.uuid4().hex[:6])
+    finally:
+        e.s.set_setting("ai_budget_per_day", original)  # do not leave the demo with a zero budget
     rid = r["request_ids"][0]
     prov = e.req(rid)["provider"]
     return _result("AI budget exhausted", [f"classified by: {prov}", "note: with no API key the rules are always used, so this shows the fallback path only"],
                    {"no error, request still handled": bool(r["request_ids"]), "falls back to rules": prov == "rules"})
 
 
+def hr_down_park(e):
+    """Live version of the park/replay story: stops while PARKED so the presenter can show it, then replay_parked() finishes it."""
+    e.hr.heal()
+    rid, ap = _leave_request(e)
+    e.hr.down = True
+    e.approve(rid, ap)
+    parked = e.req(rid)["status"] == "PARKED"
+    notified = e.s.one("SELECT COUNT(*) c FROM outbox WHERE request_id=? AND kind='parked'", (rid,))["c"] >= 1
+    out = _result("HR down: request parked", [f"request #{rid} is PARKED after 3 failed attempts", "Admin notified. Nothing was lost. The HR system is still down."],
+                  {"parked, not lost": parked, "admin notified": notified})
+    out["replay_id"] = rid
+    return out
+
+
+def replay_parked(e, rid):
+    before = len(e.hr.leaves)
+    e.hr.heal()
+    e.replay(rid, e.d.role_holder("admin")["id"])
+    status = e.req(rid)["status"]
+    return _result(f"Replay of request #{rid}", [f"HR system is back. After replay: {status}"],
+                   {"completed after replay": status == "CLOSED", "leave applied exactly once": len(e.hr.leaves) - before == 1})
+
+
 SCENARIOS = {"duplicate_x4": duplicate_x4, "own_message": own_message, "burst": burst, "hr_fail_twice": hr_fail_twice,
-             "hr_timeout_after_success": hr_timeout_after_success, "hr_down_then_replay": hr_down_then_replay, "ai_budget": ai_budget}
+             "hr_timeout_after_success": hr_timeout_after_success, "hr_down_then_replay": hr_down_then_replay, "ai_budget": ai_budget,
+             "hr_down_park": hr_down_park}

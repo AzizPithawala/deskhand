@@ -143,6 +143,16 @@ def sweep():
     return engine.sweep()
 
 
+@app.get("/api/clock")
+def clock():
+    return {"now": engine.now()}
+
+
+@app.post("/api/chaos/replay/{rid}")
+def chaos_replay(rid: int):
+    return guard(chaos.replay_parked, engine, rid)
+
+
 @app.post("/api/chaos/{name}")
 def chaos_run(name: str):
     if name not in chaos.SCENARIOS:

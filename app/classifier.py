@@ -2,7 +2,7 @@
 Approvers, thresholds and permissions never come from here."""
 import json
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 TYPES = ["leave", "software_seat", "equipment", "accessories", "it_help", "access", "payroll", "policy_question"]
 SAFE_KEYS = {"type_code", "summary", "details"}
@@ -112,15 +112,57 @@ def parse_leave(text, today):
     return d
 
 
+PROJECT_RE = re.compile(r"\b(?:the\s+)?([A-Za-z][\w\- ]{1,30}?)\s+project\b", re.I)
+WHY_RE = re.compile(r"\b(?:because|since|as)\s+([^.?!]{4,80})|\bfor\s+(?:my\s+|the\s+|a\s+)?([^.?!]{4,80})", re.I)
+_OBJ = r"(?:laptop|monitor|desk|chair|docking station|keyboard|mouse|headset|notebooks?|pens?|stapler)"
+ITEM_RE = re.compile(r"\b((?:pack of\s+)?(?:(?:a|an|the|my|new|second|extra|another|replacement|external)\s+){0,3}"
+                     r"(?:(?!of\b|and\b|some\b|a\b)[a-z]+\s+)?" + _OBJ + r"(?:\s+and\s+(?:a\s+)?" + _OBJ + r")?)\b", re.I)
+FILLER = re.compile(r"^(?:a|an|the|my|new|extra|another)\s+", re.I)
+
+
+def _item(text):
+    m = ITEM_RE.search(text)
+    if not m:
+        return None
+    words = m.group(1).split()
+    while words and words[0].lower() in ("a", "an", "the", "my", "new", "extra", "another", "replacement", "external") and len(words) > 1 and words[0].lower() != "second":
+        words.pop(0)
+    return " ".join(words).lower()
+
+
+def _why(text):
+    for m in WHY_RE.finditer(text):
+        v = (m.group(1) or m.group(2) or "").strip(" ,.")
+        if v and not re.match(r"(my )?(desk|the desk)\b", v, re.I):
+            return v[:80]
+    return None
+
+
 def _details(code, text, today):
     t = text
     if code == "leave":
         return parse_leave(t, today)
     d = {}
+    if code == "software_seat":
+        pm = PROJECT_RE.search(t)
+        if pm:
+            d["project"] = FILLER.sub("", re.sub(r"^.*\b(?:work on|working on|for)\s+(?:the\s+|my\s+)?", "", pm.group(1), flags=re.I)).strip()
+        why = _why(t)
+        if why and not pm:
+            d["justification"] = why
+    if code in ("equipment", "accessories"):
+        item = _item(t)
+        if item:
+            d["item"] = item
+        why = _why(t)
+        if why and (not item or why.lower() not in item.lower()):
+            d["reason"] = why
+    if code == "it_help":
+        d["issue"] = re.sub(r"\s+", " ", t).strip(" .")[:120]
     tool = TOOLS_RE.search(t)
     if tool and code in ("software_seat", "access"):
         d["tool"] = tool.group(1).capitalize()
-    cost = re.search(r"(?:cost|approx\.?|about|₹|rs\.?|inr)\s*(?:of\s*)?(\d[\d,]{3,})", t, re.I)
+    cost = re.search(r"(?:cost|approx\.?|about|around|₹|rs\.?|inr)\s*(?:of\s*)?(\d[\d,]{3,})", t, re.I)
     if cost:
         d["estimated_cost"] = int(cost.group(1).replace(",", ""))
     if code == "access":
@@ -138,12 +180,32 @@ SUMMARY = {
 }
 
 
+def _summary(code, details):
+    """One line a person can scan. Falls back to the generic label."""
+    if code == "leave" and details.get("dates"):
+        kind = ("Half-day " if details.get("half_day") else "") + f"{details.get('leave_type', 'casual')} leave"
+        days = ", ".join(datetime.strptime(x, "%Y-%m-%d").strftime("%a %d %b").replace(" 0", " ") for x in details["dates"])
+        return f"{kind[0].upper() + kind[1:]}: {days}"
+    if code == "software_seat" and details.get("tool"):
+        return f"{details['tool']} seat" + (f" for the {details['project']} project" if details.get("project") else "")
+    if code in ("equipment", "accessories") and details.get("item"):
+        return details["item"][0].upper() + details["item"][1:]
+    if code == "it_help" and details.get("issue"):
+        return "IT help: " + details["issue"][:60]
+    if code == "access" and details.get("resource"):
+        return "Access to " + details["resource"][:60]
+    return SUMMARY[code]
+
+
 def classify_rules(text, today=None):
     today = today or date.today()
     clean, _ = redact(text)
     flags = injection_flags(clean)
     types = detect_types(clean)
-    intents = [{"type_code": c, "summary": SUMMARY[c], "details": _details(c, clean, today)} for c in types]
+    intents = []
+    for c in types:
+        det = _details(c, clean, today)
+        intents.append({"type_code": c, "summary": _summary(c, det), "details": det})
     question = None
     if not intents:
         question = "Could you tell me a bit more about what you need (for example leave, a software seat, equipment, or IT help)?"

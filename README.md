@@ -10,7 +10,7 @@ python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\
 pip install -r requirements.txt
 make dev                                                # or: uvicorn app.main:app --reload --port 8000
 ```
-Open http://localhost:8000. Run the tests with `make test` (35 tests). Optional: copy `.env.example` to `.env` and set
+Open http://localhost:8000. Needs Python 3.11+. Run the tests with `make test` (39 tests, including the 7-minute demo script as one test). Optional: copy `.env.example` to `.env` and set
 `ANTHROPIC_API_KEY` to use Claude for understanding requests. Without a key a deterministic rules classifier is used.
 
 ## What works (and is tested)
@@ -31,7 +31,7 @@ Open http://localhost:8000. Run the tests with `make test` (35 tests). Optional:
   validated and falls back to the rules on any error, but check it against the current SDK docs before relying on it.
 - The rules classifier scores 100% on data/sample_requests.json because it was tuned while looking at that file. That number
   is optimistic. Measure on real past requests.
-- The UI has been syntax-checked and driven through its API, but not inspected in a browser. Expect rough edges.
+- The UI was clicked through in a browser against the demo script (docs/BUILD_PLAN.md) and polished: inline reason dialogs instead of browser pop-ups, UTC times that match the demo clock, readable details, email-style replies. Chaos runs use Neha Gupta's requests so the other demo people stay clean. The burst test floods a separate channel so it leaves no junk requests, and the AI-budget test restores the budget.
 - No login (a header switcher lets you act as anyone), no real email, digest is a preview only, single company.
 
 ## Next steps (in order)
