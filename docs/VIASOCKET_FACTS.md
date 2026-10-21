@@ -98,15 +98,21 @@ UNVERIFIED
 - Whether viaSocket retries or dedupes an action call (nothing in the responses shows either); whether the Connect popup's Reconnect
   (a fresh connection that replaces the stored one) leaves the old runner active; Keka (not in this phase); events (phase 2).
 
-## OUTBOUND DELIVERY (built 2026-10-21, tested with the fake transport only)
+## OUTBOUND DELIVERY (live-only; built 2026-10-21, tested with the fake transport only)
 Design facts (ours, not viaSocket's):
+- No switch, no mock. Delivery starts by itself once Slack and its channel are set (chat rows) and Gmail and the notification email are set
+  (email rows); until then rows are marked skipped, nothing is replayed later, and a red banner on every tab names what is missing.
 - Delivery is a sweep over outbox rows, never part of approving or rejecting. A down Slack or Gmail cannot block or undo a decision.
-- Exactly once per outbox idempotency_key: the row is claimed before sending, an action_runs record remembers success, and a retry
-  happens only when the call certainly did not take effect (429, ratelimited, could not connect). A read timeout or a 5xx may already
-  have been delivered, so it is parked as "outcome unknown" and an admin retries by hand after checking the channel.
-- viaSocket gives no idempotency key and no dedupe for action calls (UNVERIFIED either way), so this rule is ours.
-- Hard cap 40 live deliveries per UTC day, counted per real send attempt in a ledger that survives Reset demo. At the cap delivery switches itself off.
-- Slack text is escaped (&, <, >) so message text cannot ping the channel or inject links; email bodies are HTML-escaped.
+- Every notification kind is delivered, except the system notice "delivery_failed" (otherwise a dead channel would create endless notices).
+- Exactly once per outbox idempotency_key: atomic claim (UPDATE ... WHERE delivery_status='pending', rows affected must be 1), a single-flight
+  sweep, an action_runs record of success, and a retry only when the call certainly did not take effect (429, ratelimited, could not connect).
+  A read timeout or a 5xx may already have been delivered, so it is parked as "outcome unknown" and an admin retries by hand after checking.
+- viaSocket gives no idempotency key and no dedupe for action calls (UNVERIFIED either way), so these rules are ours.
+- Backstop cap 150 deliveries per UTC day, counted per real send attempt in a ledger that survives Reset demo; at the cap new rows are skipped and
+  a banner shows; it resumes the next UTC day by itself.
+- Slack text is escaped (&, <, >) so message text cannot ping the channel or inject links; email bodies are HTML-escaped. Email goes only to the one
+  stored, validated notification address (never to directory addresses). The address is configuration: it is not written to the audit log.
+- The earlier toggle, DESKHAND_LIVE_DELIVERY and DESKHAND_LIVE_EMAIL_OVERRIDE were removed.
 UNVERIFIED
-- A real end-to-end live run through the toggle (Slack message with the prefix and inbox link, one email to the override address).
+- A real end-to-end run on the hosted instance: an approval message in Slack with the prefix and inbox link, one email to the notification address.
 - How Slack renders the escaped text and the link in the real channel.

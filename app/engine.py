@@ -84,7 +84,7 @@ class Engine:
         self.api_key = os.environ.get("ANTHROPIC_API_KEY", "") if api_key is None else api_key
         self.model = os.environ.get("DESKHAND_MODEL", "claude-haiku-5-5")
         self.ai_classify = ai_classify
-        self.live = None  # set by the web app: live delivery (app/delivery.py). None means nothing is ever delivered live.
+        self.live = None  # set by the web app: outbound delivery (app/delivery.py). None (engine tests) means rows are only ever written to the outbox.
         self._mock_depth = 0
         self._defaults()
 
@@ -99,7 +99,6 @@ class Engine:
         self.s.reset()
         self.hr.reset()
         self._defaults()
-        self.s.set_setting("live_delivery", "off")  # Reset demo always puts delivery back to mock
 
     # ---------- clock, audit, outbox ----------
     def now(self):
@@ -127,9 +126,9 @@ class Engine:
             if req and to_id == req["employee_id"]:
                 subject = "Re: " + (req["email_subject"] or f"Request #{rid}")
         key = f"{rid}:{kind}:{to_id}:{n}"
-        dstatus = self.live.status_for(kind, ch) if self.live and not self._mock_depth else "skipped"
-        self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at,delivery_status) "
-                 "VALUES(?,?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now(), dstatus))
+        dstatus, dnote = self.live.status_for(kind, ch) if self.live and not self._mock_depth else ("skipped", "no delivery for this run")
+        self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at,delivery_status,delivery_note) "
+                 "VALUES(?,?,?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now(), dstatus, dnote))
 
     # ---------- request helpers ----------
     def req(self, rid):
@@ -584,7 +583,7 @@ class Engine:
         prov = {r["provider"]: r["c"] for r in self.s.all("SELECT provider, COUNT(*) c FROM requests GROUP BY provider")}
         return {"by_status": by_status, "total": sum(by_status.values()), "avg_decision_minutes": round(dec / 60, 1) if dec else None,
                 "guard": {k: guard.get(k, 0) for k in keys}, "classified_by": prov,
-                "delivery": self.live.summary() if self.live else {"on": False, "toggle": False, "used_today": 0, "cap": 40, "capped": False, "counts": {}, "email_override_set": False},
+                "delivery": self.live.summary() if self.live else {"used_today": 0, "cap": 150, "capped": False, "counts": {}, "ready": {"slack": False, "email": False}, "problems": []},
                 "ai_calls_today": int(self.s.get_setting("ai_calls_today")), "ai_budget": int(self.s.get_setting("ai_budget_per_day")),
                 "breaker_open": [c for c in self.s.get_setting("breaker_open", "").split(",") if c], "hr_effects": len(self.hr.leaves)}
 

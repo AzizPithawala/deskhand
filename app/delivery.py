@@ -1,8 +1,8 @@
-"""Outbound live delivery of outbox rows to Slack and Gmail through viaSocket, kept strictly apart from approvals.
-
-Approving, rejecting or any status change only writes the outbox row. A sweep delivers the row later, so Slack or Gmail being
-down can never block or undo a decision. Safeguards: off by default, a hard daily cap, an allow-list of kinds, a single email
-address that is never anything but the override, exactly-once per outbox idempotency_key, and no retry when a retry could send twice."""
+"""Outbound delivery of outbox rows to Slack and Gmail through viaSocket. The app is LIVE-ONLY: there is no switch and no mock fallback.
+Delivery starts by itself once an admin has connected Slack and chosen a channel (chat rows) and connected Gmail and entered the notification email
+(email rows). It is kept strictly apart from approvals: approving or rejecting only writes the outbox row, and a sweep delivers it later, so a down
+Slack or Gmail can never block or undo a decision. Safeguards: a daily backstop cap, exactly-once per outbox idempotency_key (atomic claim, single-flight
+sweep), no automatic resend when the outcome is unknown, escaped message text, and email only ever to the one stored notification address."""
 import html
 import os
 import re
@@ -12,9 +12,11 @@ from contextlib import contextmanager
 
 from . import viasocket_adapter as vs
 
-LIVE_KINDS = {"approval_request", "approved", "rejected", "fulfilled", "escalation_1", "escalation_2", "parked"}
-LINK_KINDS = {"approval_request", "escalation_1", "escalation_2", "parked"}  # addressed to someone who must act in the Deskhand UI
-DAILY_CAP = 40
+# Every kind is delivered, except the system notice about a failed delivery: if Slack is down, delivering that notice through Slack would fail
+# and create the next notice, forever. It stays in the outbox (and on the Connections tab and dashboard).
+NOT_DELIVERED_KINDS = {"delivery_failed"}
+LINK_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "task", "parked", "breaker"}  # addressed to someone who acts in the Deskhand UI
+DAILY_CAP = 150
 MAX_ATTEMPTS = 3
 SENDING_TIMEOUT_S = 300
 ONE_EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
@@ -29,32 +31,50 @@ def slack_escape(text):
 
 
 class Delivery:
-    def __init__(self, engine, integration_factory=None, base_url=None):
+    def __init__(self, engine, integration_factory=None, base_url=None, tenant=None):
         self.e = engine
-        self.factory = integration_factory or (lambda: vs.get_integration(engine.s))
+        self.tenant = tenant or os.environ.get("DESKHAND_TENANT_ID", "acme-demo")
+        self.conns = vs.ConnectionStore(engine.s, self.tenant)
+        self.factory = integration_factory or (lambda: vs.get_integration(engine.s, self.tenant))
         self.base_url = (base_url or os.environ.get("DESKHAND_BASE_URL") or "http://localhost:8000").rstrip("/")
         self._flight = threading.Lock()  # single-flight: only one sweep runs at a time (the 10 s worker and the manual endpoint share it)
 
-    # ---------- switches ----------
-    def toggle(self):
-        v = self.e.s.get_setting("live_delivery")
-        if v is None:
-            v = os.environ.get("DESKHAND_LIVE_DELIVERY", "off")
-        return str(v).lower() == "on"
+    # ---------- readiness: configuration lives in the database, set on the Connections tab ----------
+    def _conn(self, app):
+        c = self.conns.get(app)
+        return c if c and c["script_id"] else None
 
-    def set_toggle(self, on, actor_id, why=""):
-        self.e.s.set_setting("live_delivery", "on" if on else "off")
-        self.e.audit(None, actor_id, "live_delivery_" + ("on" if on else "off"), {"why": why})
-        if not on:
-            self.e.s.q("UPDATE outbox SET delivery_status='skipped', delivery_note='live delivery switched off' WHERE delivery_status='pending'")
-
-    def email_override(self):
-        v = (os.environ.get("DESKHAND_LIVE_EMAIL_OVERRIDE") or "").strip()
+    def notify_email(self):
+        """The one stored notification address, or '' when unset or not a single valid address. Email never goes anywhere else."""
+        c = self._conn("gmail")
+        v = ((c or {}).get("settings", {}).get("notify_email") or "").strip()
         return v if ONE_EMAIL.match(v) else ""
 
-    def active(self):
-        """Live only when switched on, not forced to mock, and the integration really is viaSocket."""
-        return self.toggle() and not self.e._mock_depth and self.factory().mode == "viasocket"
+    def problems(self):
+        """Why delivery is not (fully) working right now; shown as a red banner on every tab. Empty list means all good."""
+        out = []
+        if not vs.VsClient(self.tenant).configured():
+            return ["viaSocket is not configured on the server: notifications are not being delivered"]
+        slack = self._conn("slack")
+        if not slack:
+            out.append("Slack not connected: notifications are not being delivered")
+        elif not slack["settings"].get("channel_id"):
+            out.append("Slack channel not chosen: notifications are not being delivered")
+        if not self._conn("gmail"):
+            out.append("Gmail not connected: email notifications are not being delivered")
+        elif not self.notify_email():
+            out.append("Notification email not set: email notifications are not being delivered")
+        return out
+
+    def ready(self, channel):
+        if not vs.VsClient(self.tenant).configured():
+            return False
+        if channel == "chat":
+            c = self._conn("slack")
+            return bool(c and c["settings"].get("channel_id"))
+        if channel == "email":
+            return bool(self._conn("gmail") and self.notify_email())
+        return False
 
     def used_today(self):
         return self.e.s.one("SELECT COUNT(*) c FROM delivery_ledger WHERE day=?", (_today(),))["c"]
@@ -63,20 +83,24 @@ class Delivery:
         return self.used_today() >= DAILY_CAP
 
     def status_for(self, kind, channel):
-        """Decided when the row is written: only rows created while live is active and of an allowed kind wait for delivery."""
-        if kind in LIVE_KINDS and channel in ("chat", "email") and self.active() and not self.capped():
-            return "pending"
-        return "skipped"
+        """Decided when the row is written: (status, note). Only rows that can really be delivered now wait for the sweep."""
+        if kind in NOT_DELIVERED_KINDS or channel not in ("chat", "email"):
+            return "skipped", "system notice, outbox only"
+        if self.capped():
+            return "skipped", "daily delivery cap reached"
+        if not self.ready(channel):
+            return "skipped", ("Slack" if channel == "chat" else "Gmail") + " not connected or not configured"
+        return "pending", None
 
     # ---------- the sweep ----------
     def summary(self):
         counts = {r["delivery_status"]: r["c"] for r in self.e.s.all("SELECT delivery_status, COUNT(*) c FROM outbox GROUP BY delivery_status")}
-        return {"on": self.toggle() and self.factory().mode == "viasocket", "toggle": self.toggle(), "used_today": self.used_today(), "cap": DAILY_CAP,
-                "capped": self.capped(), "counts": counts, "email_override_set": bool(self.email_override())}
+        return {"used_today": self.used_today(), "cap": DAILY_CAP, "capped": self.capped(), "counts": counts,
+                "ready": {"slack": self.ready("chat"), "email": self.ready("email")}, "problems": self.problems()}
 
     def deliver_pending(self, limit=20):
         out = {"delivered": 0, "failed": 0, "retry": 0, "skipped": 0}
-        if not self.active():
+        if self.e._mock_depth:  # chaos and Reset demo never deliver
             return out
         if not self._flight.acquire(blocking=False):  # a sweep is already running: skip, do not queue behind it
             return {**out, "busy": True}
@@ -95,19 +119,22 @@ class Delivery:
                 self._hit_cap()
                 out["skipped"] += 1
                 break
+            if not self.ready(row["channel"]):  # disconnected since the row was written: not delivered, the banner says so
+                self.e.s.q("UPDATE outbox SET delivery_status='skipped', delivery_note='not connected or not configured' WHERE id=? AND delivery_status='pending'", (row["id"],))
+                out["skipped"] += 1
+                continue
             res = self._deliver_one(row)
             out[res] = out.get(res, 0) + 1
         return out
 
     def _hit_cap(self):
         self.e.audit(None, "system", "live_delivery_cap_reached", {"cap": DAILY_CAP})
-        self.e.s.q("UPDATE outbox SET delivery_status='skipped', delivery_note='daily live-delivery cap reached' WHERE delivery_status='pending'")
-        self.e.s.set_setting("live_delivery", "off")  # stop live delivery; an admin turns it back on tomorrow
+        self.e.s.q("UPDATE outbox SET delivery_status='skipped', delivery_note='daily delivery cap reached' WHERE delivery_status='pending'")
 
     def _deliver_one(self, row):
         e, ik = self.e, row["idempotency_key"]
-        if row["kind"] not in LIVE_KINDS:  # second line of defence: the allow-list is enforced again at send time
-            e.s.q("UPDATE outbox SET delivery_status='skipped', delivery_note='kind is not delivered live' WHERE id=? AND delivery_status='pending'", (row["id"],))
+        if row["kind"] in NOT_DELIVERED_KINDS:  # second line of defence at send time
+            e.s.q("UPDATE outbox SET delivery_status='skipped', delivery_note='system notice, outbox only' WHERE id=? AND delivery_status='pending'", (row["id"],))
             return "skipped"
         # 1. ATOMIC CLAIM. One UPDATE with the condition in its WHERE; only the caller that changed exactly one row may send.
         #    Any other sweep (the 10 s worker, the manual endpoint, a second process on the same database) changes 0 rows and walks away.
@@ -167,25 +194,24 @@ class Delivery:
     def _send(self, row):
         e = self.e
         name = e.name(row["to_person"])
-        label = f"[Deskhand demo to {name}]"
         subject = re.sub(r"[\r\n]+", " ", row["subject"] or f"Request #{row['request_id']}")[:150]
         body = vs.redact(row["body"] or "")
         link = f"{self.base_url}/#inbox/{row['to_person']}" if row["kind"] in LINK_KINDS else ""
         integ = self.factory()
         if row["channel"] == "email":
-            to = self.email_override()
+            to = self.notify_email()
             if not to:
-                return vs.Result(vs.PERMANENT, error="no single live email address is configured (DESKHAND_LIVE_EMAIL_OVERRIDE)", code="no_override")
+                return vs.Result(vs.PERMANENT, error="no single notification email is set on the Connections tab", code="no_notify_email")
             html_body = "<p>" + html.escape(body).replace("\n", "<br>") + "</p>" + (f'<p><a href="{html.escape(link)}">Open your Deskhand inbox</a></p>' if link else "")
-            assert to == self.email_override()  # never any other address
-            return integ.gmail_send(to, f"{label} {subject}", html_body)
-        text = f"{label} {slack_escape(subject)}\n{slack_escape(body)}" + (f"\nOpen your Deskhand inbox: {link}" if link else "")
+            assert to == self.notify_email()  # never any other address
+            return integ.gmail_send(to, f"To {name}: {subject}", html_body)
+        text = f"[Deskhand to {name}] {slack_escape(subject)}\n{slack_escape(body)}" + (f"\nOpen your Deskhand inbox: {link}" if link else "")
         return integ.slack_send(text)
 
 
 @contextmanager
 def forced_mock(engine):
-    """Chaos runs, tests and Reset demo use this: rows written inside are never delivered live and the sweep does nothing."""
+    """Chaos runs and Reset demo use this: rows written inside are marked skipped and the sweep does nothing."""
     engine._mock_depth += 1
     try:
         yield

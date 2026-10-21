@@ -55,7 +55,7 @@ async def password_gate(request, call_next):
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 engine = Engine(Store(os.environ.get("DESKHAND_DB", "deskhand.db")))
-engine.live = dl.Delivery(engine)  # live delivery is OFF unless an admin switches it on (and the integration mode is viasocket)
+engine.live = dl.Delivery(engine, tenant=os.environ.get("DESKHAND_TENANT_ID", "acme-demo"))  # live-only: delivery starts by itself once Slack and Gmail are set up
 
 
 class Ingest(BaseModel):
@@ -191,7 +191,8 @@ def sweep():
 @app.get("/api/clock")
 def clock():
     d = engine.live.summary()
-    return {"now": engine.now(), "live": {"on": d["on"], "used_today": d["used_today"], "cap": d["cap"], "capped": d["capped"]}}
+    banners = list(d["problems"]) + ([f"Delivery paused: the daily cap of {d['cap']} messages is reached ({d['used_today']}). Messages stay in the outbox until tomorrow (UTC)."] if d["capped"] else [])
+    return {"now": engine.now(), "banners": banners, "delivery": {"used_today": d["used_today"], "cap": d["cap"], "capped": d["capped"]}}
 
 
 @app.post("/api/chaos/replay/{rid}")
@@ -218,7 +219,7 @@ def breaker_reset():
 @app.post("/api/reset")
 def reset():
     with dl.forced_mock(engine):
-        engine.reset()  # also switches live delivery off; the daily cap ledger survives a reset on purpose
+        engine.reset()  # connections, their settings and the daily cap ledger survive a reset on purpose
     return {"ok": True}
 
 
@@ -233,12 +234,10 @@ def _admin(actor_id):
 
 
 def _real():
-    """The connection screens talk to viaSocket for real; they need the mode switched on and the embed values set."""
+    """The connection screens talk to viaSocket for real; they need the embed values set on the server."""
     client = vs.VsClient(TENANT)
-    if os.environ.get("DESKHAND_INTEGRATION", "mock").lower() != "viasocket":
-        raise HTTPException(409, "Integration is in mock mode. Start the app with DESKHAND_INTEGRATION=viasocket to connect real apps.")
     if not client.configured():
-        raise HTTPException(409, "viaSocket is not configured. Set VIASOCKET_ORG_ID, VIASOCKET_PROJECT_ID and VIASOCKET_EMBED_SECRET in .env.")
+        raise HTTPException(409, "viaSocket is not configured on the server. See the README.")
     return client, vs.ConnectionStore(engine.s, TENANT)
 
 
@@ -250,6 +249,7 @@ class ConnAct(BaseModel):
     actor_id: str
     app: str | None = None
     auth_id: str | None = None
+    setting: str | None = None
     value: str | None = None
     action: str | None = None
     email: str | None = None
@@ -264,10 +264,9 @@ def _app(key):
 @app.get("/api/connections")
 def connections(actor_id: str):
     _admin(actor_id)
-    mode = os.environ.get("DESKHAND_INTEGRATION", "mock").lower()
     client, store = vs.VsClient(TENANT), vs.ConnectionStore(engine.s, TENANT)
     live, note = {}, ""
-    if mode == "viasocket" and client.configured():
+    if client.configured():
         r = client.connections()
         if r.ok:
             live = {str(c.get("id")): c for c in r.data if isinstance(c, dict)}
@@ -282,10 +281,10 @@ def connections(actor_id: str):
             status = "unknown"
         if entry and entry.get("isExpired"):
             status = "expired"
-        st = a["setting"]
         apps.append({"key": key, "name": a["name"], "icon": a["icon"], "status": status, "can_run": bool(row and row["script_id"]),
-                     "setting": {"label": st["label"], "required": st["required"], "value": (row["settings"].get(st["key"]) if row else None)}})
-    return {"mode": mode, "configured": client.configured(), "tenant": TENANT, "connect_js": vs.CONNECT_JS, "apps": apps, "note": note}
+                     "settings": [{"key": st["key"], "label": st["label"], "kind": st["kind"], "required": st["required"],
+                                   "value": (row["settings"].get(st["key"]) if row else None) or ""} for st in a["settings"]]})
+    return {"configured": client.configured(), "tenant": TENANT, "connect_js": vs.CONNECT_JS, "apps": apps, "note": note, "problems": engine.live.problems()}
 
 
 @app.get("/api/connections/token")
@@ -323,14 +322,16 @@ def connection_connected(b: ConnAct):
 
 
 @app.get("/api/connections/{key}/options")
-def connection_options(key: str, actor_id: str):
+def connection_options(key: str, actor_id: str, setting: str):
     _admin(actor_id)
     a = _app(key)
+    st = next((x for x in a["settings"] if x["key"] == setting and x["kind"] == "picker"), None)
+    if not st:
+        raise HTTPException(404, "no such picker")
     client, store = _real()
     row = store.get(key)
     if not row:
         raise HTTPException(409, f"{a['name']} is not connected yet")
-    st = a["setting"]
     r = client.options(a["actions"][st["action"]][0], st["field"], row["auth_id"], st["existing"])
     if not r.ok:
         raise HTTPException(422 if r.kind == vs.PERMANENT else 503, vs.redact(r.error, store.secrets()))
@@ -341,11 +342,19 @@ def connection_options(key: str, actor_id: str):
 def connection_setting(key: str, b: ConnAct):
     _admin(b.actor_id)
     a = _app(key)
-    _, store = _real()
+    st = next((x for x in a["settings"] if x["key"] == b.setting), None)
+    if not st:
+        raise HTTPException(404, "no such setting")
+    store = vs.ConnectionStore(engine.s, TENANT)
     if not store.get(key):
         raise HTTPException(409, f"{a['name']} is not connected yet")
-    store.set_setting(key, a["setting"]["key"], b.value or "")
-    engine.audit(None, b.actor_id, "connection_setting_changed", {"app": key, "setting": a["setting"]["key"]})
+    value = (b.value or "").strip()
+    if st["kind"] == "email" and not dl.ONE_EMAIL.match(value):
+        raise HTTPException(422, "enter exactly one email address")
+    if st["required"] and not value:
+        raise HTTPException(422, f"{st['label']} is required")
+    store.set_setting(key, st["key"], value)
+    engine.audit(None, b.actor_id, "connection_setting_changed", {"app": key, "setting": st["key"]})  # never the value: it may be an address
     return {"ok": True}
 
 
@@ -370,24 +379,27 @@ EMAIL = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
 
 @app.post("/api/connections/test")
 def connection_test(b: ConnAct):
-    """Admin-triggered proof calls. Texts are fixed in code; only the address is typed by the admin."""
+    """Admin-triggered proof calls. Texts are fixed in code. The test email goes only to the stored notification address."""
     _admin(b.actor_id)
     integ = vs.get_integration(engine.s, TENANT)
-    if b.action in ("slack_lookup", "gmail_send") and not EMAIL.match((b.email or "").strip()):
-        raise HTTPException(422, "enter one valid email address")
     if b.action == "slack_lookup":
+        if not EMAIL.match((b.email or "").strip()):
+            raise HTTPException(422, "enter one valid email address")
         r = integ.slack_lookup_user(b.email.strip())
     elif b.action == "slack_send":
         r = integ.slack_send("Deskhand connection test: this channel will receive request notifications.")
     elif b.action == "gmail_send":
-        r = integ.gmail_send(b.email.strip(), "Deskhand connection test", "<p>This is a test email from Deskhand. Nothing else was done.</p>")
+        to = engine.live.notify_email()
+        if not to:
+            raise HTTPException(409, "Set the notification email first.")
+        r = integ.gmail_send(to, "Deskhand connection test", "<p>This is a test email from Deskhand. Nothing else was done.</p>")
     else:
         raise HTTPException(404, "unknown test")
-    engine.audit(None, b.actor_id, "integration_test", {"action": b.action, "mode": integ.mode, "outcome": r.kind, "code": r.code})
-    return {"mode": integ.mode, "outcome": r.kind, "code": r.code, "error": vs.redact(r.error), "data": vs.scrub(r.data)}
+    engine.audit(None, b.actor_id, "integration_test", {"action": b.action, "outcome": r.kind, "code": r.code})
+    return {"outcome": r.kind, "code": r.code, "error": vs.redact(r.error), "data": vs.scrub(r.data)}
 
 
-# ---------------- Live delivery (admin toggle, cap, retry of failed rows) ----------------
+# ---------------- Delivery status (no switch: delivery runs by itself once Slack and Gmail are set up) ----------------
 def _mask(addr):
     return (addr[0] + "***@" + addr.split("@", 1)[1]) if addr else ""
 
@@ -395,30 +407,8 @@ def _mask(addr):
 @app.get("/api/delivery")
 def delivery_status(actor_id: str):
     _admin(actor_id)
-    d = engine.live.summary()
     failed = engine.s.all("SELECT id, request_id, kind, channel, delivery_error FROM outbox WHERE delivery_status='failed' ORDER BY id DESC LIMIT 20")
-    return {**d, "mode": os.environ.get("DESKHAND_INTEGRATION", "mock").lower(), "email_to": _mask(engine.live.email_override()),
-            "kinds": sorted(dl.LIVE_KINDS), "base_url": engine.live.base_url, "failed": failed}
-
-
-class Toggle(BaseModel):
-    actor_id: str
-    on: bool
-
-
-@app.post("/api/delivery/toggle")
-def delivery_toggle(b: Toggle):
-    _admin(b.actor_id)
-    if b.on:
-        if engine.live.factory().mode != "viasocket":
-            raise HTTPException(409, "Integration is in mock mode (DESKHAND_INTEGRATION). Live delivery cannot be switched on.")
-        c = vs.ConnectionStore(engine.s, TENANT).get("slack")
-        if not c or not c["script_id"] or not c["settings"].get("channel_id"):
-            raise HTTPException(409, "Connect Slack and choose the notification channel first.")
-        if engine.live.capped():
-            raise HTTPException(409, f"The daily cap of {dl.DAILY_CAP} live deliveries is reached. Try again tomorrow (UTC).")
-    engine.live.set_toggle(b.on, b.actor_id, "admin toggle")
-    return {"ok": True, **engine.live.summary()}
+    return {**engine.live.summary(), "email_to": _mask(engine.live.notify_email()), "base_url": engine.live.base_url, "failed": failed}
 
 
 @app.post("/api/delivery/sweep")
@@ -445,8 +435,7 @@ def _worker():
         while True:
             time.sleep(10)
             try:
-                if engine.live.active():
-                    engine.live.deliver_pending()
+                engine.live.deliver_pending()
             except Exception:  # the worker must never die or log message text
                 pass
 

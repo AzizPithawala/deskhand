@@ -107,10 +107,6 @@ def test_client_sends_bare_token_not_bearer():
 
 
 # ---- adapter behaviour (mock mode is the default) ----
-def test_default_mode_is_mock():
-    assert vs.get_integration(Store(":memory:")).mode == "mock"
-
-
 def _integ(*answers, settings=None):
     store = Store(":memory:")
     cs = vs.ConnectionStore(store, "acme-demo")
@@ -163,17 +159,25 @@ def client(tmp_path, monkeypatch):
     return TestClient(main.app), main
 
 
-def test_connections_are_admin_only_and_mock_mode_blocks_real_calls(client):
+def test_connections_are_admin_only_and_list_every_setting(client):
     c, _ = client
     assert c.get("/api/connections", params={"actor_id": "e01"}).status_code == 403
-    assert c.get("/api/connections/token", params={"actor_id": "e10"}).status_code == 409
     r = c.get("/api/connections", params={"actor_id": "e10"}).json()
-    assert r["mode"] == "mock" and [a["key"] for a in r["apps"]] == ["slack", "gmail"]
+    assert [a["key"] for a in r["apps"]] == ["slack", "gmail"] and "mode" not in r
+    assert [x["key"] for x in r["apps"][1]["settings"]] == ["from", "notify_email"] and r["problems"]
+    tok = c.get("/api/connections/token", params={"actor_id": "e10"}).json()["token"]
+    assert tok.count(".") == 2 and SECRET not in tok
+
+
+def test_server_without_viasocket_values_says_so_instead_of_connecting(client, monkeypatch):
+    c, _ = client
+    monkeypatch.delenv("VIASOCKET_EMBED_SECRET")
+    assert c.get("/api/connections/token", params={"actor_id": "e10"}).status_code == 409
+    assert c.get("/api/connections", params={"actor_id": "e10"}).json()["configured"] is False
 
 
 def test_connect_flow_never_returns_ids_and_rejects_foreign_connections(client, monkeypatch):
     c, main = client
-    monkeypatch.setenv("DESKHAND_INTEGRATION", "viasocket")
     t = FakeTransport(ok({"success": True, "data": [{"id": AUTH, "isExpired": False}]}))
     real = vs.VsClient
     monkeypatch.setattr(vs, "VsClient", lambda tenant: real(tenant, t))
@@ -198,12 +202,19 @@ def test_reset_demo_data_keeps_connections(client):
     assert vs.ConnectionStore(main.engine.s, main.TENANT).get("slack")["script_id"] == SCRIPT
 
 
-def test_mock_test_calls_work_without_network_and_validate_input(client):
-    c, _ = client
-    r = c.post("/api/connections/test", json={"actor_id": "e10", "action": "gmail_send", "email": "a@b.co"}).json()
-    assert r["mode"] == "mock" and r["outcome"] == "success"
-    assert c.post("/api/connections/test", json={"actor_id": "e10", "action": "gmail_send", "email": "a@b.co, c@d.co"}).status_code == 422
+def test_test_calls_validate_input_and_email_only_the_stored_address(client, monkeypatch):
+    c, main = client
     assert c.post("/api/connections/test", json={"actor_id": "e01", "action": "slack_send"}).status_code == 403
+    assert c.post("/api/connections/test", json={"actor_id": "e10", "action": "slack_lookup", "email": "a@b.co, c@d.co"}).status_code == 422
+    assert c.post("/api/connections/test", json={"actor_id": "e10", "action": "gmail_send"}).status_code == 409  # no notification email yet
+    cs = vs.ConnectionStore(main.engine.s, main.TENANT)
+    cs.save("gmail", "gmailauth000001", "scriGMAILSCRIPT01")
+    cs.set_setting("gmail", "notify_email", "stored@example.test")
+    t = FakeTransport(ok({"success": True, "data": {"id": "m1", "threadId": "t1"}}))
+    real = vs.VsClient
+    monkeypatch.setattr(vs, "VsClient", lambda tenant, transport=None: real(tenant, t))
+    r = c.post("/api/connections/test", json={"actor_id": "e10", "action": "gmail_send", "email": "someone-else@example.test"}).json()
+    assert r["outcome"] == "success" and t.calls[0][3]["inputData"]["to"] == "stored@example.test"  # a typed address is ignored
 
 
 def test_no_secret_or_viasocket_ids_in_client_code():

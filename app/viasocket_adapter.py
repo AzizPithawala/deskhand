@@ -2,8 +2,8 @@
 
 Our code picks every action (rule 9). Every response body is inspected and normalised to success, retryable failure or
 permanent failure (rule 10): HTTP 200 never means success. The embed secret, every script_id, auth_id and token are
-redacted from anything that is logged, audited, raised or returned (rule 8). Unverified facts stay behind this
-interface, with a mock as the default (DESKHAND_INTEGRATION=mock|viasocket)."""
+redacted from anything that is logged, audited, raised or returned (rule 8). The app is LIVE-ONLY: there is no mock
+fallback here; tests inject a fake transport."""
 import base64
 import hashlib
 import hmac
@@ -24,13 +24,14 @@ APPS = {
         "service_id": "rowbu58rc", "name": "Slack", "icon": "https://stuff.thingsofbrand.com/slack.com/images/img668216333e_slack.jpg",
         "actions": {"send_message": ("rowj2u3wc8h5", "row1jrbor"), "get_user": ("rowrubgppa5r", "rowtstp3fqlh")},
         # chosen once by the company admin in a picker filled from their own workspace
-        "setting": {"key": "channel_id", "label": "Notification channel", "action": "send_message", "field": "destination.channel_id",
-                    "existing": {"destination": {"messageto": "channel"}}, "required": True},
+        "settings": [{"key": "channel_id", "label": "Notification channel", "kind": "picker", "action": "send_message", "field": "destination.channel_id",
+                      "existing": {"destination": {"messageto": "channel"}}, "required": True}],
     },
     "gmail": {
         "service_id": "rowo0bqrhj5g", "name": "Gmail", "icon": "https://stuff.thingsofbrand.com/gmail.com/images/imge_idrA5FDGTH_1763454052978.svg",
         "actions": {"send_email": ("rowwj0sfmhub", "rowogelpy0h6")},
-        "setting": {"key": "from", "label": "Send from mailbox (optional)", "action": "send_email", "field": "from", "existing": {}, "required": False},
+        "settings": [{"key": "from", "label": "Send from mailbox", "kind": "picker", "action": "send_email", "field": "from", "existing": {}, "required": False},
+                     {"key": "notify_email", "label": "Notification email", "kind": "email", "required": True}],
     },
 }
 
@@ -286,8 +287,7 @@ class ConnectionStore:
 
 # ---------------- the three actions behind one interface ----------------
 class Integration:
-    """What the rest of Deskhand may ask of the outside world in phase 1. Each method returns a Result."""
-    mode = "abstract"
+    """What the rest of Deskhand may ask of the outside world. Each method returns a Result."""
 
     def slack_lookup_user(self, email):
         raise NotImplementedError
@@ -297,24 +297,6 @@ class Integration:
 
     def gmail_send(self, to, subject, body):
         raise NotImplementedError
-
-
-class MockIntegration(Integration):
-    mode = "mock"
-
-    def __init__(self):
-        self.sent = []
-
-    def slack_lookup_user(self, email):
-        return Result(SUCCESS, data={"found": True, "id": "U-MOCK", "name": email.split("@")[0], "mock": True})
-
-    def slack_send(self, text):
-        self.sent.append(("slack", text))
-        return Result(SUCCESS, data={"ts": "0.0", "mock": True})
-
-    def gmail_send(self, to, subject, body):
-        self.sent.append(("gmail", to, subject))
-        return Result(SUCCESS, data={"id": "mock-message", "mock": True})
 
 
 def _slack_sent_ok(body):
@@ -326,8 +308,6 @@ def _gmail_sent_ok(body):
 
 
 class ViaSocketIntegration(Integration):
-    mode = "viasocket"
-
     def __init__(self, store, tenant, client=None):
         self.conns, self.client = ConnectionStore(store, tenant), client or VsClient(tenant)
 
@@ -383,7 +363,4 @@ class ViaSocketIntegration(Integration):
 
 
 def get_integration(store, tenant=None):
-    """DESKHAND_INTEGRATION=mock|viasocket, default mock."""
-    if os.environ.get("DESKHAND_INTEGRATION", "mock").lower() == "viasocket":
-        return ViaSocketIntegration(store, tenant or os.environ.get("DESKHAND_TENANT_ID", "acme-demo"))
-    return MockIntegration()
+    return ViaSocketIntegration(store, tenant or os.environ.get("DESKHAND_TENANT_ID", "acme-demo"))

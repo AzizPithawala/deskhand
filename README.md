@@ -25,22 +25,22 @@ Open http://localhost:8000. Needs Python 3.11+. Run the tests with `make test` (
   never approves anything, append-only audit log (enforced by database triggers).
 - Chaos tab: seven live failure buttons. Dashboard with guard counters. Weekly digest preview (JSON).
 
-## Connections tab (viaSocket spike, phase 1)
-Admin only (act as Arjun Patel). The company admin clicks Connect for Slack or Gmail and signs in on the app's own screen; Deskhand stores
-only the connection ids on the server (never shown in the UI or logs), per company. Needs `.env` with the three viaSocket values and
-`DESKHAND_INTEGRATION=viasocket` (default is `mock`, which uses no network). Engine and approval logic are not connected to it yet.
-
-## Live delivery (off by default)
-Approvals stay inside Deskhand; only notifications can go out. Admin toggle on the Connections tab (needs DESKHAND_INTEGRATION=viasocket, Slack
-connected and a channel chosen). Only approval_request, approved, rejected, fulfilled, escalation_1, escalation_2 and parked are sent, Slack to the
-chosen channel prefixed "[Deskhand demo to <name>]", email only to DESKHAND_LIVE_EMAIL_OVERRIDE. Hard cap 40 per day (UTC). Chaos, tests and Reset demo
-never send live. Failed deliveries show on the Connections tab with a Retry button. Approvers click the link in the message to open their Deskhand inbox.
+## Connections tab and delivery (live-only)
+Admin only (act as Arjun Patel), and the only setup. The admin connects Slack and picks the notification channel, then connects Gmail, picks the
+"send from" mailbox and enters ONE notification email. Sign-in happens on each app's own screen; Deskhand stores only connection ids on the server
+(never shown, never logged). There is no switch and no mock: as soon as Slack and its channel are set, every chat notification goes to that channel,
+prefixed "[Deskhand to <name>]"; as soon as Gmail and the notification email are set, every email notification goes to that one address with
+"To <name>:" in the subject, never any other address. If either is missing, a red banner shows on every tab and everything else keeps working.
+Approvals never wait for delivery: a sweep delivers outbox rows, exactly once each (atomic claim, single-flight sweep), and never resends when the
+outcome is unknown (failed rows show on the Connections tab with a Retry button). Backstop cap: 150 deliveries per UTC day, shown as used / 150 on
+the dashboard, with a banner at the cap. Chaos runs and Reset demo never send (their rows are marked skipped); Reset keeps connections and settings.
+Message text is escaped for Slack; approver messages carry a link to their Deskhand inbox. `make preflight` prints yes/no for the setup.
 
 ## Hosted demo (Embarko)
 Embarko has no login, so the app has its own password gate (HTTP Basic, any user name, password in `DESKHAND_DEMO_PASSWORD`) on every route. When
 hosted and no password is set, nothing is served. Data lives in `DATA_DIR` (main.py points the database there). One process only.
-Environment variable names: DESKHAND_INTEGRATION, DESKHAND_LIVE_DELIVERY, DESKHAND_BASE_URL, DESKHAND_TENANT_ID, DESKHAND_LIVE_EMAIL_OVERRIDE,
-DESKHAND_DEMO_PASSWORD, VIASOCKET_ORG_ID, VIASOCKET_PROJECT_ID, VIASOCKET_EMBED_SECRET, VIASOCKET_API_URL, VIASOCKET_RUN_URL. No ANTHROPIC_API_KEY.
+Environment variable names: DESKHAND_BASE_URL, DESKHAND_TENANT_ID, DESKHAND_DEMO_PASSWORD, VIASOCKET_ORG_ID, VIASOCKET_PROJECT_ID, VIASOCKET_EMBED_SECRET,
+VIASOCKET_API_URL, VIASOCKET_RUN_URL. No ANTHROPIC_API_KEY. The notification email is entered on the Connections tab, not as a variable.
 
 ## What is NOT done or NOT verified
 - Real viaSocket integration (Slack, Gmail, Keka). See docs/VIASOCKET_INTEGRATION.md and milestones M1.5 and M8.
