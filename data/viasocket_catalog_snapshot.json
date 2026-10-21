@@ -1,0 +1,577 @@
+{
+  "snapshot_date": "2026-10-21",
+  "source": "Public viaSocket integration pages (viasocket.com/integrations/<app>), full lists read from page data",
+  "caveat": "Pages change. Public pages describe the embed catalog; a workspace may show more. Names and descriptions only: input and output schemas are UNVERIFIED.",
+  "apps": {
+    "slack": {
+      "triggers": [
+        {
+          "name": "New Message in Channels",
+          "description": "Runs when a new message is received in a specific Slack channel. You can select which channel to monitor."
+        },
+        {
+          "name": "New User Joined or Updated in Your Org",
+          "description": "Triggers when a new user join workspace."
+        },
+        {
+          "name": "New Message on Slack",
+          "description": "Runs when a new message is posted anywhere in Slack — across all channels and direct messages. No channel filter applied."
+        },
+        {
+          "name": "New Thread Message",
+          "description": "Runs when new thread message."
+        },
+        {
+          "name": "New member join/leave or updated in channel",
+          "description": "Triggers when a user joins, leaves, or updates their profile in the selected Slack channel."
+        },
+        {
+          "name": "New Mention",
+          "description": "Runs when someone mentions your Slack app or user in a channel you belong to."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Send Message",
+          "description": "Send or schedule a message to a channel, user, or thread; supports channel names and IDs."
+        },
+        {
+          "name": "Send Interactive Message",
+          "description": "Send a message with buttons or a form to collect approvals or responses."
+        },
+        {
+          "name": "Send Block/buttons/Intractive message using AI",
+          "description": "Send Block, buttons, or slack form using AI"
+        },
+        {
+          "name": "View_open BlockKit Modal using JSON",
+          "description": "Open Model as a response or any BlockKit action"
+        },
+        {
+          "name": "Chat_update slack block or message using messageTs",
+          "description": "Update your open or any other chat message using messageTs"
+        },
+        {
+          "name": "Send Message as Thread",
+          "description": "Post a reply to an existing Slack thread. Supports immediate or scheduled delivery,"
+        },
+        {
+          "name": "Create Channel",
+          "description": "Create a new channel"
+        },
+        {
+          "name": "Set Channel Topic",
+          "description": "Set or update channel topic"
+        },
+        {
+          "name": "Message Private Channel",
+          "description": "Message a private channel"
+        },
+        {
+          "name": "Create Private Channel",
+          "description": "Create a new private channel"
+        },
+        {
+          "name": "Get Thread Replies",
+          "description": "List replies in a Slack thread"
+        },
+        {
+          "name": "Edit Channel Message",
+          "description": "Edit a channel message"
+        },
+        {
+          "name": "List all Private Channels",
+          "description": "To fetch all private channels, you must first manually invite the bot to that channel in Slack. Example: Open the private channel → type /invite @your-bot-name → then retry the action."
+        },
+        {
+          "name": "Find Public channel",
+          "description": "Find public channel in slack using either the channel's ID or name"
+        },
+        {
+          "name": "Get Messages from Slack",
+          "description": "Retrieve messages from a Slack thread or channel within a selected time range."
+        },
+        {
+          "name": "Add Users to Channel",
+          "description": "Invite users to a channel"
+        },
+        {
+          "name": "Send Direct Message",
+          "description": "Send a Slack DM to a user"
+        },
+        {
+          "name": "Get all Channel Members",
+          "description": "List all the member in a channel."
+        },
+        {
+          "name": "Get User Information",
+          "description": "Look up a Slack user by email or name and return selected profile fields."
+        },
+        {
+          "name": "Get User Complete Profile Details by ID",
+          "description": "Get a user's full profile, including custom fields, by ID."
+        },
+        {
+          "name": "Create Canvas",
+          "description": "Create a new Slack canvas."
+        },
+        {
+          "name": "List all Public Channels",
+          "description": "Show all public channels"
+        },
+        {
+          "name": "Send Block Kit Message",
+          "description": "Send or schedule a Block Kit message to channels or users; supports mentions, threads, attachments, and bot options."
+        },
+        {
+          "name": "Update Canvas",
+          "description": "Edit canvas content & sections."
+        },
+        {
+          "name": "Lookup Canvas Sections",
+          "description": "Find sections within a canvas"
+        }
+      ]
+    },
+    "gmail": {
+      "triggers": [
+        {
+          "name": "New Attachment",
+          "description": "Retrieve recent Gmail messages (optionally filtered by label) that contain attachments, upload those attachments to Viasocket, and return message and attachment details."
+        },
+        {
+          "name": "New Email Arrives",
+          "description": "Runs when new email arrives. Filter by label, sender, or subject and choose to include or ignore replies."
+        },
+        {
+          "name": "New Email Sent",
+          "description": "Runs the workflow automatically whenever a new email appears in the Sent mailbox or in a specified label."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Send Email",
+          "description": "send a new email message."
+        },
+        {
+          "name": "Modify Email Labels",
+          "description": "Add or remove labels on a message or thread; target by thread ID, message ID, or search filters."
+        },
+        {
+          "name": "Reply To Thread",
+          "description": "Reply to an existing email thread — choose recipients (sender/all/specific), send text or HTML, add attachments, and apply labels."
+        },
+        {
+          "name": "Get Thread Replies",
+          "description": "Retrieve all messages in a thread excluding those sent from the specified email address."
+        },
+        {
+          "name": "Search_Email_Messages",
+          "description": "Search emails (manual or AI), resolve custom labels by name or ID, and return message details, attachments, and a next-page token."
+        },
+        {
+          "name": "Get Email Attachment",
+          "description": "Retrieve attachments from an email by Message ID and return attachment details (filename, MIME type, size) and accessible URLs."
+        },
+        {
+          "name": "Create Email Draft",
+          "description": "Save an email draft in Gmail with recipients, subject, plain or HTML message, and optional attachments (file URLs or Google Drive files)."
+        },
+        {
+          "name": "List_all_Mails",
+          "description": "Added optional multi-select System Labels filter (Spam/Important/Categories/etc.) mapped to Gmail system label IDs and applied via labelIds param with backward-compatible behavior."
+        },
+        {
+          "name": "Get Gmail Message by ID",
+          "description": "Retrieve a single Gmail message by message ID, returning headers, plain and HTML body, attachments, and thread info."
+        }
+      ]
+    },
+    "keka": {
+      "note": "Subset of 91 actions relevant to Deskhand. Only trigger: Employee Clocks In.",
+      "triggers": [
+        {
+          "name": "Employee Clocks In",
+          "description": "Runs when employee clocks in"
+        }
+      ],
+      "actions": [
+        {
+          "name": "Create Exit Request",
+          "description": "Record resignation and last day"
+        },
+        {
+          "name": "List leave types",
+          "description": "List all leave types in your Keka account."
+        },
+        {
+          "name": "List All Employee Salary Details ",
+          "description": "Search Employee Salary Details by Employee Number"
+        },
+        {
+          "name": "List Employee Documents",
+          "description": "Get documents for one or more employees by email or employee ID. Optionally filter by document type."
+        },
+        {
+          "name": "Find Employees",
+          "description": "Find employees using search, filters, or recent/all modes with pagination; optionally select which fields to return."
+        },
+        {
+          "name": "Log Employee Clock In and Out",
+          "description": "Log an employee's clock-in and clock-out times to update attendance records."
+        },
+        {
+          "name": "Create Leave Request",
+          "description": "Create a leave request for an employee using their email or employee ID, specifying dates, sessions, leave type, and reason."
+        },
+        {
+          "name": "Upload Employee Document",
+          "description": "Uploads a document to an employee's profile in Keka."
+        },
+        {
+          "name": "Update Employee Details",
+          "description": "Update employee details"
+        },
+        {
+          "name": "Add an new employee",
+          "description": "Create a new employee in Keka with personal details, job assignment, and salary information."
+        },
+        {
+          "name": "List All Leave Balances",
+          "description": "Retrieve leave balances for employees, optionally filtered by employee IDs or leave type IDs. Returns combined results for all matching records."
+        },
+        {
+          "name": "List All Departments",
+          "description": "Retrieve departments, optionally filtering by department IDs or last modified date."
+        },
+        {
+          "name": "List All Locations ",
+          "description": "Retrieve company locations, optionally filtered by location IDs or by last modified date."
+        },
+        {
+          "name": "List All Group Types",
+          "description": "Retrieve all company group type records (e.g., Department, Location, Cost Center)."
+        },
+        {
+          "name": "List All Groups",
+          "description": "Retrieve all company groups, optionally filtered by group type, system group type, or last modified date."
+        },
+        {
+          "name": "List User Leave Requests",
+          "description": "Retrieve all leave requests for a specified employee (search by display name, first name, or employee ID), optionally filtered by a from/to date range."
+        },
+        {
+          "name": "List of Holidays",
+          "description": "Retrieve all holidays for a specified calendar and year."
+        },
+        {
+          "name": "List of Employee Document Attachment Download Url",
+          "description": "Retrieve a secure download URL for a specific employee document attachment."
+        },
+        {
+          "name": "List all Leave Plans",
+          "description": "Retrieve all leave plans from Keka, optionally filtered by one or more Leave Plan IDs."
+        },
+        {
+          "name": "List all shift policies",
+          "description": "Retrieve all shift policies configured in the company's Keka account."
+        },
+        {
+          "name": "List all Tracking Policies",
+          "description": "Retrieve all tracking policies configured in Keka."
+        },
+        {
+          "name": "List all weeklyoff policies",
+          "description": "Retrieve all weekly off policies configured for the company; returns each policy's id and name."
+        },
+        {
+          "name": "List all holidays Calendar",
+          "description": "Retrieve all holiday calendars configured for the company."
+        },
+        {
+          "name": "List all Employee Salaries",
+          "description": "Retrieve payroll salary records for all employees, including earnings, deductions, contributions, total compensation and effective dates."
+        },
+        {
+          "name": "List all Pay Groups",
+          "description": "Retrieve all payroll pay groups for the authenticated company."
+        },
+        {
+          "name": "List all Employee FnF Details",
+          "description": "Retrieve final settlement (FnF) details for one or more employees, or for all employees if none are specified."
+        },
+        {
+          "name": "List of Financial Details for All Employees",
+          "description": "Retrieve payroll, bank account, and statutory account details for selected employees or all employees."
+        },
+        {
+          "name": "List Employee Form 16",
+          "description": "Retrieve an employee's Form 16 tax certificate for a specified legal entity and financial year."
+        },
+        {
+          "name": "List Tax Groups",
+          "description": "Retrieve all tax groups for the specified legal entity."
+        },
+        {
+          "name": "List Employee Expenses",
+          "description": "Fetch all expenses for a specific employee, optionally filtered by date range or last modified date."
+        },
+        {
+          "name": "List expense policies",
+          "description": "List expense policies and show key details. Optionally filter by policy IDs or by whether they allow expense claims or travel requests."
+        },
+        {
+          "name": "Update Employee Bank Details",
+          "description": "Update an employee's bank account and how they are paid in Keka."
+        },
+        {
+          "name": "List Assets",
+          "description": "View assets with filters"
+        },
+        {
+          "name": "Assign Asset to Employees",
+          "description": "Assign an asset to employees"
+        },
+        {
+          "name": "Update Employee Salary",
+          "description": "Update an employee's salary, salary type, effective date, and optional bonus details in Keka."
+        },
+        {
+          "name": "List Clocked In Employees",
+          "description": "List clocked-in employees"
+        },
+        {
+          "name": "Recover Assigned Assets",
+          "description": "Recover assigned assets"
+        },
+        {
+          "name": "Give Praise To Employee",
+          "description": "Recognize one or more employees with a badge and feedback, and optionally post the recognition to the company wall."
+        },
+        {
+          "name": "List All Policies",
+          "description": "Show all company policies"
+        },
+        {
+          "name": "List Employee Skills",
+          "description": "List skills for a specific employee, with optional filters (skill name, rating, skill ID) and last-modified date."
+        },
+        {
+          "name": "Add Skills to an Employee",
+          "description": "Add one or more skills to a specific employee and optionally include ratings for each skill."
+        },
+        {
+          "name": "List Review Groups",
+          "description": "Retrieve review groups — fetch specific groups by ID or browse paginated, paged results."
+        },
+        {
+          "name": "List Employee Reviews",
+          "description": "Retrieve employee reviews, with optional filters for employee, review group, review cycle, status, and pagination."
+        },
+        {
+          "name": "List Helpdesk Tickets",
+          "description": "List helpdesk tickets with optional filters (status, priority, assignee, employee, category, last modified) and pagination."
+        },
+        {
+          "name": "List Helpdesk Categories",
+          "description": "Find helpdesk categories in your Keka account. Supports filters for ID, name, parent category, disabled status, and pagination."
+        },
+        {
+          "name": "List Helpdesk Ticket Closing Reasons",
+          "description": "Retrieve helpdesk ticket closing reasons from your Keka account."
+        },
+        {
+          "name": "Create Helpdesk Ticket",
+          "description": "Create a helpdesk ticket with title, description, category, priority, reporter (employee ID), and optional assignee."
+        }
+      ]
+    }
+  },
+  "channel_matrix": {
+    "telegram": {
+      "triggers": [
+        "When the Telegram bot receives a new message",
+        "When a new image arrives in Telegram",
+        "When a new message or image is sent to the bot"
+      ],
+      "send_actions": [
+        "Send Message",
+        "Reply To Message",
+        "List Messages",
+        "Delete Message",
+        "Send Interactive Messages"
+      ]
+    },
+    "whatsapp": {
+      "triggers": [],
+      "send_actions": [
+        "Send WhatsApp Message"
+      ]
+    },
+    "twilio": {
+      "triggers": [
+        "New Message ",
+        "New Phone Number Is Added",
+        "New Alert Appears",
+        "New Incoming Call"
+      ],
+      "send_actions": [
+        "Send SMS",
+        "Create Message",
+        "Get A Message",
+        "Delete a Message",
+        "Send WhatsApp Message"
+      ]
+    },
+    "discord": {
+      "triggers": [
+        "New Message Posted to Channel",
+        "New Forum Post",
+        "New Forum Message",
+        "New Mention",
+        "Role Assigned to the User",
+        "Watch Guild Members",
+        "Watch Channel Invites"
+      ],
+      "send_actions": [
+        "Send Message on Channel",
+        "Send Direct Message",
+        "Get Messages of Channel",
+        "Create a Forum Post",
+        "Send Message to Forum Post",
+        "List Forum Posts"
+      ]
+    },
+    "microsoft-outlook": {
+      "triggers": [
+        "When a new contact is created",
+        "When a new email is received",
+        "New Calendar Event Created"
+      ],
+      "send_actions": [
+        "Send Email",
+        "List Messages"
+      ]
+    },
+    "zoho-cliq": {
+      "triggers": [
+        "New Message"
+      ],
+      "send_actions": [
+        "Broadcast a Bot Message",
+        "Send Direct Message",
+        "Send Message to Channel"
+      ]
+    },
+    "msg91": {
+      "triggers": [
+        "When a new inbound or outbound WhatsApp delivery report arrives",
+        "When an SMS is confirmed as delivered",
+        "When a new voice call is made or received",
+        "When an RCS message delivery report is received",
+        "When an OTP is sent",
+        "When a new email delivery report is received",
+        "When your account receives a push notification",
+        "New Ticket Arrives"
+      ],
+      "send_actions": [
+        "Send Campaign",
+        "Send Template SMS",
+        "Send a Mail ",
+        "Send WhatsApp Template Message",
+        "Send WhatsApp Message ",
+        "Resend OTP"
+      ]
+    },
+    "interakt": {
+      "triggers": [
+        "New Message Received"
+      ],
+      "send_actions": [
+        "Send WhatsApp Template Message"
+      ]
+    },
+    "wati": {
+      "triggers": [
+        "New Event Occurs",
+        "When a chatbot is triggered",
+        "When a template message is sent in Wati",
+        "When a session message is sent",
+        "When a new message is received from a contact",
+        "When a new message arrives in Wati",
+        "When a CTA (call-to-action) button is clicked",
+        "When a call's status changes"
+      ],
+      "send_actions": [
+        "Send WhatsApp Template Message",
+        "Send Session Message",
+        "List Message Templates",
+        "Find Messages by WhatsApp Number"
+      ]
+    },
+    "gupshup": {
+      "triggers": [],
+      "send_actions": [
+        "Send WhatsApp Template Message",
+        "Send WhatsApp Message"
+      ]
+    },
+    "google-chat": {
+      "triggers": [
+        "New Message Arrives in Google Chat Space"
+      ],
+      "send_actions": [
+        "Send Message",
+        "List Messages"
+      ]
+    },
+    "mattermost": {
+      "triggers": [
+        "New Message Posted"
+      ],
+      "send_actions": [
+        "Get Message",
+        "Delete Message",
+        "Send Message",
+        "Update Message",
+        "Search Messages"
+      ]
+    },
+    "instagram": {
+      "triggers": [
+        "New Comment",
+        "New DM",
+        "New Media Is Posted to My Account",
+        "New Story Reply",
+        "New User's First Direct Message"
+      ],
+      "send_actions": [
+        "Send DM Message",
+        "Reply to Comment",
+        "Send DM Private Reply from Comment",
+        "Send Quick Replies",
+        "React/Unreact to a message",
+        "Get DM Message Details"
+      ]
+    }
+  },
+  "not_found_in_public_catalog": [
+    "microsoft-teams",
+    "zoho-people",
+    "bamboohr",
+    "greythr",
+    "jira"
+  ],
+  "mock_mapping_hint": {
+    "hr.create_leave_request": "Keka: Create Leave Request",
+    "hr.list_leave_balances": "Keka: List All Leave Balances",
+    "hr.find_employee": "Keka: Find Employees",
+    "hr.create_helpdesk_ticket": "Keka: Create Helpdesk Ticket",
+    "hr.assign_asset": "Keka: Assign Asset to Employees",
+    "chat.send_interactive": "Slack: Send Interactive Message",
+    "chat.reply_thread": "Slack: Send Message as Thread",
+    "chat.lookup_user": "Slack: Get User Information",
+    "mail.reply": "Gmail: Reply To Thread",
+    "mail.send": "Gmail: Send Email"
+  }
+}

@@ -1,0 +1,6 @@
+.env
+*.db
+__pycache__/
+.venv/
+viasocket-check.mjs
+node_modules/

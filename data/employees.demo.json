@@ -1,0 +1,133 @@
+{
+  "_note": "Fictional demo company. Emails use .example and phones are fake. Roles drive routing.",
+  "employees": [
+    {
+      "id": "e01",
+      "name": "Priya Sharma",
+      "role": "employee",
+      "department": "Engineering",
+      "manager_id": "e04",
+      "email": "priya.sharma@acme-demo.example",
+      "slack_id": "U001",
+      "phone": "+91 90000 00001",
+      "active": true
+    },
+    {
+      "id": "e02",
+      "name": "Aman Verma",
+      "role": "employee",
+      "department": "Engineering",
+      "manager_id": "e04",
+      "email": "aman.verma@acme-demo.example",
+      "slack_id": "U002",
+      "phone": "+91 90000 00002",
+      "active": true
+    },
+    {
+      "id": "e03",
+      "name": "Neha Gupta",
+      "role": "employee",
+      "department": "Operations",
+      "manager_id": "e05",
+      "email": "neha.gupta@acme-demo.example",
+      "slack_id": "U003",
+      "phone": "+91 90000 00003",
+      "active": true
+    },
+    {
+      "id": "e04",
+      "name": "Rahul Mehta",
+      "role": "manager",
+      "department": "Engineering",
+      "manager_id": "e05",
+      "email": "rahul.mehta@acme-demo.example",
+      "slack_id": "U004",
+      "phone": "+91 90000 00004",
+      "active": true
+    },
+    {
+      "id": "e05",
+      "name": "Kavita Rao",
+      "role": "head of operations",
+      "department": "Operations",
+      "manager_id": "e10",
+      "email": "kavita.rao@acme-demo.example",
+      "slack_id": "U005",
+      "phone": "+91 90000 00005",
+      "active": true
+    },
+    {
+      "id": "e06",
+      "name": "Imran Khan",
+      "role": "it_admin",
+      "department": "IT",
+      "manager_id": "e05",
+      "email": "imran.khan@acme-demo.example",
+      "slack_id": "U006",
+      "phone": "+91 90000 00006",
+      "active": true
+    },
+    {
+      "id": "e07",
+      "name": "Sunita Joshi",
+      "role": "office_admin",
+      "department": "Operations",
+      "manager_id": "e05",
+      "email": "sunita.joshi@acme-demo.example",
+      "slack_id": "U007",
+      "phone": "+91 90000 00007",
+      "active": true
+    },
+    {
+      "id": "e08",
+      "name": "Deepa Nair",
+      "role": "hr_lead",
+      "department": "HR",
+      "manager_id": "e05",
+      "email": "deepa.nair@acme-demo.example",
+      "slack_id": "U008",
+      "phone": "+91 90000 00008",
+      "active": true
+    },
+    {
+      "id": "e09",
+      "name": "Vikram Singh",
+      "role": "finance_lead",
+      "department": "Finance",
+      "manager_id": "e05",
+      "email": "vikram.singh@acme-demo.example",
+      "slack_id": "U009",
+      "phone": "+91 90000 00009",
+      "active": true
+    },
+    {
+      "id": "e10",
+      "name": "Arjun Patel",
+      "role": "admin",
+      "department": "Leadership",
+      "manager_id": null,
+      "email": "arjun.patel@acme-demo.example",
+      "slack_id": "U010",
+      "phone": "+91 90000 00010",
+      "active": true
+    }
+  ],
+  "leave_balances": {
+    "e01": {
+      "casual": 6,
+      "sick": 5
+    },
+    "e02": {
+      "casual": 2,
+      "sick": 4
+    },
+    "e03": {
+      "casual": 8,
+      "sick": 6
+    },
+    "e04": {
+      "casual": 5,
+      "sick": 5
+    }
+  }
+}
