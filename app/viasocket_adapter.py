@@ -15,8 +15,6 @@ from dataclasses import dataclass, field
 
 import httpx
 
-API = "https://flow-api.viasocket.com"
-RUN = "https://flow.sokt.io"
 CONNECT_JS = "https://flow.viasocket.com/connect.js"
 USER_AGENT = "deskhand/0.1 (+viasocket-adapter)"  # Python's default urllib agent was answered 403 by the API edge
 
@@ -48,6 +46,21 @@ def load_dotenv(path=".env"):
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+def api_base():
+    """Hosts come from .env (VIASOCKET_API_URL, VIASOCKET_RUN_URL), as in viaSocket's own examples; see .env.example."""
+    v = os.environ.get("VIASOCKET_API_URL", "").rstrip("/")
+    if not v:
+        raise RuntimeError("VIASOCKET_API_URL is not set")
+    return v
+
+
+def run_base():
+    v = os.environ.get("VIASOCKET_RUN_URL", "").rstrip("/")
+    if not v:
+        raise RuntimeError("VIASOCKET_RUN_URL is not set")
+    return v
 
 
 def sensitive_values(extra=()):
@@ -181,7 +194,7 @@ class VsClient:
         self.tenant, self.t = tenant, transport or HttpxTransport()
 
     def configured(self):
-        return all(os.environ.get(k) for k in ("VIASOCKET_ORG_ID", "VIASOCKET_PROJECT_ID", "VIASOCKET_EMBED_SECRET"))
+        return all(os.environ.get(k) for k in ("VIASOCKET_ORG_ID", "VIASOCKET_PROJECT_ID", "VIASOCKET_EMBED_SECRET", "VIASOCKET_API_URL", "VIASOCKET_RUN_URL"))
 
     def token(self):
         return sign_embed_token(self.tenant)
@@ -196,7 +209,7 @@ class VsClient:
         return r
 
     def api(self, method, path, body=None, expect=None):
-        return self._send(method, API + path, {"authorization": self.token()}, body, expect)
+        return self._send(method, api_base() + path, {"authorization": self.token()}, body, expect)
 
     def connections(self):
         r = self.api("GET", "/embed/authentications")
@@ -234,7 +247,7 @@ class VsClient:
         return self.api("DELETE", f"/embed/authentications/revoke/{auth_id}")
 
     def run(self, script_id, version_id, input_data, expect=None):
-        return self._send("POST", f"{RUN}/func/{script_id}", None, {"action_version_id": version_id, "inputData": input_data}, expect, extra=(script_id,))
+        return self._send("POST", f"{run_base()}/func/{script_id}", None, {"action_version_id": version_id, "inputData": input_data}, expect, extra=(script_id,))
 
 
 # ---------------- connection store (per tenant and app; ids are secrets and never leave the server) ----------------

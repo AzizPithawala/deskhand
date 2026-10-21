@@ -86,5 +86,14 @@ VERIFIED
   `{ok:true, channel, ts, message:{...}, warning:"missing_charset"}` with no viaSocket envelope. Success needs `ok:true` and a `ts`.
   The reply echoes our runner id (script_id) inside `message.metadata.event_payload`, so raw Slack replies must never be logged, shown or
   returned. The adapter now returns only `ts` and `channel`, and every result is deep-scrubbed. The message arrived under the bot name "Deskhand".
-UNVERIFIED (next)
-- Slack Get User Information real response (found and not-found shapes); Gmail Send Email real response.
+- Step 2b, Slack Get User Information (rowrubgppa5r, search_by email_search): a workspace member answers HTTP 200 with the profile fields
+  (`id`, `name`, `real_name`, as requested); an unknown address answers HTTP 200 `{"email":"<asked>","message":"User not found"}` in about 1 s.
+  Both are HTTP 200, so "not found" is read from the body and treated as a clean answer (found:false), not an error. One earlier
+  call for the unknown address ended in a 25 s read timeout and was correctly classed retryable; the next two calls answered in about a second.
+- Step 3, Gmail Send Email (rowwj0sfmhub) with an optional From mailbox chosen on the Connections tab: HTTP 200 envelope
+  `{success:true, data:{id, threadId}}`; success requires `data.id`. The test message reached the recipient's Gmail (proved by the API answer only; delivery was not checked from the recipient's side).
+- viaSocket's check script (`make check-viasocket`) passes: 0 FAIL; catalog ids match; the embed token is accepted; connect.js loads. It flags
+  API hosts written as literals in code, so the hosts now come from .env (VIASOCKET_API_URL, VIASOCKET_RUN_URL), as in viaSocket's examples.
+UNVERIFIED
+- Whether viaSocket retries or dedupes an action call (nothing in the responses shows either); whether the Connect popup's Reconnect
+  (a fresh connection that replaces the stored one) leaves the old runner active; Keka (not in this phase); events (phase 2).

@@ -21,6 +21,8 @@ def env(monkeypatch):
     monkeypatch.setenv("VIASOCKET_ORG_ID", "org1")
     monkeypatch.setenv("VIASOCKET_PROJECT_ID", "proj1")
     monkeypatch.setenv("VIASOCKET_EMBED_SECRET", SECRET)
+    monkeypatch.setenv("VIASOCKET_API_URL", "https://api.test.invalid")
+    monkeypatch.setenv("VIASOCKET_RUN_URL", "https://run.test.invalid")
     monkeypatch.delenv("DESKHAND_INTEGRATION", raising=False)
 
 
