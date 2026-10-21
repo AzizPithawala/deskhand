@@ -116,3 +116,17 @@ Design facts (ours, not viaSocket's):
 UNVERIFIED
 - A real end-to-end run on the hosted instance: an approval message in Slack with the prefix and inbox link, one email to the notification address.
 - How Slack renders the escaped text and the link in the real channel.
+
+## SPIKE: viaSocket AI as the request classifier (2026-10-21, real calls, no secrets or ids)
+VERIFIED
+- `POST <api>/embed/ai/message` with the embed token, body `{message, thread_id, prompt, service:"anthropic", model:"claude-sonnet-4-6", response_type:"json_schema", json_schema}`
+  is reachable and authenticated (the answer is a viaSocket-level refusal, not a 401).
+- It answered HTTP 402 `{"success":false,"message":"Plan credits are exhausted. Upgrade the plan to continue.","data":null}` in about 0.5 s, for a valid
+  call and for a deliberately wrong model name alike (credits are checked before the model name). So this workspace cannot run viaSocket AI right now.
+- Consequence for the adapter: a 402 must be classified as a PERMANENT failure (do not retry) and must fall back to the rules classifier.
+UNVERIFIED (blocked by the 402)
+- Real success response shape (object vs string `content`), latency, credits per call, how a bad model name or schema is reported, whether the
+  strict JSON schema accepts nullable fields.
+DOCUMENTED RISKS (viaSocket ai.md)
+- Web access and a browser are always on for this AI and cannot be switched off; the only control is the prompt. Message text is untrusted, so the prompt must forbid browsing.
+- The prompt is not stored by viaSocket (send it every call); threads are kept per `unique_identifier`, so each classification needs its own thread id.
