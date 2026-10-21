@@ -25,6 +25,11 @@ Open http://localhost:8000. Needs Python 3.11+. Run the tests with `make test` (
   never approves anything, append-only audit log (enforced by database triggers).
 - Chaos tab: seven live failure buttons. Dashboard with guard counters. Weekly digest preview (JSON).
 
+## Connections tab (viaSocket spike, phase 1)
+Admin only (act as Arjun Patel). The company admin clicks Connect for Slack or Gmail and signs in on the app's own screen; Deskhand stores
+only the connection ids on the server (never shown in the UI or logs), per company. Needs `.env` with the three viaSocket values and
+`DESKHAND_INTEGRATION=viasocket` (default is `mock`, which uses no network). Engine and approval logic are not connected to it yet.
+
 ## What is NOT done or NOT verified
 - Real viaSocket integration (Slack, Gmail, Keka). See docs/VIASOCKET_INTEGRATION.md and milestones M1.5 and M8.
 - The Claude classification path (app/classifier.py: classify_anthropic) has never been run against the live API. It is

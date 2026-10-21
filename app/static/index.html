@@ -50,7 +50,7 @@ function confirmBox(title,help){return askText(title,help,false).then(v=>v!==nul
 async function init(){S=await api('/state');
   $('#who').innerHTML=S.employees.map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.role)})</option>`).join('');
   $('#who').onchange=()=>render();$('#ai').textContent='understanding: '+S.ai;
-  $('#nav').innerHTML=['chat','email','inbox','requests','dashboard','audit','chaos'].map(t=>`<button id="t_${t}" onclick="go('${t}')">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')+'<span style="flex:1"></span><button class="quiet" onclick="resetAll()">Reset demo data…</button>';
+  $('#nav').innerHTML=['chat','email','inbox','requests','dashboard','audit','chaos','connections'].map(t=>`<button id="t_${t}" onclick="go('${t}')">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')+'<span style="flex:1"></span><button class="quiet" onclick="resetAll()">Reset demo data…</button>';
   go('chat');setInterval(()=>{if(['chat','email','inbox'].includes(tab)&&!document.querySelector('dialog[open]'))render(true)},4000)}
 function go(t){tab=t;document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.id==='t_'+t));const m=$('#main');if(m.dataset.t!==t){m.dataset.t='';m.innerHTML='<p class="mute">Loading…</p>'}render()}
 async function clock(){const s=await api('/clock');const d=new Date(s.now*1000);$('#clock').textContent='demo clock: '+d.toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'UTC'})+' UTC'}
@@ -94,6 +94,14 @@ async function render(quiet){const my=++rseq;const stale=()=>my!==rseq;const m=$
     <p class="mute">Classified by: ${esc(Object.entries(d.classified_by).map(([k,v])=>k+' '+v).join(', '))}${d.breaker_open.length?` · <b>Intake paused on: ${esc(d.breaker_open.join(', '))}</b> <button onclick="api('/admin/breaker_reset',{}).then(render)">Reset breaker</button>`:''}</p>`}
   else if(tab==='audit'){const a=await api('/audit?limit=150');if(stale())return;m.dataset.t='audit';
     m.innerHTML=`<div class="card"><table><tr><th>#</th><th>Request</th><th>Actor</th><th>Event</th><th>Data</th></tr>${a.map(e=>`<tr><td>${e.id}</td><td>${e.request_id??''}</td><td>${esc(person(e.actor))}</td><td>${esc(e.type)}</td><td class="mute">${esc(e.data_json)}</td></tr>`).join('')}</table></div>`}
+  else if(tab==='connections'){const c=await api('/connections?actor_id='+me()).catch(e=>({error:e.message}));if(stale())return;m.dataset.t='connections';
+    if(c.error){m.innerHTML=`<div class="card"><b>Connections are for admins.</b><p class="mute">${esc(c.error)} Switch "Act as" to Arjun Patel (admin).</p></div>`;return}
+    CONN.data=c;if(c.mode==='viasocket'&&c.configured){await prepConnect(c)}if(stale())return;
+    m.innerHTML=`<p class="mute">Connect your company's apps once. Everyone's requests then use these connections. You sign in on the app's own screen; Deskhand never sees a password or token. Mode: <b>${esc(c.mode)}</b> · company: ${esc(c.tenant)}</p>
+    ${c.mode!=='viasocket'?'<div class="card"><b>Mock mode.</b> <span class="mute">Real connections are off. Start the app with DESKHAND_INTEGRATION=viasocket to connect Slack and Gmail.</span></div>':(!c.configured?'<div class="card"><b>Not configured.</b> <span class="mute">The viaSocket values are missing on the server. See the README.</span></div>':'')}
+    ${c.note?`<div class="card" style="border-color:var(--bad)">Could not read connection status: ${esc(c.note)}</div>`:''}
+    ${c.apps.map(a=>appCard(a,c)).join('')}`;
+    for(const a of c.apps){if(a.can_run&&c.mode==='viasocket')loadPicker(a)}}
   else if(tab==='chaos'){if(m.dataset.t==='chaos')return;m.dataset.t='chaos';
     const B=[['duplicate_x4','Deliver one message 4 times'],['own_message','Agent hears its own reply'],['burst','Flood of messages'],['hr_fail_twice','HR fails twice, then recovers'],['hr_timeout_after_success','HR applies leave, reply lost'],['hr_down_park','HR down: park the request'],['ai_budget','Exhaust AI budget']];
     m.innerHTML=`<p class="mute">Each button breaks something on purpose. Green ticks mean the guard held. Chaos runs use Neha Gupta's requests, so the other demo people stay clean.</p><div class="row">${B.map(([k,l])=>`<button onclick="chaos('${k}')">${l}</button>`).join('')}</div><div id="cres"></div>`}}
@@ -111,5 +119,30 @@ async function chaos(k){$('#cres').innerHTML='<p class="mute">Running…</p>';tr
 function showChaos(r){$('#cres').innerHTML=`<div class="card"><b>${esc(r.scenario)}</b> — ${r.passed?'<span class="ck">guard held</span>':'<span class="ck f">guard failed</span>'}<pre>${r.steps.map(esc).join('\n')}</pre>${Object.entries(r.checks).map(([c,v])=>`<div class="ck ${v?'':'f'}">${v?'✓':'✗'} ${esc(c)}</div>`).join('')}
   ${r.replay_id?`<div class="row" style="margin-top:8px"><button class="p" onclick="replayParked(${r.replay_id})">Bring HR back and Replay #${r.replay_id}</button><span class="mute">Or open Inbox as Arjun Patel (admin) to see it in the parked list.</span></div>`:''}</div>`}
 async function replayParked(id){try{showChaos(await api('/chaos/replay/'+id,{}))}catch(e){toast(e.message)}}
+
+const CONN={data:null,token:null,info:{},pending:null};
+const STATUSLBL={connected:'Connected',not_connected:'Not connected',expired:'Expired: reconnect',unknown:'Connected (status unknown)'};
+async function prepConnect(c){try{CONN.token=(await api('/connections/token?actor_id='+me())).token;for(const a of c.apps){CONN.info[a.key]=await api(`/connections/service/${a.key}?actor_id=${me()}`)}
+  if(!document.getElementById('viasocket-connect-script')){await new Promise((ok,no)=>{const sc=document.createElement('script');sc.id='viasocket-connect-script';sc.src=c.connect_js;sc.onload=ok;sc.onerror=()=>no(new Error('could not load the viaSocket connect script'));document.head.appendChild(sc)})}}catch(e){toast(e.message)}}
+function appCard(a,c){const live=c.mode==='viasocket'&&c.configured;const st=a.status;
+  return `<div class="card" id="app_${a.key}"><div class="row" style="align-items:center"><img src="${esc(a.icon)}" alt="" width="28" height="28"><b class="grow">${esc(a.name)}</b><span class="pill">${esc(STATUSLBL[st]||st)}</span>
+    <button class="p" ${live?'':'disabled'} onclick="connectApp('${a.key}')">${st==='not_connected'?'Connect '+esc(a.name):'Reconnect'}</button>${a.can_run?`<button class="bad mini" onclick="disconnectApp('${a.key}')">Disconnect</button>`:''}</div>
+    ${a.can_run?`<div class="row" style="margin-top:8px"><label class="mute">${esc(a.setting.label)}${a.setting.required?' (required)':''}</label><select id="pick_${a.key}" onchange="savePick('${a.key}',this.value)"><option>Loading…</option></select></div>
+    <div class="row" style="margin-top:8px">${a.key==='slack'?`<button onclick="testConn('slack_send')">Send test message</button><input id="lk_email" placeholder="email to look up" style="width:220px"><button onclick="testConn('slack_lookup','lk_email')">Look up user</button>`
+      :`<input id="gm_to" placeholder="send a test email to…" style="width:240px"><button onclick="testConn('gmail_send','gm_to')">Send test email</button>`}</div><div id="tres_${a.key}"></div>`:''}</div>`}
+function connectApp(key){const info=CONN.info[key];if(!info||!CONN.token||!window.openViasocketConnection){toast('Connect is not ready yet. Reload the tab.');return}
+  CONN.pending=key;openViasocketConnection(CONN.token,info.service_id,{filteredActions:info.action_ids,skipActionSelection:true})}
+window.addEventListener('message',async ev=>{const d=ev.data;if(!d||typeof d!=='object')return;
+  if(d.type==='viasocket_connection_success'){const key=CONN.pending||Object.keys(CONN.info).find(k=>CONN.info[k].service_id===d.serviceId);
+    try{await api('/connections/connected',{actor_id:me(),app:key,auth_id:d.data&&d.data.id});toast('Connected.')}catch(e){toast(e.message,6000)}$('#main').dataset.t='';render()}
+  else if(d.type==='viasocket_connection_error'){toast((d.error&&d.error.message)||'Connection failed',6000)}});
+async function loadPicker(a){const el=$('#pick_'+a.key);if(!el)return;try{const o=await api(`/connections/${a.key}/options?actor_id=${me()}`);
+  el.innerHTML=(a.setting.required?'<option value="">Choose…</option>':'<option value="">(default: the connected account)</option>')+o.map(x=>`<option value="${esc(x.value)}">${esc(x.label)}</option>`).join('');el.value=a.setting.value||''}catch(e){el.innerHTML='<option>'+esc(e.message)+'</option>'}}
+async function savePick(key,v){try{await api(`/connections/${key}/setting`,{actor_id:me(),value:v});toast('Saved.')}catch(e){toast(e.message)}}
+async function disconnectApp(key){if(!await confirmBox('Disconnect '+key+'?','Requests that need this app will stop using it until it is connected again.'))return;
+  try{await api(`/connections/${key}/disconnect`,{actor_id:me()});toast('Disconnected.')}catch(e){toast(e.message,6000)}$('#main').dataset.t='';render()}
+async function testConn(action,inputId){const key=action.startsWith('slack')?'slack':'gmail';const box=$('#tres_'+key);box.innerHTML='<p class="mute">Running…</p>';
+  try{const r=await api('/connections/test',{actor_id:me(),action,email:inputId?$('#'+inputId).value:null});
+    const ok=r.outcome==='success';box.innerHTML=`<div class="card"><b>${ok?'<span class="ck">Worked</span>':'<span class="ck f">'+esc(r.outcome.replace(/_/g,' '))+'</span>'}</b> <span class="mute">(${esc(r.mode)})</span>${r.error?'<p>'+esc(r.error)+'</p>':''}${r.data?'<pre>'+esc(JSON.stringify(r.data,null,1))+'</pre>':''}</div>`}catch(e){box.innerHTML='<p class="ck f">'+esc(e.message)+'</p>'}}
 init();
 </script></body></html>

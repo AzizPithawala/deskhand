@@ -71,3 +71,15 @@ Full detail and the spike questions: docs/VIASOCKET_INTEGRATION.md.
 ClearFeed (Bangalore): from $24 per agent per month or $40 per month usage-based. Unthread: $50 per agent per
 month, 5-seat minimum. Suptask: from $15 per agent. Moveworks: roughly $100 to $200 per employee per year.
 A flat-rate leave bot: $10 per month. Approvals, SLAs, reminders and dashboards are standard in this category.
+
+## SPIKE M1.5 RESULTS (real calls, 2026-10-21; no ids or secrets recorded)
+VERIFIED
+- Step 1, token auth: an HS256 embed token (claims org_id, project_id, unique_identifier, no exp) sent as the bare `authorization`
+  header on `GET flow-api.viasocket.com/embed/authentications` answers HTTP 200 `{"success":true,"data":[]}` (empty until a connection exists).
+  A garbage token answers 401; no token answers 498.
+- The API edge answers HTTP 403 to Python's default `urllib` User-Agent with the same valid token. The adapter sends its own User-Agent.
+- App search `GET flow.sokt.io/func/scri12BSufQM?key=<name>` answers `{success, message, data:[...]}`, not a bare array as the skill text shows.
+  Slack and Gmail each have one clear match (Slack's first hit is a lookalike named "slackkkk": pick by exact name, `Slack`).
+- Documents `documentation/<service_id>.md?format=http&org=..&project=..` download without sign-in for Slack and Gmail.
+UNVERIFIED (next, needs a person to sign in on the Connections tab)
+- Slack Get User Information and Send Message real responses; Gmail Send Email real response; enable/script_id behaviour; picker shapes.

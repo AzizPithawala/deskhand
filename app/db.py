@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS action_runs(
 CREATE TABLE IF NOT EXISTS outbox(
   id INTEGER PRIMARY KEY AUTOINCREMENT, request_id INTEGER, channel TEXT, to_person TEXT, subject TEXT, body TEXT,
   kind TEXT, idempotency_key TEXT UNIQUE, status TEXT DEFAULT 'sent', created_at REAL);
+CREATE TABLE IF NOT EXISTS connections(
+  tenant TEXT NOT NULL, app TEXT NOT NULL, auth_id TEXT, script_id TEXT, settings_json TEXT DEFAULT '{}', updated_at REAL,
+  PRIMARY KEY(tenant, app));
 """
+# "connections" is deliberately NOT here: resetting demo data must not disconnect the company's apps
 TABLES = ["settings", "inbound_events", "requests", "events", "action_runs", "outbox"]
 
 
