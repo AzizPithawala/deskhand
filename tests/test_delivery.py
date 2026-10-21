@@ -1,5 +1,7 @@
 """Outbound live delivery: safeguards, separation from approvals, exactly-once. Fake transport only; nothing touches the network."""
 import json
+import threading
+import time
 
 import pytest
 
@@ -255,3 +257,98 @@ def test_web_api_toggle_status_and_reset(env, tmp_path, monkeypatch):
     main.engine.s.set_setting("live_delivery", "on")
     c.post("/api/reset")
     assert main.engine.live.toggle() is False  # Reset demo puts delivery back to mock
+
+
+class SlowFake(Fake):
+    """Thread-safe, and slow enough that two sweeps really overlap."""
+    def __init__(self):
+        super().__init__()
+        self.lock = threading.Lock()
+
+    def request(self, method, url, headers=None, body=None, timeout=25):
+        time.sleep(0.15)
+        with self.lock:
+            return super().request(method, url, headers, body, timeout)
+
+
+def _slow(live):
+    e, d, _ = live
+    slow = SlowFake()
+    d.factory = lambda: vs.ViaSocketIntegration(e.s, "acme-demo", vs.VsClient("acme-demo", slow))
+    return e, d, slow
+
+
+def _race(n, fn):
+    barrier, out = threading.Barrier(n), []
+
+    def run():
+        barrier.wait()
+        out.append(fn())
+
+    ts = [threading.Thread(target=run) for _ in range(n)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    return out
+
+
+def test_two_concurrent_sweeps_send_each_row_once_and_one_of_them_skips(live):
+    e, d, slow = _slow(live)
+    for emp in ("e01", "e02", "e03"):
+        e.ingest("chat", emp, "Need a Claude seat for my research project")
+    live_rows = len(rows(e, delivery_status="pending"))
+    results = _race(2, d.deliver_pending)
+    assert sum(r["delivered"] for r in results) == live_rows == len(slow.calls)
+    assert sorted(bool(r.get("busy")) for r in results) == [False, True]  # single-flight: the second sweep skipped itself
+    assert d.used_today() == live_rows and not rows(e, delivery_status="sending")
+
+
+def test_atomic_claim_alone_prevents_double_send_even_without_single_flight(live):
+    e, d, slow = _slow(live)
+    e.ingest("chat", "e01", "Need a Claude seat for my research project")
+    row = rows(e, delivery_status="pending")[0]  # every racer holds the same pending snapshot
+    results = _race(8, lambda: d._deliver_one(row))
+    assert results.count("delivered") == 1 and results.count("skipped") == 7 and len(slow.calls) == 1
+
+
+def test_a_stale_snapshot_after_a_retry_cannot_collide_in_the_ledger(live):
+    e, d, fake = live
+    e.ingest("chat", "e01", "Need a Claude seat for my research project")
+    stale = rows(e, delivery_status="pending")[0]
+    fake.plan["slack"] = [vs.TransportError("ConnectError")]
+    d.deliver_pending()  # attempt 1 fails safely and goes back to pending
+    e.advance_hours(1)
+    assert d._deliver_one(stale) == "delivered"  # attempt 2, counted as attempt 2, no uniqueness error
+    assert d.used_today() == 2
+
+
+def test_manual_endpoint_and_worker_share_the_same_single_flight(live):
+    e, d, slow = _slow(live)
+    e.ingest("chat", "e01", "Need a Claude seat for my research project")
+    first = threading.Thread(target=d.deliver_pending)
+    first.start()
+    time.sleep(0.05)
+    assert d.deliver_pending().get("busy") is True  # a second caller while one runs is told to skip, not queued
+    first.join()
+    assert len(slow.calls) == 1
+
+
+def test_preflight_reports_state_and_leaks_nothing(live, tmp_path, monkeypatch):
+    from app import preflight
+    e, d, _ = live
+    path = str(tmp_path / "pf.db")
+    from app.db import Store
+    s = Store(path)
+    cs = vs.ConnectionStore(s, "acme-demo")
+    cs.save("slack", "auth-slack-000001", SCRIPT_S)
+    cs.set_setting("slack", "channel_id", "C123")
+    s.set_setting("live_delivery", "on")
+    monkeypatch.setenv("DESKHAND_INTEGRATION", "viasocket")
+    out = dict(preflight.report(path))
+    assert out["integration mode"] == "viasocket" and out["live delivery"] == "ON" and out["cap used today"] == "0/40"
+    assert out["email override is one valid address"] == "yes" and out["Slack"] == "connected" and out["Gmail"] == "not connected"
+    assert out["Slack channel chosen"] == "yes" and out["commit checked out"]
+    blob = json.dumps(out)
+    for secret in (SCRIPT_S, "auth-slack-000001", "secret-value-for-tests", OVERRIDE, "C123"):
+        assert secret not in blob
+    monkeypatch.setenv("DESKHAND_LIVE_EMAIL_OVERRIDE", "a@b.co, c@d.co")
+    assert dict(preflight.report(path))["email override is one valid address"].startswith("NO")

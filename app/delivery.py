@@ -6,6 +6,7 @@ address that is never anything but the override, exactly-once per outbox idempot
 import html
 import os
 import re
+import threading
 import time
 from contextlib import contextmanager
 
@@ -32,6 +33,7 @@ class Delivery:
         self.e = engine
         self.factory = integration_factory or (lambda: vs.get_integration(engine.s))
         self.base_url = (base_url or os.environ.get("DESKHAND_BASE_URL") or "http://localhost:8000").rstrip("/")
+        self._flight = threading.Lock()  # single-flight: only one sweep runs at a time (the 10 s worker and the manual endpoint share it)
 
     # ---------- switches ----------
     def toggle(self):
@@ -76,6 +78,14 @@ class Delivery:
         out = {"delivered": 0, "failed": 0, "retry": 0, "skipped": 0}
         if not self.active():
             return out
+        if not self._flight.acquire(blocking=False):  # a sweep is already running: skip, do not queue behind it
+            return {**out, "busy": True}
+        try:
+            return self._sweep(out, limit)
+        finally:
+            self._flight.release()
+
+    def _sweep(self, out, limit):
         now = self.e.now()
         for r in self.e.s.all("SELECT id FROM outbox WHERE delivery_status='sending' AND delivery_next_at<?", (time.time() - SENDING_TIMEOUT_S,)):
             self._fail(r["id"], "outcome unknown: the app stopped before an answer; check the channel before retrying", unknown=True)
@@ -97,20 +107,21 @@ class Delivery:
     def _deliver_one(self, row):
         e, ik = self.e, row["idempotency_key"]
         if row["kind"] not in LIVE_KINDS:  # second line of defence: the allow-list is enforced again at send time
-            e.s.q("UPDATE outbox SET delivery_status='skipped', delivery_note='kind is not delivered live' WHERE id=?", (row["id"],))
+            e.s.q("UPDATE outbox SET delivery_status='skipped', delivery_note='kind is not delivered live' WHERE id=? AND delivery_status='pending'", (row["id"],))
             return "skipped"
-        # exactly once: an earlier success for this key means never send again
+        # 1. ATOMIC CLAIM. One UPDATE with the condition in its WHERE; only the caller that changed exactly one row may send.
+        #    Any other sweep (the 10 s worker, the manual endpoint, a second process on the same database) changes 0 rows and walks away.
+        cur = e.s.q("UPDATE outbox SET delivery_status='sending', delivery_attempts=delivery_attempts+1, delivery_next_at=? WHERE id=? AND delivery_status='pending'",
+                    (time.time(), row["id"]))
+        if cur.rowcount != 1:
+            return "skipped"
+        # 2. exactly once: an earlier success recorded for this key means never send again
         done = e.s.one("SELECT status FROM action_runs WHERE idempotency_key=?", ("deliver:" + ik,))
         if done and done["status"] == "succeeded":
             e.s.q("UPDATE outbox SET delivery_status='delivered' WHERE id=?", (row["id"],))
             e.audit(row["request_id"], "system", "delivery_idempotent_hit", {"outbox": row["id"]})
             return "delivered"
-        # claim the row so a second sweep or a crash can never send it twice
-        cur = e.s.q("UPDATE outbox SET delivery_status='sending', delivery_attempts=delivery_attempts+1, delivery_next_at=? WHERE id=? AND delivery_status='pending'",
-                    (time.time(), row["id"]))
-        if cur.rowcount != 1:
-            return "skipped"
-        attempt = row["delivery_attempts"] + 1
+        attempt = e.s.one("SELECT delivery_attempts a FROM outbox WHERE id=?", (row["id"],))["a"]  # re-read: our snapshot of the row may be stale
         if not e.s.one("SELECT 1 x FROM action_runs WHERE idempotency_key=?", ("deliver:" + ik,)):
             e.s.q("INSERT INTO action_runs(request_id,step,idempotency_key,attempts,status,updated_at) VALUES(?,?,?,?,?,?)", (row["request_id"], "deliver", "deliver:" + ik, 0, "pending", e.now()))
         e.s.q("UPDATE action_runs SET attempts=?, updated_at=? WHERE idempotency_key=?", (attempt, e.now(), "deliver:" + ik))
