@@ -95,6 +95,7 @@ class Result:
     data: object = None
     error: str = ""
     code: str = ""  # short machine-readable reason, never an id
+    safe_retry: bool = False  # True only when the call certainly did not take effect (429, could not connect); else a retry could send twice
     meta: dict = field(default_factory=dict)
 
     @property
@@ -131,15 +132,16 @@ def normalise(status, text, expect=None):
     try:
         payload = json.loads(text)
     except (TypeError, ValueError):
-        return Result(_failure_kind(status), error=f"non-JSON answer (HTTP {status})", code="bad_body")
+        return Result(_failure_kind(status), error=f"non-JSON answer (HTTP {status})", code="bad_body", safe_retry=int(status) == 429)
     if status >= 400:
-        return Result(_failure_kind(status, _message(payload)), error=redact(_message(payload) or f"HTTP {status}"), code=f"http_{status}")
+        return Result(_failure_kind(status, _message(payload)), error=redact(_message(payload) or f"HTTP {status}"), code=f"http_{status}", safe_retry=int(status) == 429)
     if isinstance(payload, dict):
         # refused call: HTTP 200 with "status": 400 and the reason in data.message
         inner = payload.get("response") if isinstance(payload.get("response"), dict) else None
         if inner and inner.get("status") and int(inner["status"]) >= 400:
             msg = (inner.get("data") or {}).get("message") if isinstance(inner.get("data"), dict) else ""
-            return Result(_failure_kind(inner["status"], msg), error=redact(msg or f"app answered {inner['status']}"), code=f"app_{inner['status']}")
+            return Result(_failure_kind(inner["status"], msg), error=redact(msg or f"app answered {inner['status']}"), code=f"app_{inner['status']}",
+                          safe_retry=int(inner["status"]) == 429)
         if "status" in payload and isinstance(payload["status"], int) and payload["status"] >= 400:
             return Result(_failure_kind(payload["status"], _message(payload)), error=redact(_message(payload) or f"refused ({payload['status']})"), code=f"refused_{payload['status']}")
         if payload.get("success") is False:
@@ -147,7 +149,8 @@ def normalise(status, text, expect=None):
         body = payload["data"] if "data" in payload and isinstance(payload.get("success"), bool) else payload
         # the app's own failure inside the body (Slack: {"ok": false, "error": "..."})
         if isinstance(body, dict) and body.get("ok") is False:
-            return Result(_failure_kind(0, str(body.get("error", ""))), error=redact(str(body.get("error") or "app refused")), code="app_ok_false")
+            return Result(_failure_kind(0, str(body.get("error", ""))), error=redact(str(body.get("error") or "app refused")), code="app_ok_false",
+                          safe_retry="ratelimited" in str(body.get("error", "")).lower())
     else:
         body = payload
     if expect:
@@ -203,7 +206,8 @@ class VsClient:
         try:
             status, text = self.t.request(method, url, headers, body)
         except TransportError as ex:
-            return Result(RETRYABLE, error=f"network error: {ex}", code="transport")
+            # only "could not even connect" proves nothing was sent; a read timeout may have been delivered already
+            return Result(RETRYABLE, error=f"network error: {ex}", code="transport", safe_retry=str(ex) in ("ConnectError", "ConnectTimeout", "PoolTimeout"))
         r = normalise(status, text, expect)
         r.error = redact(r.error, extra)
         return r

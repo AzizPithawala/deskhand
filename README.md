@@ -30,6 +30,12 @@ Admin only (act as Arjun Patel). The company admin clicks Connect for Slack or G
 only the connection ids on the server (never shown in the UI or logs), per company. Needs `.env` with the three viaSocket values and
 `DESKHAND_INTEGRATION=viasocket` (default is `mock`, which uses no network). Engine and approval logic are not connected to it yet.
 
+## Live delivery (off by default)
+Approvals stay inside Deskhand; only notifications can go out. Admin toggle on the Connections tab (needs DESKHAND_INTEGRATION=viasocket, Slack
+connected and a channel chosen). Only approval_request, approved, rejected, fulfilled, escalation_1, escalation_2 and parked are sent, Slack to the
+chosen channel prefixed "[Deskhand demo to <name>]", email only to DESKHAND_LIVE_EMAIL_OVERRIDE. Hard cap 40 per day (UTC). Chaos, tests and Reset demo
+never send live. Failed deliveries show on the Connections tab with a Retry button. Approvers click the link in the message to open their Deskhand inbox.
+
 ## What is NOT done or NOT verified
 - Real viaSocket integration (Slack, Gmail, Keka). See docs/VIASOCKET_INTEGRATION.md and milestones M1.5 and M8.
 - The Claude classification path (app/classifier.py: classify_anthropic) has never been run against the live API. It is

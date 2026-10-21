@@ -18,6 +18,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:6px 8px;
 .pill{display:inline-block;padding:1px 8px;border-radius:99px;border:1px solid var(--line);font-size:12px;color:var(--mute)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}.stat b{font-size:22px;display:block}.stat span{color:var(--mute);font-size:13px}
 pre{white-space:pre-wrap;margin:0;font:13px/1.4 ui-monospace,monospace}.ck{color:var(--ok)}.ck.f{color:var(--bad)}.mute{color:var(--mute)}
+#banner div{padding:8px 16px;font-size:14px;border-bottom:1px solid var(--line)}#banner .live{background:#fff4d6;color:#5c4400}#banner .cap{background:#fde4e1;color:#8a1c14}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:99px;z-index:20;box-shadow:0 4px 16px #0003;max-width:90%}
 button.quiet{border-color:transparent;color:var(--mute);font-size:13px}button.mini{padding:2px 10px;font-size:13px}
 .hdr{color:var(--mute);font-size:13px;line-height:1.4;margin-bottom:6px}.kv{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:6px 0}.kv span:nth-child(odd){color:var(--mute)}
@@ -29,6 +30,7 @@ dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);co
 <span class="pill" id="clock"></span><span class="pill" id="ai"></span>
 <span style="flex:1"></span>
 <button onclick="adv(1)">+1h</button><button onclick="adv(9)">+9h</button><button onclick="adv(25)">+25h</button></header>
+<div id="banner"></div>
 <nav id="nav"></nav><main id="main"></main>
 <dialog id="dlg"><div id="dlgbody"></div><div style="text-align:right;margin-top:10px"><button onclick="dlg.close()">Close</button></div></dialog>
 <dialog id="ask"><form method="dialog" id="askform"><h3 id="asktitle" style="margin-top:0"></h3><p class="mute" id="askhelp"></p><textarea id="askinput" rows="3" style="width:100%"></textarea><div id="askerr" style="color:var(--bad);min-height:20px"></div>
@@ -51,9 +53,10 @@ async function init(){S=await api('/state');
   $('#who').innerHTML=S.employees.map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.role)})</option>`).join('');
   $('#who').onchange=()=>render();$('#ai').textContent='understanding: '+S.ai;
   $('#nav').innerHTML=['chat','email','inbox','requests','dashboard','audit','chaos','connections'].map(t=>`<button id="t_${t}" onclick="go('${t}')">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')+'<span style="flex:1"></span><button class="quiet" onclick="resetAll()">Reset demo data…</button>';
-  go('chat');setInterval(()=>{if(['chat','email','inbox'].includes(tab)&&!document.querySelector('dialog[open]'))render(true)},4000)}
+  const hm=location.hash.match(/^#inbox\/(\w+)$/);if(hm&&S.employees.some(e=>e.id===hm[1])){$('#who').value=hm[1];go('inbox')}else go('chat');setInterval(()=>{if(['chat','email','inbox'].includes(tab)&&!document.querySelector('dialog[open]'))render(true)},4000)}
 function go(t){tab=t;document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.id==='t_'+t));const m=$('#main');if(m.dataset.t!==t){m.dataset.t='';m.innerHTML='<p class="mute">Loading…</p>'}render()}
-async function clock(){const s=await api('/clock');const d=new Date(s.now*1000);$('#clock').textContent='demo clock: '+d.toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'UTC'})+' UTC'}
+async function clock(){const s=await api('/clock');const d=new Date(s.now*1000);banner(s.live);$('#clock').textContent='demo clock: '+d.toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'UTC'})+' UTC'}
+function banner(l){const b=$('#banner');if(!b||!l)return;b.innerHTML=l.capped?`<div class="cap"><b>Live delivery stopped.</b> The daily cap of ${l.cap} live messages is reached (${l.used_today}). Messages stay in the Deskhand outbox. An admin can switch it back on tomorrow (UTC).</div>`:(l.on?`<div class="live"><b>LIVE delivery is ON.</b> Approval messages go to the real Slack channel and the test email address. ${l.used_today} of ${l.cap} used today.</div>`:'')}
 async function adv(h){const r=await api('/clock/advance',{hours:h});await clock();render();toast(`Clock +${h}h. Reminders sent: ${r.sweep.reminders}. Escalations: ${r.sweep.escalations}.`,5000)}
 async function resetAll(){if(!await confirmBox('Reset all demo data?','This deletes every request, message and audit event and restarts the demo clock.'))return;await api('/reset',{});log={chat:{},email:{}};seen={};$('#main').dataset.t='';await clock();render();toast('Demo data reset.')}
 async function pull(ch){const rows=(await api('/outbox?to='+me()+'&limit=200')).reverse();const L=(log[ch][me()]??=[]);const k=ch+me();seen[k]??=new Set();
@@ -86,7 +89,8 @@ async function render(quiet){const my=++rseq;const stale=()=>my!==rseq;const m=$
     const HEAD=['duplicate_suppressed','own_message_ignored','breaker_opened','action_retry','action_failed','blocked_sensitive'];
     const pick=ks=>ks.map(k=>st(d.guard[k],k.replace(/_/g,' '),d.guard[k]?'':'dim')).join('');const rest=Object.keys(d.guard).filter(k=>!HEAD.includes(k));
     const dec=d.avg_decision_minutes==null?'–':(d.avg_decision_minutes<1?'under 1':d.avg_decision_minutes);
-    m.innerHTML=`<div class="grid">${st(d.total,'requests')}${st(dec,'avg minutes to decision')}${st(d.hr_effects,'leaves applied in HR (real effects)')}${st(d.ai_calls_today+' / '+d.ai_budget,'AI calls today (budget)')}</div>
+    m.innerHTML=`<div class="grid">${st(d.total,'requests')}${st(dec,'avg minutes to decision')}${st(d.hr_effects,'leaves applied in HR (real effects)')}${st(d.ai_calls_today+' / '+d.ai_budget,'AI calls today (budget)')}${st(d.delivery.used_today+' / '+d.delivery.cap,'live deliveries today (cap)',d.delivery.capped?'':'')}</div>
+    <p class="mute">Delivery: ${d.delivery.on?'<b>live ON</b>':'mock (outbox only)'} · ${esc(Object.entries(d.delivery.counts).map(([k,v])=>k+' '+v).join(' · ')||'no messages yet')}</p>
     <h3>By status</h3><div class="grid">${Object.entries(d.by_status).map(([k,v])=>st(v,label(k))).join('')||'<p class="mute">No requests yet.</p>'}</div>
     <h3>Guard counters</h3><div class="grid">${pick(HEAD)}</div><details><summary>More counters (${rest.length})</summary><div class="grid">${pick(rest)}</div></details>
     <h3>Weekly digest preview for ${esc(g.person)}</h3><div class="card"><b>As approver</b>${kv([['Approved',g.as_approver.approved],['Rejected',g.as_approver.rejected],['Pending',g.as_approver.pending],['Oldest pending (hours)',g.as_approver.oldest_pending_hours]])}
@@ -100,7 +104,7 @@ async function render(quiet){const my=++rseq;const stale=()=>my!==rseq;const m=$
     m.innerHTML=`<p class="mute">Connect your company's apps once. Everyone's requests then use these connections. You sign in on the app's own screen; Deskhand never sees a password or token. Mode: <b>${esc(c.mode)}</b> · company: ${esc(c.tenant)}</p>
     ${c.mode!=='viasocket'?'<div class="card"><b>Mock mode.</b> <span class="mute">Real connections are off. Start the app with DESKHAND_INTEGRATION=viasocket to connect Slack and Gmail.</span></div>':(!c.configured?'<div class="card"><b>Not configured.</b> <span class="mute">The viaSocket values are missing on the server. See the README.</span></div>':'')}
     ${c.note?`<div class="card" style="border-color:var(--bad)">Could not read connection status: ${esc(c.note)}</div>`:''}
-    ${c.apps.map(a=>appCard(a,c)).join('')}`;
+    ${c.apps.map(a=>appCard(a,c)).join('')}${liveCard(await api('/delivery?actor_id='+me()))}`;
     for(const a of c.apps){if(a.can_run&&c.mode==='viasocket')loadPicker(a)}}
   else if(tab==='chaos'){if(m.dataset.t==='chaos')return;m.dataset.t='chaos';
     const B=[['duplicate_x4','Deliver one message 4 times'],['own_message','Agent hears its own reply'],['burst','Flood of messages'],['hr_fail_twice','HR fails twice, then recovers'],['hr_timeout_after_success','HR applies leave, reply lost'],['hr_down_park','HR down: park the request'],['ai_budget','Exhaust AI budget']];
@@ -120,6 +124,14 @@ function showChaos(r){$('#cres').innerHTML=`<div class="card"><b>${esc(r.scenari
   ${r.replay_id?`<div class="row" style="margin-top:8px"><button class="p" onclick="replayParked(${r.replay_id})">Bring HR back and Replay #${r.replay_id}</button><span class="mute">Or open Inbox as Arjun Patel (admin) to see it in the parked list.</span></div>`:''}</div>`}
 async function replayParked(id){try{showChaos(await api('/chaos/replay/'+id,{}))}catch(e){toast(e.message)}}
 
+function liveCard(d){const cnt=Object.entries(d.counts).map(([k,v])=>k+' '+v).join(' · ')||'none yet';
+  return `<div class="card" id="livecard"><div class="row" style="align-items:center"><b class="grow">Live delivery</b><span class="pill">${d.on?'ON':'OFF'}</span>
+    <button class="${d.on?'bad':'p'}" ${d.mode!=='viasocket'?'disabled':''} onclick="toggleLive(${!d.toggle})">${d.toggle?'Switch off':'Switch on'}</button></div>
+  <p class="mute">Off by default. When on, only these messages go out for real: ${esc(d.kinds.join(', '))}. Everything else stays in the outbox. Slack messages go to the channel chosen above, prefixed "[Deskhand demo to &lt;name&gt;]". Emails go only to ${d.email_override_set?'<b>'+esc(d.email_to)+'</b>':'<b>nobody: no override address is set</b>'}. Hard cap: ${d.cap} live messages per day.</p>
+  <div class="kv"><span>Used today</span><span>${d.used_today} of ${d.cap}${d.capped?' (cap reached)':''}</span><span>Delivery status</span><span>${esc(cnt)}</span><span>Links point to</span><span>${esc(d.base_url)}</span></div>
+  ${d.failed.length?`<b>Failed deliveries</b>${d.failed.map(f=>`<div class="row" style="margin-top:6px"><span class="grow">#${f.id} · ${esc(f.kind)} (${esc(f.channel)}) · ${esc(f.delivery_error||'')}</span><button class="mini" onclick="retryDelivery(${f.id})">Retry</button></div>`).join('')}`:''}</div>`}
+async function toggleLive(on){if(on&&!await confirmBox('Switch live delivery on?','Real Slack and email messages will be sent, up to the daily cap.'))return;try{await api('/delivery/toggle',{actor_id:me(),on});toast(on?'Live delivery on.':'Live delivery off.')}catch(e){toast(e.message,6000)}$('#main').dataset.t='';render()}
+async function retryDelivery(id){try{await api('/delivery/retry/'+id,{actor_id:me()});toast('Retried.')}catch(e){toast(e.message,6000)}$('#main').dataset.t='';render()}
 const CONN={data:null,token:null,info:{},pending:null};
 const STATUSLBL={connected:'Connected',not_connected:'Not connected',expired:'Expired: reconnect',unknown:'Connected (status unknown)'};
 async function prepConnect(c){try{CONN.token=(await api('/connections/token?actor_id='+me())).token;for(const a of c.apps){CONN.info[a.key]=await api(`/connections/service/${a.key}?actor_id=${me()}`)}

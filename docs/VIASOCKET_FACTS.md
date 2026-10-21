@@ -97,3 +97,16 @@ VERIFIED
 UNVERIFIED
 - Whether viaSocket retries or dedupes an action call (nothing in the responses shows either); whether the Connect popup's Reconnect
   (a fresh connection that replaces the stored one) leaves the old runner active; Keka (not in this phase); events (phase 2).
+
+## OUTBOUND DELIVERY (built 2026-10-21, tested with the fake transport only)
+Design facts (ours, not viaSocket's):
+- Delivery is a sweep over outbox rows, never part of approving or rejecting. A down Slack or Gmail cannot block or undo a decision.
+- Exactly once per outbox idempotency_key: the row is claimed before sending, an action_runs record remembers success, and a retry
+  happens only when the call certainly did not take effect (429, ratelimited, could not connect). A read timeout or a 5xx may already
+  have been delivered, so it is parked as "outcome unknown" and an admin retries by hand after checking the channel.
+- viaSocket gives no idempotency key and no dedupe for action calls (UNVERIFIED either way), so this rule is ours.
+- Hard cap 40 live deliveries per UTC day, counted per real send attempt in a ledger that survives Reset demo. At the cap delivery switches itself off.
+- Slack text is escaped (&, <, >) so message text cannot ping the channel or inject links; email bodies are HTML-escaped.
+UNVERIFIED
+- A real end-to-end live run through the toggle (Slack message with the prefix and inbox link, one email to the override address).
+- How Slack renders the escaped text and the link in the real channel.

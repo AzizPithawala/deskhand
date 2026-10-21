@@ -26,12 +26,18 @@ CREATE TABLE IF NOT EXISTS action_runs(
   attempts INTEGER DEFAULT 0, status TEXT, last_error TEXT, result_json TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS outbox(
   id INTEGER PRIMARY KEY AUTOINCREMENT, request_id INTEGER, channel TEXT, to_person TEXT, subject TEXT, body TEXT,
-  kind TEXT, idempotency_key TEXT UNIQUE, status TEXT DEFAULT 'sent', created_at REAL);
+  kind TEXT, idempotency_key TEXT UNIQUE, status TEXT DEFAULT 'sent', created_at REAL,
+  delivery_status TEXT DEFAULT 'skipped', delivery_attempts INTEGER DEFAULT 0, delivery_error TEXT, delivery_next_at REAL,
+  delivered_at REAL, delivery_note TEXT);
 CREATE TABLE IF NOT EXISTS connections(
   tenant TEXT NOT NULL, app TEXT NOT NULL, auth_id TEXT, script_id TEXT, settings_json TEXT DEFAULT '{}', updated_at REAL,
   PRIMARY KEY(tenant, app));
+CREATE TABLE IF NOT EXISTS delivery_ledger(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, ikey TEXT UNIQUE, ts REAL NOT NULL);
 """
-# "connections" is deliberately NOT here: resetting demo data must not disconnect the company's apps
+OUTBOX_MIGRATION = {"delivery_status": "TEXT DEFAULT 'skipped'", "delivery_attempts": "INTEGER DEFAULT 0", "delivery_error": "TEXT",
+                    "delivery_next_at": "REAL", "delivered_at": "REAL", "delivery_note": "TEXT"}
+# "connections" and "delivery_ledger" are deliberately NOT here: a demo reset must not disconnect apps or reset the daily live-delivery cap
 TABLES = ["settings", "inbound_events", "requests", "events", "action_runs", "outbox"]
 
 
@@ -42,7 +48,15 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.lock = threading.RLock()
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self):
+        """Databases made before delivery existed get the new outbox columns."""
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(outbox)")}
+        for col, decl in OUTBOX_MIGRATION.items():
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE outbox ADD COLUMN {col} {decl}")
 
     def q(self, sql, args=()):
         with self.lock:

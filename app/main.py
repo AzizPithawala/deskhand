@@ -1,3 +1,4 @@
+import contextlib
 import os
 import re
 
@@ -5,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import chaos, viasocket_adapter as vs
+from . import chaos, delivery as dl, viasocket_adapter as vs
 from .engine import Engine, InvalidTransition, NotAuthorized, Refused
 from .db import Store
 
@@ -13,6 +14,7 @@ vs.load_dotenv()
 app = FastAPI(title="Deskhand prototype")
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 engine = Engine(Store(os.environ.get("DESKHAND_DB", "deskhand.db")))
+engine.live = dl.Delivery(engine)  # live delivery is OFF unless an admin switches it on (and the integration mode is viasocket)
 
 
 class Ingest(BaseModel):
@@ -147,19 +149,22 @@ def sweep():
 
 @app.get("/api/clock")
 def clock():
-    return {"now": engine.now()}
+    d = engine.live.summary()
+    return {"now": engine.now(), "live": {"on": d["on"], "used_today": d["used_today"], "cap": d["cap"], "capped": d["capped"]}}
 
 
 @app.post("/api/chaos/replay/{rid}")
 def chaos_replay(rid: int):
-    return guard(chaos.replay_parked, engine, rid)
+    with dl.forced_mock(engine):
+        return guard(chaos.replay_parked, engine, rid)
 
 
 @app.post("/api/chaos/{name}")
 def chaos_run(name: str):
     if name not in chaos.SCENARIOS:
         raise HTTPException(404, "unknown scenario")
-    return chaos.SCENARIOS[name](engine)
+    with dl.forced_mock(engine):  # chaos never sends anything live
+        return chaos.SCENARIOS[name](engine)
 
 
 @app.post("/api/admin/breaker_reset")
@@ -171,7 +176,8 @@ def breaker_reset():
 
 @app.post("/api/reset")
 def reset():
-    engine.reset()
+    with dl.forced_mock(engine):
+        engine.reset()  # also switches live delivery off; the daily cap ledger survives a reset on purpose
     return {"ok": True}
 
 
@@ -338,3 +344,79 @@ def connection_test(b: ConnAct):
         raise HTTPException(404, "unknown test")
     engine.audit(None, b.actor_id, "integration_test", {"action": b.action, "mode": integ.mode, "outcome": r.kind, "code": r.code})
     return {"mode": integ.mode, "outcome": r.kind, "code": r.code, "error": vs.redact(r.error), "data": vs.scrub(r.data)}
+
+
+# ---------------- Live delivery (admin toggle, cap, retry of failed rows) ----------------
+def _mask(addr):
+    return (addr[0] + "***@" + addr.split("@", 1)[1]) if addr else ""
+
+
+@app.get("/api/delivery")
+def delivery_status(actor_id: str):
+    _admin(actor_id)
+    d = engine.live.summary()
+    failed = engine.s.all("SELECT id, request_id, kind, channel, delivery_error FROM outbox WHERE delivery_status='failed' ORDER BY id DESC LIMIT 20")
+    return {**d, "mode": os.environ.get("DESKHAND_INTEGRATION", "mock").lower(), "email_to": _mask(engine.live.email_override()),
+            "kinds": sorted(dl.LIVE_KINDS), "base_url": engine.live.base_url, "failed": failed}
+
+
+class Toggle(BaseModel):
+    actor_id: str
+    on: bool
+
+
+@app.post("/api/delivery/toggle")
+def delivery_toggle(b: Toggle):
+    _admin(b.actor_id)
+    if b.on:
+        if engine.live.factory().mode != "viasocket":
+            raise HTTPException(409, "Integration is in mock mode (DESKHAND_INTEGRATION). Live delivery cannot be switched on.")
+        c = vs.ConnectionStore(engine.s, TENANT).get("slack")
+        if not c or not c["script_id"] or not c["settings"].get("channel_id"):
+            raise HTTPException(409, "Connect Slack and choose the notification channel first.")
+        if engine.live.capped():
+            raise HTTPException(409, f"The daily cap of {dl.DAILY_CAP} live deliveries is reached. Try again tomorrow (UTC).")
+    engine.live.set_toggle(b.on, b.actor_id, "admin toggle")
+    return {"ok": True, **engine.live.summary()}
+
+
+@app.post("/api/delivery/sweep")
+def delivery_sweep(b: Act):
+    _admin(b.actor_id)
+    return engine.live.deliver_pending()
+
+
+@app.post("/api/delivery/retry/{oid}")
+def delivery_retry(oid: int, b: Act):
+    _admin(b.actor_id)
+    try:
+        engine.live.retry_failed(oid, b.actor_id)
+    except ValueError as ex:
+        raise HTTPException(409, str(ex))
+    return engine.live.deliver_pending()
+
+
+def _worker():
+    import threading
+    import time
+
+    def loop():
+        while True:
+            time.sleep(10)
+            try:
+                if engine.live.active():
+                    engine.live.deliver_pending()
+            except Exception:  # the worker must never die or log message text
+                pass
+
+    threading.Thread(target=loop, daemon=True, name="delivery-worker").start()
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(_app):
+    if os.environ.get("DESKHAND_DELIVERY_WORKER", "on") != "off":
+        _worker()
+    yield
+
+
+app.router.lifespan_context = _lifespan
