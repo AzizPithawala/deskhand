@@ -110,3 +110,11 @@ Per phase: `make test` green including tenant-isolation tests, a browser demo of
 - **Gmail connect for outside accounts** can be blocked until viaSocket's Google app is verified.
 
 **Decision after the spikes:** employees ask in Deskhand chat; Slack stays for notifications and button approvals; Slack-as-the-ask-channel is optional slow mode. Phase 3's milestone story therefore reads: employee asks in Deskhand, the manager gets a Slack DM with buttons and an email from the employee's mailbox, approves in Slack, and the employee gets a Slack message and an email from the manager's mailbox.
+
+## Status
+- **Phase 0 (spikes):** done. Results above and in `docs/VIASOCKET_FACTS.md`.
+- **Phase 1 (companies, accounts, sign-in):** done; PR #1.
+- **Phase 2 (company setup):** built on branch `phase-2-company-setup`. Business roles with one holder each, editable rules for the 8 built-in request types (a primary approver plus up to two conditional extra approvers),
+  company policies, a routing test, a computed checklist, and a top-level Integrations page. Deliberate scope choices: no new request types (Phase 5), Keka skipped (no test tenant), and the "workflow editor"
+  is this per-type rule editor; ordered free-form steps and AI-drafted workflows stay in Phase 5.
+- **Next:** Phase 3, leave through Slack and Gmail end to end with a Deskhand-owned leave ledger.

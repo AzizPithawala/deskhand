@@ -57,7 +57,7 @@ def _role_rows(d):
 def _rules_of(t):
     out = [t.get(k) for k in ("approver_rule", "backup_rule", "fulfiller_rule", "redirect")]
     out += [x.get("rule") for x in t.get("extra_approvers") or []]
-    return [r for r in out if isinstance(r, str)]
+    return [r for r in out if isinstance(r, str) and RULE.match(r)]  # `system:` actions are fixed in code, not rules an admin sets
 
 
 def list_roles(d):

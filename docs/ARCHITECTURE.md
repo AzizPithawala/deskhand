@@ -47,8 +47,9 @@ Invalid transitions raise an error and are never applied silently.
 
 ## Data model (SQLite)
 - employees(id, name, email, slack_id, phone, department, manager_id, active)
-- request_types(code, name, requires_approval, approver_rule, fulfiller_rule, backup_rule, cost_threshold,
-  second_approver_rule, reminder_hours, escalate_hours, sensitive, fulfilment_kind[auto_action|manual_task])
+- request_types (template in data/request_types.demo.json; a company's edits live in its own type_rules table): code, name, enabled, requires_approval,
+  approver_rule, backup_rule, extra_approvers[{rule, when}], auto_allow_up_to, fulfiller_rule, reminder_hours, escalate_hours, sensitive, fulfilment_kind[auto_action|manual_task]
+- roles(code, name, holder_id, builtin), type_rules(code, rules_json, reviewed_at, ...), policies(key, title, text): per-company setup, one holder per role
 - requests(id, type_code, employee_id, channel, source_event_id, raw_text, summary, details_json,
   confidence, status, approver_id, fulfiller_id, rejection_reason, created_at, due_at, last_reminder_at,
   escalation_level, closed_at)

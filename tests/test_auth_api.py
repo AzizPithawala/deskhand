@@ -111,7 +111,7 @@ def test_employees_see_only_their_own_and_assigned_requests(main):
     assert bob.post(f"/api/requests/{rid}/approve").status_code == 404 and bob.get("/api/requests", params={"employee": ann.uid}).status_code == 403
     assert [r["id"] for r in owner.get("/api/requests").json()] == [rid]  # admins see everything
     assert bob.get("/api/outbox").json() == [] and bob.get("/api/inbox").json() == []
-    assert bob.get("/api/state").json()["employees"][0].keys() == {"id", "name", "role", "department", "manager_id", "active"}  # no emails for colleagues
+    assert bob.get("/api/state").json()["employees"][0].keys() == {"id", "name", "role", "roles", "department", "manager_id", "active"}  # no emails for colleagues
     assert "email" in owner.get("/api/state").json()["employees"][0]
     assert boss.post(f"/api/requests/{rid}/approve").status_code == 200
     assert ann.get(f"/api/requests/{rid}").json()["request"]["status"] == "CLOSED"

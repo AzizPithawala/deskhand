@@ -49,6 +49,6 @@ def test_every_element_the_script_looks_up_exists_in_the_page():
     wanted = set(re.findall(r"\$\('#([A-Za-z0-9_-]+)'\)", JS))
     dynamic = {m for m in re.findall(r'id="([^"$]+)"', JS)} | {"clock", "reason", "reasonlabel", "reasonerr", "q", "cform", "convo", "lst", "det", "split", "af", "at", "brk", "lk", "aiblock",
                                                                   "hstrip", "hdelivery", "hconn", "hguard", "hlab", "plist", "invitebtn", "demogo", "lform", "le", "lp", "lerr", "rform", "rc", "rn",
-                                                                  "re", "rp", "rk", "rerr", "jform", "jp", "jq", "jerr", "aiswitch", "ff0"}
+                                                                  "re", "rp", "rk", "rerr", "jform", "jp", "jq", "jerr", "aiswitch", "ff0", "t_approver_rule", "t_backup_rule", "t_fulfiller_rule", "t_redirect"}
     unknown = sorted(w for w in wanted if w not in ids and w not in dynamic and not w.startswith(("v_", "s_", "tres_", "ff")))
     assert not unknown, unknown

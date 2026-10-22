@@ -61,6 +61,8 @@ interfaces; the simulator stays the default until the spike (M1.5) proves each c
 13. Demo-only tools (chaos, reset, demo clock, act-as) exist only in the demo company and are refused everywhere else. The demo never sends real messages or connects apps.
 14. Invite, reset and signup secrets are random, single-use, stored only as hashes, and shown once. Passwords are hashed (scrypt) and never logged. Recipients of messages are
     people from the company's directory, never an address found in message text.
+15. Company setup (roles, holders, request-type rules, policies) is validated data: rules may name only `manager`, a role or a person of that company, every value is bounded, every
+    change writes a `setup_changed` audit event, writes are admin-only and refused in the demo company, and an edit never changes the approvers of a request already routed.
 
 ## Commands
 `make dev` (run the app on :8000), `make test` (pytest), `make reset` (delete the demo database).

@@ -343,7 +343,7 @@ def _get_visible(ctx, rid):
 def state(ctx: Ctx = Depends(auth)):
     people = list(ctx.engine.d.employees.values())
     if not ctx.is_admin:  # colleagues' contact details are for admins
-        people = [{k: p.get(k) for k in ("id", "name", "role", "department", "manager_id", "active")} for p in people]
+        people = [{k: p.get(k) for k in ("id", "name", "role", "roles", "department", "manager_id", "active")} for p in people]
     return {"employees": people, "types": list(ctx.engine.d.types.values()), "now": ctx.engine.now()}
 
 
@@ -489,7 +489,11 @@ class PersonEdit(BaseModel):
 
 @app.get("/api/people")
 def people(ctx: Ctx = Depends(admin)):
-    return accounts.list_users(ctx.org["id"])
+    held = {}
+    for r in st.list_roles(ctx.engine.d):
+        if r["holder_id"]:
+            held.setdefault(r["holder_id"], []).append(r["name"])
+    return [{**u, "roles": held.get(u["id"], [])} for u in accounts.list_users(ctx.org["id"])]
 
 
 @app.post("/api/people/invite")
@@ -575,7 +579,7 @@ def _setup_changed(ctx, area, code, changes):
 
 def _pickable(ctx):
     d = ctx.engine.d
-    return {"people": [{"id": e["id"], "name": e["name"]} for e in d.employees.values() if e["active"]], "role_options": [{"code": r["code"], "name": r["name"]} for r in st.list_roles(d)]}
+    return {"people": [{"id": e["id"], "name": e["name"]} for e in d.employees.values() if e["active"]], "role_options": [{"code": r["code"], "name": r["name"], "holder_name": r["holder_name"]} for r in st.list_roles(d)]}
 
 
 @app.get("/api/setup/roles")
