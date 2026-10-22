@@ -408,3 +408,13 @@ def test_preflight_reports_yes_no_and_leaks_nothing(live, tmp_path, monkeypatch)
         assert secret not in blob
     cs.set_setting("gmail", "notify_email", "a@b.co, c@d.co")
     assert dict(preflight.report(path))["Notification email set (one valid address)"] == "NO"
+
+
+def test_the_demo_company_never_delivers_even_with_real_connections_stored(live):
+    e, d, fake = live
+    assert d.ready("chat") and d.ready("email")
+    e.is_demo = True  # a demo company that inherited Slack and Gmail rows from an older single-company database
+    assert not d.ready("chat") and not d.ready("email")
+    e.ingest("chat", "e01", "Need a Claude seat for my research project")
+    assert {r["delivery_status"] for r in rows(e)} == {"skipped"}
+    assert d.deliver_pending()["delivered"] == 0 and not fake.calls

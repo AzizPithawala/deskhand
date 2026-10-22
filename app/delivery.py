@@ -67,6 +67,8 @@ class Delivery:
         return out
 
     def ready(self, channel):
+        if getattr(self.e, "is_demo", False):  # the demo company never sends, even if it inherited real connection rows from an older database
+            return False
         if not vs.VsClient(self.tenant).configured():
             return False
         if channel == "chat":
