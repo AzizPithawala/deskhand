@@ -151,7 +151,8 @@ def test_eight_presses_at_the_same_moment_approve_exactly_once(eng):
     ts = [threading.Thread(target=press) for _ in range(8)]
     [x.start() for x in ts]
     [x.join() for x in ts]
-    assert out.count("approved") == 1 and out.count("already_used") == 7 and len(approvals(e, rid)) == 1
+    # one press wins; the other seven are told it is already taken, either because the token was used or (if they read the token a moment before the winner used it) because the request is already decided
+    assert out.count("approved") == 1 and len(approvals(e, rid)) == 1 and sorted(set(out) - {"approved"}) in (["already_decided"], ["already_decided", "already_used"], ["already_used"]) and len(out) == 8
 
 
 def test_sending_the_same_message_again_makes_the_earlier_token_useless(eng):

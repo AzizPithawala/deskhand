@@ -940,6 +940,14 @@ def delivery_status(ctx: Ctx = Depends(admin)):
     return {**ctx.engine.live.summary(), "base_url": ctx.engine.live.base_url, "failed": failed, "people_slack": people}
 
 
+@app.get("/api/delivery/log")
+def delivery_log(status: str | None = None, channel: str | None = None, person: str | None = None, kind: str | None = None, request_id: int | None = None,
+                 since: float | None = None, until: float | None = None, before: int | None = None, limit: int = 50, ctx: Ctx = Depends(admin)):
+    """Admin only, and metadata only: what was sent to whom and how it ended, never what the message said."""
+    f = {"status": status, "channel": channel, "person": person, "kind": kind, "request_id": request_id, "since": since, "until": until, "before": before, "limit": limit}
+    return _val(nt.delivery_log, ctx.engine, f)
+
+
 @app.post("/api/delivery/sweep")
 def delivery_sweep(ctx: Ctx = Depends(admin)):
     return ctx.engine.live.deliver_pending()

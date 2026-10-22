@@ -3,6 +3,8 @@ view over it. A person's preferences can reduce how they are reached (Slack, ema
 keeps at least one of Slack or email. Only the person themself reads or changes their own list."""
 import time
 
+from . import viasocket_adapter as vs
+
 # (code, title, the message kinds in it). Every kind the engine writes is here or in EXCLUDED; tests/test_notifications.py reads the source to prove it.
 CATEGORIES = [
     ("decide", "Needs your decision", ["approval_request", "approval_fallback", "reject_link"]),
@@ -179,3 +181,66 @@ def mark_read(engine, person_id, ids=None, request_id=None, everything=False):
     else:
         return 0
     return cur.rowcount
+
+
+# ---------------- the admin's delivery log ----------------
+DELIVERY_STATES = ("pending", "sending", "delivered", "failed", "skipped")
+CHANNEL_OF = {"chat": "slack", "email": "email"}
+LOG_MAX = 200
+
+
+def _log_filters(f, status=True, paging=True):
+    """Filters of the delivery log as SQL pieces. Unknown people, kinds and requests simply match nothing; the two small fixed lists are checked."""
+    where, args = [], []
+    if status and f.get("status"):
+        if f["status"] not in DELIVERY_STATES:
+            raise FilterError("Status must be one of " + ", ".join(DELIVERY_STATES) + ".")
+        where.append("o.delivery_status = ?")
+        args.append(f["status"])
+    if f.get("channel"):
+        if f["channel"] not in CHANNELS:
+            raise FilterError("Channel must be slack or email.")
+        where.append("o.channel = ?")
+        args.append("chat" if f["channel"] == "slack" else "email")
+    for key, col in (("person", "o.to_person"), ("kind", "o.kind")):
+        if f.get(key):
+            where.append(f"{col} = ?")
+            args.append(str(f[key])[:80])
+    if f.get("request_id") is not None:
+        where.append("o.request_id = ?")
+        args.append(int(f["request_id"]))
+    if f.get("since") is not None:
+        where.append("o.created_at >= ?")
+        args.append(float(f["since"]))
+    if f.get("until") is not None:
+        where.append("o.created_at < ?")
+        args.append(float(f["until"]))
+    if paging and f.get("before") is not None:
+        where.append("o.id < ?")
+        args.append(int(f["before"]))
+    return where, args
+
+
+def delivery_log(engine, f=None):
+    """What happened to every message the company tried to send: who, what kind, which request, which channel, how it ended. METADATA ONLY: the text of a message is never in
+    the result (it is on the request page, for people allowed to see it), so the log can be shown to an admin without exposing what people wrote."""
+    f = f or {}
+    where, args = _log_filters(f)
+    asked = f.get("limit")
+    limit = min(max(50 if asked is None else int(asked), 1), LOG_MAX)
+    rows = engine.s.all("SELECT o.id, o.request_id, o.to_person, o.from_person, o.sent_to, o.kind, o.channel, o.delivery_status, o.delivery_attempts, o.delivery_error, o.delivery_note, "
+                        "o.delivery_next_at, o.delivered_at, o.created_at, r.type_code AS r_type FROM outbox o LEFT JOIN requests r ON r.id = o.request_id WHERE 1=1"
+                        + "".join(" AND " + w for w in where) + " ORDER BY o.id DESC LIMIT ?", (*args, limit + 1))
+    more = len(rows) > limit
+    out = []
+    for o in rows[:limit]:
+        t = engine.d.type(o["r_type"]) if o["r_type"] else None
+        out.append({"id": o["id"], "request_id": o["request_id"], "type_name": t["name"] if t else None, "kind": o["kind"], "category": KIND_CATEGORY.get(o["kind"]),
+                    "channel": CHANNEL_OF.get(o["channel"], o["channel"]), "to": {"id": o["to_person"], "name": engine.name(o["to_person"])},
+                    "from": engine.name(o["from_person"]) if o["from_person"] else None, "sent_to": engine.name(o["sent_to"]) if o["sent_to"] else None,
+                    "status": o["delivery_status"], "attempts": o["delivery_attempts"] or 0, "error": vs.redact(o["delivery_error"]) if o["delivery_error"] else None,
+                    "note": vs.redact(o["delivery_note"]) if o["delivery_note"] else None, "next_attempt_at": o["delivery_next_at"], "delivered_at": o["delivered_at"],
+                    "created_at": o["created_at"], "can_retry": o["delivery_status"] == "failed"})
+    cw, ca = _log_filters(f, status=False, paging=False)  # the totals ignore the status choice and the page, so the status chips show what each would find
+    counts = {r["s"]: r["n"] for r in engine.s.all("SELECT o.delivery_status AS s, COUNT(*) n FROM outbox o WHERE 1=1" + "".join(" AND " + w for w in cw) + " GROUP BY o.delivery_status", tuple(ca))}
+    return {"items": out, "counts": {k: counts.get(k, 0) for k in DELIVERY_STATES}, "next_before": out[-1]["id"] if more and out else None}
