@@ -35,10 +35,16 @@ CREATE TABLE IF NOT EXISTS connections(
   PRIMARY KEY(tenant, app));
 CREATE TABLE IF NOT EXISTS delivery_ledger(
   id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, ikey TEXT UNIQUE, ts REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS roles(
+  code TEXT PRIMARY KEY, name TEXT NOT NULL, holder_id TEXT, builtin INTEGER DEFAULT 0, created_at REAL);
+CREATE TABLE IF NOT EXISTS type_rules(
+  code TEXT PRIMARY KEY, rules_json TEXT NOT NULL DEFAULT '{}', reviewed_at REAL, updated_at REAL, updated_by TEXT);
+CREATE TABLE IF NOT EXISTS policies(
+  key TEXT PRIMARY KEY, title TEXT NOT NULL, text TEXT NOT NULL, updated_at REAL);
 """
 OUTBOX_MIGRATION = {"delivery_status": "TEXT DEFAULT 'skipped'", "delivery_attempts": "INTEGER DEFAULT 0", "delivery_error": "TEXT",
                     "delivery_next_at": "REAL", "delivered_at": "REAL", "delivery_note": "TEXT"}
-# "connections" and "delivery_ledger" are deliberately NOT here: a demo reset must not disconnect apps or reset the daily live-delivery cap
+# "connections", "delivery_ledger", "roles", "type_rules" and "policies" are deliberately NOT here: a demo reset must not disconnect apps, reset the daily live-delivery cap or undo company setup
 TABLES = ["settings", "inbound_events", "requests", "events", "action_runs", "outbox"]
 
 
@@ -71,11 +77,19 @@ class Store:
             return cur
 
     def all(self, sql, args=()):
-        return [dict(r) for r in self.q(sql, args).fetchall()]
+        with self.lock:  # run and read under ONE lock: no other thread may execute or commit on this shared connection while a cursor is half-read
+            cur = self.conn.execute(sql, args)
+            rows = cur.fetchall()
+            self.conn.commit()
+            return [dict(r) for r in rows]
 
     def one(self, sql, args=()):
-        row = self.q(sql, args).fetchone()
-        return dict(row) if row else None
+        with self.lock:
+            cur = self.conn.execute(sql, args)
+            row = cur.fetchone()
+            cur.close()
+            self.conn.commit()
+            return dict(row) if row else None
 
     def get_setting(self, key, default=None):
         row = self.one("SELECT value FROM settings WHERE key=?", (key,))

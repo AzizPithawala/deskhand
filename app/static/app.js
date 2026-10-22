@@ -23,7 +23,7 @@ const isAdmin = () => !!(ME && ME.is_admin);
 const isDemo = () => !!(ME && ME.org.is_demo);
 
 /* ---------- api ---------- */
-async function api(path, body) {
+async function api(path, body, retried) {
   // body undefined = GET; null = POST without a body; anything else = POST as JSON. Every POST carries the CSRF token.
   const opt = body === undefined ? undefined
     : { method: 'POST', headers: { 'X-CSRF-Token': ME ? ME.csrf : '', ...(body === null ? {} : { 'Content-Type': 'application/json' }) }, body: body === null ? undefined : JSON.stringify(body) };
@@ -31,7 +31,13 @@ async function api(path, body) {
   try { r = await fetch('/api' + path, opt); } catch { const e = new Error('The server could not be reached.'); e.network = true; throw e; }
   let j = {};
   try { j = await r.json(); } catch { /* not json */ }
-  if (r.status === 401 && ME && !path.startsWith('/auth/')) signedOut('Your session ended. Sign in again.');
+  if (r.status === 401 && ME && !path.startsWith('/auth/')) {
+    if (!retried) {  // one 401 is not proof the session is gone: ask the server, and only if it agrees sign out. A refused request was never processed, so repeating it is safe.
+      const alive = await fetch('/api/auth/me').then(x => (x.ok ? x.json() : null)).catch(() => null);
+      if (alive) { ME = alive; return api(path, body, true); }
+    }
+    signedOut('Your session ended. Sign in again.');
+  }
   if (!r.ok) { const e = new Error(typeof j.detail === 'string' ? j.detail : (Array.isArray(j.detail) ? 'Please check what you entered.' : (r.statusText || 'The request failed'))); e.status = r.status; throw e; }
   return j;
 }
@@ -72,7 +78,8 @@ const chip = r => { const s = statusOf(r); return `<span class="chip ${s.c}">${i
 function resolveRule(rule, emp) {
   if (!rule || !emp) return null;
   if (rule === 'manager') return EMP[emp.manager_id] || null;
-  if (rule.startsWith('role:')) return S.employees.find(e => e.role === rule.slice(5)) || null;
+  if (rule.startsWith('role:')) return S.employees.find(e => e.role === rule.slice(5) || (e.roles || []).includes(rule.slice(5))) || null;
+  if (rule.startsWith('person:')) return EMP[rule.slice(7)] || null;
   return null;
 }
 const adminPerson = () => S.employees.find(e => e.role === 'admin') || null;
@@ -249,8 +256,8 @@ function dialogPrompt({ title, body = '', label = '', confirm = 'OK', match = nu
 
 /* ---------- routing ---------- */
 const AUTH_PAGES = ['login', 'register', 'join'];
-const APP_PAGES = ['ask', 'mine', 'needs', 'people', 'health', 'audit'];
-const ADMIN_PAGES = ['people', 'health', 'audit'];
+const APP_PAGES = ['ask', 'mine', 'needs', 'admin', 'setup', 'people', 'integrations', 'health', 'audit'];
+const ADMIN_PAGES = ['admin', 'setup', 'people', 'integrations', 'health', 'audit'];
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
   const [p, a] = h.split('/');
@@ -258,6 +265,7 @@ function parseHash() {
   if (AUTH_PAGES.includes(p)) return { page: p, id: null };
   if (p === 'inbox') { history.replaceState(null, '', '#needs'); return { page: 'needs', id: null }; }  // links in notifications: who "you" are comes from the session
   if (p === 'request' && a) return { page: 'mine', id: +a || null };
+  if (p === 'setup') return { page: 'setup', id: a || null };  // a section name, not a number
   if (APP_PAGES.includes(p)) return { page: p, id: a ? (+a || null) : null };
   return { page: 'ask', id: null };
 }
@@ -509,7 +517,7 @@ async function pageHealth() {
   const m = $('#main');
   m.innerHTML = `<div class="page-head"><h1>Health</h1><span class="meta">Is everything working, and can it be proven?</span></div>
     <div id="hstrip">${loading('health')}</div>
-    <div class="block" id="hdelivery"></div><div class="block" id="hconn"></div><div class="block" id="hguard"></div><div class="block" id="hlab"></div>`;
+    <div class="block" id="hdelivery"></div><div class="block" id="hguard"></div><div class="block" id="hlab"></div>`;
   let dash;
   try { dash = await api('/dashboard'); } catch (e) { $('#hstrip').innerHTML = errorState('health', e, pageHealth); return; }
   const g = await api('/digest').catch(() => null);
@@ -532,14 +540,13 @@ async function pageHealth() {
   else $('#hlab').innerHTML = `<h2>Reliability lab</h2><p class="meta">Each button breaks something on purpose and shows whether the guard held. Runs use Neha Gupta's requests and never send to Slack or email.</p>
     ${LAB.map(([k, t, p]) => `<div class="labrow"><div><b>${esc(t)}</b></div><div><p class="meta">${esc(p)}</p><button class="btn small" data-lab="${k}">Run</button><div class="verdict-box" id="v_${k}" aria-live="polite"></div></div></div>`).join('')}`;
   $$('[data-lab]').forEach(b => b.onclick = () => runLab(b.dataset.lab));
-  await paintConnections();
 }
 function paintDelivery(dv) {
   const el = $('#hdelivery'); if (!el) return;
   if (isDemo()) { el.innerHTML = '<h2>Delivery</h2><p class="meta">The demo company never sends real messages. Create your own company to connect Slack and Gmail.</p>'; return; }
   if (!dv) { el.innerHTML = `<h2>Delivery</h2>${emptyState('Delivery details are for admins', 'Only company admins can see them.')}`; return; }
   const cnt = Object.entries(dv.counts).map(([k, v]) => `${k} ${v}`).join(', ') || 'none yet';
-  el.innerHTML = `<h2>Delivery</h2><p class="meta">Messages go out by themselves once Slack and Gmail are set up below. Approvals never wait for delivery.</p>
+  el.innerHTML = `<h2>Delivery</h2><p class="meta">Messages go out by themselves once Slack and Gmail are connected on the <a href="#integrations">Integrations</a> page. Approvals never wait for delivery.</p>
     <dl class="kv" style="margin-top:8px"><dt>Slack</dt><dd>${dv.ready.slack ? 'Ready' : 'Not ready'}</dd><dt>Email</dt><dd>${dv.ready.email ? `Ready, goes only to ${esc(dv.email_to)}` : 'Not ready'}</dd><dt>Delivered today</dt><dd class="num">${dv.used_today} of ${dv.cap}${dv.capped ? ' (cap reached)' : ''}</dd><dt>Outbox</dt><dd>${esc(cnt)}</dd><dt>Links point to</dt><dd>${esc(dv.base_url)}</dd></dl>
     ${dv.failed.length ? `<h3 style="margin-top:16px">Failed deliveries</h3>${dv.failed.map(f => `<div class="approw"><span style="flex:1">#${f.id} · ${esc(nice(f.kind))} (${esc(f.channel)}) · ${esc(f.delivery_error || '')}</span><button class="btn small" data-retry="${f.id}">Retry</button></div>`).join('')}<p class="meta">Check the channel before retrying: a failed send may already have arrived.</p>` : ''}`;
   $$('[data-retry]', el).forEach(b => b.onclick = async () => { try { await api('/delivery/retry/' + b.dataset.retry, {}); toast('Retried.'); } catch (e) { toast(e.message, 6000); } pageHealth(); });
@@ -624,7 +631,7 @@ window.addEventListener('message', async ev => {
   if (d.type === 'viasocket_connection_success') {
     const key = CONN.pending || Object.keys(CONN.info).find(k => CONN.info[k].service_id === d.serviceId);
     try { await api('/connections/connected', { app: key, auth_id: d.data && d.data.id }); toast('Connected.'); } catch (e) { toast(e.message, 6000); }
-    if (current.page === 'health') pageHealth();
+    if (current.page === 'integrations') pageIntegrations();
   } else if (d.type === 'viasocket_connection_error') toast((d.error && d.error.message) || 'The connection did not complete.', 6000);
 });
 async function loadPicker(a, x) {
@@ -641,7 +648,7 @@ async function saveSetting(key, setting, value) {
 async function disconnectApp(key) {
   if (!await dialogPrompt({ title: `Disconnect ${key}?`, body: 'Notifications that need this app stop being delivered until it is connected again.', confirm: 'Disconnect', danger: true })) return;
   try { await api(`/connections/${key}/disconnect`, {}); toast('Disconnected.'); } catch (e) { toast(e.message, 6000); }
-  await pollCore(); pageHealth();
+  await pollCore(); pageIntegrations();
 }
 async function testConn(action) {
   const key = action.startsWith('slack') ? 'slack' : 'gmail';
@@ -788,7 +795,7 @@ function formDialog({ title, intro = '', fields, confirm = 'Save', submit }) {
   $('#fdlg-title').textContent = title; $('#fdlg-intro').textContent = intro; $('#fdlg-err').textContent = '';
   $('#fdlg-fields').innerHTML = fields.map((f, i) => `<div><label class="l" for="ff${i}">${esc(f.label)}</label>${f.options
     ? `<select class="field" id="ff${i}" ${f.disabled ? 'disabled' : ''}>${f.options.map(([v, l]) => `<option value="${esc(v)}" ${v === (f.value ?? '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`
-    : `<input class="field" id="ff${i}" type="${f.type || 'text'}" value="${esc(f.value ?? '')}" autocomplete="off" ${f.disabled ? 'disabled' : ''}>`}${f.hint ? `<div class="meta">${esc(f.hint)}</div>` : ''}</div>`).join('');
+    : (f.type === 'textarea' ? `<textarea class="field" id="ff${i}" rows="5" ${f.disabled ? 'disabled' : ''}>${esc(f.value ?? '')}</textarea>` : `<input class="field" id="ff${i}" type="${f.type || 'text'}" value="${esc(f.value ?? '')}" autocomplete="off" ${f.disabled ? 'disabled' : ''}>`)}${f.hint ? `<div class="meta">${esc(f.hint)}</div>` : ''}</div>`).join('');
   const ok = $('#fdlg-ok'); ok.textContent = confirm; ok.disabled = false;
   $('#fdlg-cancel').onclick = () => d.close();
   $('#fdlgform').onsubmit = async e => {
@@ -823,8 +830,8 @@ async function pagePeople() {
   try { rows = await api('/people'); } catch (e) { $('#plist').innerHTML = errorState('people', e, pagePeople); return; }
   PEOPLE = rows;
   const act = p => isDemo() ? '' : `<button class="btn small" data-edit="${esc(p.id)}">Edit</button>${['active', 'invited'].includes(p.status) ? `<button class="btn small" data-link="${esc(p.id)}">${p.status === 'invited' ? 'New invite link' : 'Password reset link'}</button>` : ''}`;
-  $('#plist').innerHTML = `<div class="scroll"><table class="t people"><tr><th>Person</th><th>Access</th><th>Reports to</th><th>Department</th><th>Status</th><th></th></tr>${rows.map(p =>
-    `<tr><td class="pname"><b>${esc(p.name)}${p.id === meId() ? ' (you)' : ''}</b><span class="meta">${esc(p.email)}</span></td><td data-l="Access">${esc(ACCESS[p.access_role] || p.access_role)}</td><td data-l="Reports to">${esc(pname(p.manager_id))}</td><td data-l="Department">${esc(p.department || '–')}</td><td>${pchip(p.status)}</td><td class="pact">${act(p)}</td></tr>`).join('')}</table></div>`;
+  $('#plist').innerHTML = `<div class="scroll"><table class="t people"><tr><th>Person</th><th>Access</th><th>Reports to</th><th>Department</th><th>Business roles</th><th>Status</th><th></th></tr>${rows.map(p =>
+    `<tr><td class="pname"><b>${esc(p.name)}${p.id === meId() ? ' (you)' : ''}</b><span class="meta">${esc(p.email)}</span></td><td data-l="Access">${esc(ACCESS[p.access_role] || p.access_role)}</td><td data-l="Reports to">${esc(pname(p.manager_id))}</td><td data-l="Department">${esc(p.department || '–')}</td><td data-l="Business roles">${esc((p.roles || []).join(', ') || '–')}</td><td>${pchip(p.status)}</td><td class="pact">${act(p)}</td></tr>`).join('')}</table></div>`;
   const inv = $('#invitebtn'); if (inv) inv.onclick = invitePerson;
   $$('[data-edit]').forEach(b => b.onclick = () => editPerson(b.dataset.edit));
   $$('[data-link]').forEach(b => b.onclick = () => personLink(b.dataset.link));
@@ -867,8 +874,232 @@ async function personLink(id) {
   catch (e) { toast(e.message, 6000); }
 }
 
+/* ---------- admin hub, setup and integrations ---------- */
+const ADMIN_LINKS = [['setup', 'Setup', 'Roles, request types, policies and a routing test.'], ['people', 'People', 'Invite people, set managers and access.'],
+  ['integrations', 'Integrations', 'Connect Slack and Gmail; switch viaSocket AI.'], ['health', 'Health', 'Is everything working, and can it be proven?'], ['audit', 'Audit', 'Every change, who made it, when.']];
+const amount = n => `₹${Number(n).toLocaleString('en-IN')}`;
+const afterSetup = async () => { try { await loadCore(); } catch { /* the page shows its own errors */ } };  // people, roles and rules feed the journeys and the status bar
+
+async function pageAdmin() {
+  let note = '';
+  if (!isDemo()) {
+    try { const c = await api('/setup/checklist'); if (!c.dismissed && c.done < c.total) note = `<div class="state" style="margin-bottom:16px"><b>Company setup: ${c.done} of ${c.total} steps done</b><a href="#setup">Continue setting up</a></div>`; } catch { /* the hub still works without it */ }
+  }
+  $('#main').innerHTML = `<div class="page-head"><h1>Admin</h1><span class="meta">${esc(ME.org.name)}</span></div>${note}
+    <div class="hub">${ADMIN_LINKS.map(([k, t, d]) => `<a href="#${k}"><b>${esc(t)}</b><span class="meta">${esc(d)}</span></a>`).join('')}</div>`;
+}
+
+async function pageIntegrations() {
+  $('#main').innerHTML = `<div class="page-head"><h1>Integrations</h1><span class="meta">Slack and Gmail, connected once for the whole company.</span></div><div class="block" id="hconn" style="border-top:0;margin-top:0;padding-top:0"></div>`;
+  await paintConnections();
+}
+
+const SETUP_TABS = [['', 'Overview'], ['roles', 'Roles'], ['types', 'Request types'], ['policies', 'Policies'], ['test', 'Routing test']];
+let TD = { types: [], people: [], role_options: [] };  // the last request-type listing, also used by the editor's pickers
+async function pageSetup(section) {
+  const sec = SETUP_TABS.some(t => t[0] === (section || '')) ? (section || '') : '';
+  $('#main').innerHTML = `<div class="page-head"><h1>Setup</h1><span class="meta">${isDemo() ? 'The demo company\'s rules are prepared and read-only.' : 'How requests are routed in your company.'}</span></div>
+    <nav class="tabs" aria-label="Setup sections">${SETUP_TABS.map(([k, l]) => `<a href="#setup${k ? '/' + k : ''}" ${k === sec ? 'aria-current="page"' : ''}>${esc(l)}</a>`).join('')}</nav><div id="sbody">${loading('setup')}</div>`;
+  const fn = { '': setupOverview, roles: setupRoles, types: setupTypes, policies: setupPolicies, test: setupTest }[sec];
+  try { await fn(); } catch (e) { $('#sbody').innerHTML = errorState('setup', e, () => pageSetup(section)); }
+}
+
+async function setupOverview() {
+  const c = await api('/setup/checklist');
+  if (c.demo) { $('#sbody').innerHTML = '<div class="state"><b>This is the demo company</b>Its roles and rules are prepared and cannot be changed. Read them in the sections above and try the routing test. Create your own company to set up yours.</div>'; return; }
+  $('#sbody').innerHTML = `<h2>Get your company ready <span class="meta num" style="margin-left:8px">${c.done} of ${c.total} done</span></h2>
+    <p class="meta" style="max-width:640px">Each step ticks itself when it is true. Nothing here blocks anyone from asking for things.</p>
+    <ol class="checklist">${c.steps.map(s => `<li class="${s.done ? 'done' : ''}">${icon(s.done ? 's-done' : 's-upcoming')}<div><a href="${esc(s.link)}"><b>${esc(s.title)}</b></a><div class="meta">${esc(s.detail)}${s.done ? ' · done' : ''}</div></div></li>`).join('')}</ol>
+    ${c.done === c.total && !c.dismissed ? '<button class="btn" id="chkdone">Hide the reminder on the Admin page</button>' : ''}`;
+  const b = $('#chkdone'); if (b) b.onclick = async () => { try { await api('/setup/checklist/dismiss', {}); toast('Hidden.'); setupOverview(); } catch (e) { toast(e.message, 6000); } };
+}
+
+/* roles */
+async function setupRoles() {
+  const d = await api('/setup/roles'), ro = d.demo;
+  const holderCell = r => {
+    const opts = d.people.map(p => `<option value="${esc(p.id)}" ${p.id === r.holder_id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+    const gone = r.holder_state === 'inactive' ? `<option value="${esc(r.holder_id)}" selected>${esc(r.holder_name)} (deactivated)</option>` : '';
+    const warn = r.holder_state === 'inactive' ? 'Deactivated: this role is effectively empty.' : (r.holder_state === 'none' ? 'No holder yet.' : '');
+    return `<select class="field" data-holder="${esc(r.code)}" aria-label="Who holds ${esc(r.name)}" ${ro ? 'disabled' : ''}><option value="">No one</option>${gone}${opts}</select>${warn ? `<div class="meta warn">${esc(warn)}</div>` : ''}`;
+  };
+  $('#sbody').innerHTML = `<p class="meta" style="max-width:640px">A business role is a job such as IT admin. Choose who holds it, then request types can say "the IT admin approves". One person holds a role at a time. If nobody does, requests that need it go to the type's backup, then to an admin.</p>
+    <div class="scroll"><table class="t roles"><tr><th>Role</th><th>Held by</th><th>Used by</th><th></th></tr>${d.roles.map(r =>
+      `<tr><td><b>${esc(r.name)}</b>${r.builtin ? '' : ' <span class="meta">custom</span>'}</td><td>${holderCell(r)}</td><td class="meta">${esc(r.used_by.join(', ') || 'No request type')}</td>
+       <td>${!ro && !r.builtin ? `<button class="btn small danger" data-delrole="${esc(r.code)}">Delete</button>` : ''}</td></tr>`).join('')}</table></div>
+    ${ro ? '' : '<p style="margin-top:16px"><button class="btn" id="addrole">Add a role</button></p>'}`;
+  $$('[data-holder]').forEach(sel => sel.onchange = async () => {
+    try { await api('/setup/roles/' + encodeURIComponent(sel.dataset.holder), { holder_id: sel.value || null }); toast('Saved.'); await afterSetup(); } catch (e) { toast(e.message, 6000); }
+    setupRoles();
+  });
+  $$('[data-delrole]').forEach(b => b.onclick = async () => {
+    if (!await dialogPrompt({ title: 'Delete this role?', body: 'It is removed. A role that a request type still uses cannot be deleted.', confirm: 'Delete', danger: true })) return;
+    try { await api(`/setup/roles/${encodeURIComponent(b.dataset.delrole)}/delete`, {}); toast('Deleted.'); await afterSetup(); } catch (e) { toast(e.message, 6000); }
+    setupRoles();
+  });
+  const add = $('#addrole'); if (add) add.onclick = () => formDialog({ title: 'Add a role', intro: 'For example Facilities lead. Then pick who holds it and use it in a request type.', confirm: 'Add role',
+    fields: [{ key: 'name', label: 'Role name' }], submit: async v => { await api('/setup/roles', { name: v.name }); toast('Added.'); await afterSetup(); setupRoles(); } });
+}
+
+/* request types */
+const whenText = (t, w) => {
+  if (!w) return 'always';
+  if (w.cost_above != null) return `the cost is above ${/INR/.test(t.currency || '') ? amount(w.cost_above) : Number(w.cost_above).toLocaleString('en-IN')}`;
+  const dc = w.detail_contains || {};
+  return `the ${nice(dc.field)} mentions ${(dc.words || []).join(', ')}`;
+};
+function typeLines(t) {
+  const mid = x => String(x).replace(/^The requester/, 'the requester').replace(/^An admin/, 'an admin');  // read mid-sentence
+  const L = r => esc(mid(((t.labels || {})[r] || {}).label || (r ? r : 'No one')));
+  if (t.blocked) return [`Never processed. The employee is told to contact ${L(t.redirect)} privately.`];
+  if (t.code === 'policy_question') return ['Answered by Deskhand from your policies. No approval.'];
+  const out = [];
+  if (!t.requires_approval) out.push('No approval needed.');
+  else out.push(`Approved by ${L(t.approver_rule || 'manager')}${t.auto_allow_up_to != null ? ` (only above ${esc(amount(t.auto_allow_up_to))}; below that it needs no approval)` : ''}.`);
+  if (!t.requires_approval && t.auto_allow_up_to != null) out[0] = `No approval up to ${esc(amount(t.auto_allow_up_to))}; above that ${L(t.approver_rule || 'manager')} approves.`;
+  (t.extra_approvers || []).forEach(x => out.push(`Also ${L(x.rule)} when ${esc(whenText(t, x.when))}.`));
+  out.push(`Reminder after ${t.reminder_hours} h. If nobody acts, it escalates after ${t.escalate_hours} h to ${L(t.backup_rule)}${t.backup_rule ? '' : ' (an admin)'}.`);
+  out.push(t.fulfilment_kind === 'auto_action' ? 'Applied by Deskhand in the HR system.' : `Task done by ${L(t.fulfiller_rule)}.`);
+  return out;
+}
+const typeWarnings = t => Object.values(t.labels || {}).filter(l => !l.ok && l.rule !== 'manager').map(l => `${l.label}: ${l.note || 'cannot be found'}. Requests that need it use the backup, then an admin.`);
+
+async function setupTypes() {
+  TD = await api('/setup/types');
+  const ro = TD.demo;
+  $('#sbody').innerHTML = `<p class="meta" style="max-width:640px">The kinds of request Deskhand understands. For each you choose who approves, what happens if nobody acts, and who does the task. Changes apply to new requests; one already with an approver keeps its approvers.</p>
+    ${TD.types.map(t => `<div class="typecard" data-type="${esc(t.code)}"><div class="h"><b>${esc(t.name)}</b>
+      <span class="chip ${t.enabled ? 'approved' : 'neutral'}">${icon(t.enabled ? 's-done' : 's-cancelled')}${t.enabled ? 'On' : 'Off'}</span>
+      ${t.changed.length ? '<span class="meta">edited</span>' : ''}${ro ? '' : `<span class="meta">${t.reviewed_at ? 'reviewed' : 'not reviewed yet'}</span>`}</div>
+      ${typeLines(t).map(l => `<p class="sub">${l}</p>`).join('')}${typeWarnings(t).map(w => `<div class="warnrow">${icon('s-alert')}<span>${esc(w)}</span></div>`).join('')}
+      ${ro ? '' : `<div class="btns"><button class="btn small" data-edit="${esc(t.code)}">Edit</button>${t.reviewed_at ? '' : `<button class="btn small" data-ok="${esc(t.code)}">Looks right</button>`}</div>`}</div>`).join('')}`;
+  $$('[data-edit]').forEach(b => b.onclick = () => editType(b.dataset.edit));
+  $$('[data-ok]').forEach(b => b.onclick = async () => { try { await api(`/setup/types/${encodeURIComponent(b.dataset.ok)}/reviewed`, {}); toast('Marked as reviewed.'); } catch (e) { toast(e.message, 6000); } setupTypes(); });
+}
+
+function ruleSelect(id, value, o, t) {
+  const groups = [['', [...(o.none ? [['', o.none]] : []), ...(o.manager ? [['manager', "The requester's manager"]] : []), ['role:admin', 'An admin (the owner or any admin)']]],
+    ['Business roles', TD.role_options.map(r => [`role:${r.code}`, r.name + (r.holder_name ? ` (${r.holder_name})` : ' (no holder)')])], ['People', TD.people.map(p => [`person:${p.id}`, p.name])]];
+  const known = new Set(groups.flatMap(g => g[1].map(x => x[0])));
+  if (value && !known.has(value)) groups.unshift(['', [[value, (((t.labels || {})[value] || {}).label || value) + ' (not available)']]]);
+  const opt = ([v, l]) => `<option value="${esc(v)}" ${v === (value ?? '') ? 'selected' : ''}>${esc(l)}</option>`;
+  return `<select class="field" id="${id}">${groups.map(([g, os]) => (g ? `<optgroup label="${esc(g)}">` : '') + os.map(opt).join('') + (g ? '</optgroup>' : '')).join('')}</select>`;
+}
+function extraRow(i, x, t) {
+  const w = x && x.when, dc = (w && w.detail_contains) || {};
+  const kind = !x ? 'always' : (!w ? 'always' : (w.cost_above != null ? 'cost' : 'words'));
+  const fields = t.condition_fields || [];
+  return `<div class="extrarow" data-extra="${i}"><div><label class="l" for="t_x${i}_rule">Extra approver ${i + 1}</label>${ruleSelect(`t_x${i}_rule`, x ? x.rule : '', { none: 'None', manager: true }, t)}</div>
+    <div data-when><label class="l" for="t_x${i}_kind">When</label><select class="field" id="t_x${i}_kind"><option value="always" ${kind === 'always' ? 'selected' : ''}>Always</option><option value="cost" ${kind === 'cost' ? 'selected' : ''}>The cost is above</option>${fields.length ? `<option value="words" ${kind === 'words' ? 'selected' : ''}>A detail mentions</option>` : ''}</select></div>
+    <div data-show="cost"><label class="l" for="t_x${i}_cost">Amount${t.currency ? ' (' + esc(t.currency) + ')' : ''}</label><input class="field" id="t_x${i}_cost" type="number" min="0" step="any" value="${w && w.cost_above != null ? esc(w.cost_above) : ''}"></div>
+    <div data-show="words"><label class="l" for="t_x${i}_field">Detail</label><select class="field" id="t_x${i}_field">${fields.map(f => `<option value="${esc(f)}" ${dc.field === f ? 'selected' : ''}>${esc(nice(f))}</option>`).join('')}</select>
+      <label class="l" for="t_x${i}_words" style="margin-top:8px">Words, separated by commas</label><input class="field" id="t_x${i}_words" value="${esc((dc.words || []).join(', '))}" autocomplete="off"></div></div>`;
+}
+function editType(code) {
+  const t = TD.types.find(x => x.code === code), f = new Set(t.fields), d = $('#tdlg');
+  const num = (id, label, v, extra = '') => `<div><label class="l" for="${id}">${esc(label)}</label><input class="field" id="${id}" type="number" step="any" min="0" value="${v ?? ''}" ${extra}></div>`;
+  const blocks = [];
+  if (f.has('enabled') && code !== 'payroll') blocks.push(`<label class="switch"><input type="checkbox" id="t_enabled" ${t.enabled ? 'checked' : ''}> This request type is switched on</label>`);
+  if (f.has('requires_approval')) blocks.push(`<label class="switch"><input type="checkbox" id="t_requires_approval" ${t.requires_approval ? 'checked' : ''}> It needs approval before it is carried out</label>`);
+  if (f.has('approver_rule')) blocks.push(`<div class="tdgroup"><label class="l" for="t_approver_rule">Who approves</label>${ruleSelect('t_approver_rule', t.approver_rule || 'manager', { manager: true }, t)}</div>`);
+  if (f.has('auto_allow_up_to')) blocks.push(`<div class="tdgroup">${num('t_auto_allow_up_to', `Needs no approval up to (${t.currency || 'amount'})`, t.auto_allow_up_to)}<p class="meta">Above this amount the approver above must approve.</p></div>`);
+  if (f.has('extra_approvers')) blocks.push(`<div class="tdgroup"><span class="l">Extra approvers (up to 2)</span><p class="meta">Added after the first approver, only when their condition holds.</p>${[0, 1].map(i => extraRow(i, (t.extra_approvers || [])[i], t)).join('')}</div>`);
+  if (f.has('reminder_hours')) blocks.push(`<div class="tdgroup"><span class="l">If nobody acts</span><div class="extrarow">${num('t_reminder_hours', 'Send a reminder after (hours)', t.reminder_hours, 'min="1" max="720"')}${num('t_escalate_hours', 'Escalate after (hours)', t.escalate_hours, 'min="1" max="720"')}</div>
+    <label class="l" for="t_backup_rule">Escalate to</label>${ruleSelect('t_backup_rule', t.backup_rule || '', { none: 'No one in particular: an admin', manager: true }, t)}</div>`);
+  if (f.has('fulfiller_rule')) blocks.push(`<div class="tdgroup"><label class="l" for="t_fulfiller_rule">Who does the task and clicks Done</label>${ruleSelect('t_fulfiller_rule', t.fulfiller_rule, { manager: true }, t)}</div>`);
+  if (f.has('redirect')) blocks.push(`<div class="tdgroup"><label class="l" for="t_redirect">Who employees are told to contact privately</label>${ruleSelect('t_redirect', t.redirect, {}, t)}<p class="meta">Salary and payroll messages are never processed, whatever you set here.</p></div>`);
+  if (f.has('details_needed')) blocks.push(`<div class="tdgroup"><span class="l">Details Deskhand asks the approver to look at</span><div class="checks">${(t.details_known || []).map(k => `<label><input type="checkbox" data-detail="${esc(k)}" ${(t.details_needed || []).includes(k) ? 'checked' : ''}> ${esc(nice(k))}</label>`).join('')}</div></div>`);
+  $('#td-title').textContent = `Edit ${t.name}`; $('#td-intro').textContent = t.notes || ''; $('#td-err').textContent = '';
+  $('#td-fields').innerHTML = blocks.join('');
+  const sync = () => $$('.extrarow[data-extra]', d).forEach(row => {
+    const has = !!$('select[id$=_rule]', row).value, k = $('select[id$=_kind]', row).value;  // no approver chosen: no condition to set
+    $('[data-when]', row).hidden = !has;
+    $$('[data-show]', row).forEach(x => { x.hidden = !has || x.dataset.show !== k; });
+  });
+  $$('.extrarow[data-extra] select', d).forEach(s => { s.onchange = sync; }); sync();
+  const ok = $('#td-ok'); ok.disabled = false; $('#td-reset').hidden = !t.changed.length;
+  $('#td-cancel').onclick = () => d.close();
+  $('#td-reset').onclick = async () => {
+    if (!await dialogPrompt({ title: `Reset ${t.name} to the defaults?`, body: 'Your edits to this type are removed. Requests already with an approver keep their approvers.', confirm: 'Reset', danger: true })) return;
+    try { await api(`/setup/types/${encodeURIComponent(code)}/reset`, {}); d.close(); toast('Reset to the defaults.'); await afterSetup(); setupTypes(); } catch (e) { $('#td-err').textContent = e.message; }
+  };
+  $('#tdform').onsubmit = async e => {
+    e.preventDefault();
+    const patch = {}, num2 = id => ($(id).value === '' ? null : Number($(id).value)), set = (k, v) => { if (JSON.stringify(v) !== JSON.stringify(t[k])) patch[k] = v; };
+    if (f.has('enabled') && code !== 'payroll') set('enabled', $('#t_enabled').checked);
+    if (f.has('requires_approval')) set('requires_approval', $('#t_requires_approval').checked);
+    if (f.has('approver_rule') && $('#t_approver_rule').value !== (t.approver_rule || 'manager')) patch.approver_rule = $('#t_approver_rule').value;
+    if (f.has('backup_rule') && ($('#t_backup_rule').value || null) !== (t.backup_rule || null)) patch.backup_rule = $('#t_backup_rule').value || null;
+    if (f.has('fulfiller_rule')) set('fulfiller_rule', $('#t_fulfiller_rule').value);
+    if (f.has('redirect')) set('redirect', $('#t_redirect').value);
+    if (f.has('auto_allow_up_to')) set('auto_allow_up_to', num2('#t_auto_allow_up_to'));
+    if (f.has('reminder_hours')) { set('reminder_hours', num2('#t_reminder_hours')); set('escalate_hours', num2('#t_escalate_hours')); }
+    if (f.has('extra_approvers')) {
+      const ex = [];
+      for (const i of [0, 1]) {
+        const rule = $(`#t_x${i}_rule`).value; if (!rule) continue;
+        const kind = $(`#t_x${i}_kind`).value; let when = null;
+        if (kind === 'cost') when = { cost_above: num2(`#t_x${i}_cost`) };
+        else if (kind === 'words') when = { detail_contains: { field: $(`#t_x${i}_field`).value, words: $(`#t_x${i}_words`).value.split(',').map(s => s.trim()).filter(Boolean) } };
+        ex.push({ rule, when });
+      }
+      set('extra_approvers', ex);
+    }
+    if (f.has('details_needed')) set('details_needed', $$('[data-detail]', d).filter(c => c.checked).map(c => c.dataset.detail));
+    if (!Object.keys(patch).length) { d.close(); toast('Nothing changed.'); return; }
+    ok.disabled = true;
+    try { await api('/setup/types/' + encodeURIComponent(code), patch); d.close(); toast('Saved. New requests use it.'); await afterSetup(); setupTypes(); }
+    catch (err) { $('#td-err').textContent = err.message; ok.disabled = false; }
+  };
+  d.showModal();
+}
+
+/* policies */
+async function setupPolicies() {
+  const d = await api('/setup/policies'), ro = d.demo;
+  $('#sbody').innerHTML = `<p class="meta" style="max-width:640px">When someone asks a policy question, Deskhand answers with the text you write here, word for word. It never makes policy up: with no matching policy it points them to HR.</p>
+    ${d.policies.length ? d.policies.map(p => `<div class="typecard"><div class="h"><b>${esc(p.title)}</b></div><p class="sub" style="white-space:pre-wrap">${esc(p.text)}</p>
+      ${ro ? '' : `<div class="btns"><button class="btn small" data-editpol="${esc(p.key)}">Edit</button><button class="btn small danger" data-delpol="${esc(p.key)}">Delete</button></div>`}</div>`).join('')
+      : emptyState('No policies yet', ro ? 'The demo company has prepared policies that Deskhand quotes.' : 'Add the rules people ask about, such as work from home or sick leave.')}
+    ${ro ? '' : '<p style="margin-top:16px"><button class="btn" id="addpol">Add a policy</button></p>'}`;
+  const save = (title, locked) => formDialog({ title: locked ? `Edit ${title}` : 'Add a policy', confirm: 'Save policy',
+    fields: [{ key: 'title', label: 'Name (for example Work from home)', value: title || '', disabled: !!locked }, { key: 'text', label: 'What Deskhand should say', type: 'textarea', value: (d.policies.find(p => p.title === title) || {}).text || '' }],
+    submit: async v => { await api('/setup/policies', { title: v.title, text: v.text }); toast('Saved.'); setupPolicies(); } });
+  const add = $('#addpol'); if (add) add.onclick = () => save('', false);
+  $$('[data-editpol]').forEach(b => b.onclick = () => save(d.policies.find(p => p.key === b.dataset.editpol).title, true));
+  $$('[data-delpol]').forEach(b => b.onclick = async () => {
+    if (!await dialogPrompt({ title: 'Delete this policy?', body: 'Deskhand will stop answering questions about it.', confirm: 'Delete', danger: true })) return;
+    try { await api(`/setup/policies/${encodeURIComponent(b.dataset.delpol)}/delete`, {}); toast('Deleted.'); } catch (e) { toast(e.message, 6000); }
+    setupPolicies();
+  });
+}
+
+/* routing test */
+async function setupTest() {
+  TD = await api('/setup/types');
+  const so = (xs, f, sel) => xs.map(x => `<option value="${esc(f(x)[0])}" ${f(x)[0] === sel ? 'selected' : ''}>${esc(f(x)[1])}</option>`).join('');
+  $('#sbody').innerHTML = `<p class="meta" style="max-width:640px">Pick a person and a kind of request to see what would happen, before anyone asks. It uses the same rules as a real request. Nothing is created or sent.</p>
+    <form class="simform" id="simform" novalidate><div><label class="l" for="sim_person">Who is asking</label><select class="field" id="sim_person">${so(TD.people, p => [p.id, p.name], ME.user.id)}</select></div>
+      <div><label class="l" for="sim_type">What they ask for</label><select class="field" id="sim_type">${so(TD.types, t => [t.code, t.name], '')}</select></div>
+      <div><label class="l" for="sim_cost">Estimated cost (optional)</label><input class="field" id="sim_cost" type="number" min="0" step="any" placeholder="For example 25000"></div>
+      <div><label class="l" for="sim_res">Resource, for access requests (optional)</label><input class="field" id="sim_res" placeholder="For example shared finance folder" autocomplete="off"></div>
+      <div class="err" id="sim_err" role="alert"></div><div><button class="btn primary" type="submit">Test it</button></div></form><div id="simres" aria-live="polite"></div>`;
+  $('#simform').onsubmit = async e => {
+    e.preventDefault(); $('#sim_err').textContent = '';
+    try {
+      const r = await api('/setup/simulate', { person_id: $('#sim_person').value, type_code: $('#sim_type').value, estimated_cost: $('#sim_cost').value === '' ? null : Number($('#sim_cost').value), resource: $('#sim_res').value.trim() || null });
+      $('#simres').innerHTML = `<div class="simres"><p><b>${esc(r.text)}</b></p>
+        ${r.chain.length ? `<ol class="simchain">${r.chain.map(c => `<li><b>${esc(c.name)}</b> <span class="meta">${esc(c.reason)}</span></li>`).join('')}</ol>` : ''}
+        <dl class="kv">${r.outcome === 'approval' || r.outcome === 'no_approval' ? `<dt>Reminder</dt><dd>after ${r.reminder_hours} h</dd><dt>Escalates</dt><dd>after ${r.escalate_hours} h${r.escalates_to ? ` to ${esc(r.escalates_to.name)}` : ''}</dd>` : ''}
+        ${r.fulfiller ? `<dt>Task done by</dt><dd>${esc(r.fulfiller.name)}</dd>` : ''}</dl>
+        ${r.warnings.map(w => `<div class="warnrow">${icon('s-alert')}<span>${esc(w)}</span></div>`).join('')}</div>`;
+    } catch (err) { $('#sim_err').textContent = err.message; $('#simres').innerHTML = ''; }
+  };
+}
+
 /* ---------- render loop ---------- */
-const TITLES = { login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', people: 'People', health: 'Health', audit: 'Audit' };
+const TITLES = { login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', admin: 'Admin', setup: 'Setup', people: 'People', integrations: 'Integrations', health: 'Health', audit: 'Audit' };
+const LOADING = { health: 'health', people: 'people', setup: 'setup', integrations: 'integrations', admin: 'the admin page', audit: 'the audit record' };
 async function render(userNav) {
   const my = ++seq;
   const route = parseHash();
@@ -880,7 +1111,7 @@ async function render(userNav) {
   current = route;
   if (userNav && changedPage) window.scrollTo(0, 0);
   paintShell();
-  $$('#nav a').forEach(a => { if (a.dataset.page === route.page) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  $$('#nav a').forEach(a => { if (a.dataset.page === route.page || (a.hasAttribute('data-hub') && ADMIN_PAGES.includes(route.page))) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   document.title = TITLES[route.page] + ' · Deskhand';
   const m = $('#main');
   try {
@@ -889,12 +1120,15 @@ async function render(userNav) {
       if (userNav) m.focus({ preventScroll: true });
       return;
     }
-    if (changedPage) m.innerHTML = loading(route.page === 'health' ? 'health' : (route.page === 'people' ? 'people' : 'your requests'));
+    if (changedPage) m.innerHTML = loading(LOADING[route.page] || 'your requests');
     if (['ask', 'mine', 'needs'].includes(route.page)) { await loadLists(); if (!SEEN.__init) { diffStatuses(REQS); SEEN.__init = 1; } }
     if (my !== seq) return;
     if (route.page === 'ask') await pageAsk();
     else if (route.page === 'mine') await pageMine(route.id);
     else if (route.page === 'needs') await pageNeeds(route.id);
+    else if (route.page === 'admin') await pageAdmin();
+    else if (route.page === 'setup') await pageSetup(route.id);
+    else if (route.page === 'integrations') await pageIntegrations();
     else if (route.page === 'people') await pagePeople();
     else if (route.page === 'health') await pageHealth();
     else await pageAudit();

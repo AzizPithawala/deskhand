@@ -292,23 +292,29 @@ class Accounts:
                  (_h(token), user["id"], user["org_id"], csrf, now, now, now + SESSION_ABSOLUTE_S, (ip or "")[:64], (ua or "")[:200]))
         return token, csrf
 
-    def get_session(self, token):
-        """The live session and person behind a cookie, or None. Expired, idle or deactivated sessions are removed."""
+    def session_state(self, token):
+        """(session, None) for a live session, else (None, reason). The reason is a fixed word, never the token, so it can be logged."""
         if not token:
-            return None
+            return None, "no_cookie"
         row = self.s.one("SELECT * FROM sessions WHERE id_hash=?", (_h(token),))
         if not row:
-            return None
+            return None, "unknown_session"
         now = self.now()
         user = self.get_user(row["user_id"])
         org = self.get_org(row["org_id"])
-        if (now > row["expires_at"] or now - row["last_seen"] > SESSION_IDLE_S or not user or user["status"] not in ("active", "demo")
-                or not org or org["status"] != "active" or user["org_id"] != row["org_id"]):
+        why = ("expired" if now > row["expires_at"] else "idle" if now - row["last_seen"] > SESSION_IDLE_S else "no_user" if not user
+               else f"user_{user['status']}" if user["status"] not in ("active", "demo") else "no_org" if not org else "org_inactive" if org["status"] != "active"
+               else "org_mismatch" if user["org_id"] != row["org_id"] else None)
+        if why:
             self.s.q("DELETE FROM sessions WHERE id_hash=?", (row["id_hash"],))
-            return None
+            return None, why
         if now - row["last_seen"] > 60:
             self.s.q("UPDATE sessions SET last_seen=? WHERE id_hash=?", (now, row["id_hash"]))
-        return {"user": user, "org": org, "csrf": row["csrf"], "token_hash": row["id_hash"]}
+        return {"user": user, "org": org, "csrf": row["csrf"], "token_hash": row["id_hash"]}, None
+
+    def get_session(self, token):
+        """The live session and person behind a cookie, or None. Expired, idle or deactivated sessions are removed."""
+        return self.session_state(token)[0]
 
     def switch_demo_user(self, token, user_id):
         """Demo company only: move a demo session to another fictional person."""

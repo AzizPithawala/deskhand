@@ -6,7 +6,7 @@ import shutil
 import sqlite3
 import threading
 
-from . import viasocket_adapter as vs, viasocket_ai as vsai
+from . import setup, viasocket_adapter as vs, viasocket_ai as vsai
 from .accounts import Accounts
 from .db import Store
 from .delivery import Delivery
@@ -32,8 +32,13 @@ class OrgRegistry:
         return [u for u in self.accounts.s.all("SELECT * FROM users WHERE org_id=? ORDER BY created_at, id", (org_id,))]
 
     def _build(self, org):
-        directory = Directory.load() if org["is_demo"] else Directory.from_users(self._users(org["id"]))
-        engine = Engine(store=Store(self.path(org["id"])), directory=directory, api_key="")
+        store = Store(self.path(org["id"]))
+        if org["is_demo"]:
+            directory = Directory.load()
+        else:
+            setup.seed_roles(store)
+            directory = Directory.for_company(self._users(org["id"]), store)
+        engine = Engine(store=store, directory=directory, api_key="")
         engine.org_id, engine.is_demo = org["id"], bool(org["is_demo"])
         engine.live = Delivery(engine, tenant=org["id"])  # live-only delivery, per company
         ai = vsai.ViaSocketClassifier(engine.s, org["id"])
@@ -51,11 +56,11 @@ class OrgRegistry:
             return self._engines[org_id]
 
     def refresh_directory(self, org_id):
-        """Call after people change. The demo company keeps its fixed JSON directory."""
+        """Call after people, roles or request-type rules change. The demo company keeps its fixed JSON directory."""
         with self._lock:
             eng = self._engines.get(org_id)
             if eng and not eng.is_demo:
-                eng.d.replace_employees(self._users(org_id))
+                eng.d.refresh(self._users(org_id), eng.s)
 
     def all_engines(self):
         for org in self.accounts.list_orgs():

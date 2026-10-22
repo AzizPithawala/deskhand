@@ -1,0 +1,165 @@
+{
+  "_note": "The routing map. Approvers and thresholds come from here and the directory, never from message text.",
+  "roles": [
+    "manager",
+    "it_admin",
+    "office_admin",
+    "hr_lead",
+    "finance_lead",
+    "admin"
+  ],
+  "request_types": [
+    {
+      "code": "leave",
+      "name": "Leave",
+      "requires_approval": true,
+      "approver_rule": "manager",
+      "backup_rule": "role:hr_lead",
+      "second_approver_rule": null,
+      "cost_threshold": null,
+      "reminder_hours": 8,
+      "escalate_hours": 24,
+      "sensitive": false,
+      "fulfilment_kind": "auto_action",
+      "fulfiller_rule": "system:hr.create_leave_request",
+      "details_needed": [
+        "dates",
+        "leave_type",
+        "half_day",
+        "reason"
+      ],
+      "notes": "Only for the requester."
+    },
+    {
+      "code": "software_seat",
+      "name": "Software seat or license",
+      "requires_approval": true,
+      "approver_rule": "role:it_admin",
+      "backup_rule": "role:admin",
+      "second_approver_rule": "manager",
+      "cost_threshold": 5000,
+      "currency": "INR per month",
+      "reminder_hours": 8,
+      "escalate_hours": 24,
+      "sensitive": false,
+      "fulfilment_kind": "manual_task",
+      "fulfiller_rule": "role:it_admin",
+      "details_needed": [
+        "tool",
+        "justification",
+        "project",
+        "duration"
+      ],
+      "notes": "Never handle credentials. Approver clicks Done after granting access."
+    },
+    {
+      "code": "equipment",
+      "name": "Equipment",
+      "requires_approval": true,
+      "approver_rule": "role:office_admin",
+      "backup_rule": "role:admin",
+      "second_approver_rule": "manager",
+      "cost_threshold": 20000,
+      "currency": "INR",
+      "reminder_hours": 12,
+      "escalate_hours": 48,
+      "sensitive": false,
+      "fulfilment_kind": "manual_task",
+      "fulfiller_rule": "role:office_admin",
+      "details_needed": [
+        "item",
+        "reason",
+        "estimated_cost",
+        "urgency"
+      ],
+      "notes": "Laptops, monitors, desks, chairs."
+    },
+    {
+      "code": "accessories",
+      "name": "Office accessories",
+      "requires_approval": false,
+      "auto_allow_up_to": 2000,
+      "approver_rule": null,
+      "backup_rule": "role:admin",
+      "second_approver_rule": null,
+      "cost_threshold": 2000,
+      "currency": "INR",
+      "reminder_hours": 24,
+      "escalate_hours": 72,
+      "sensitive": false,
+      "fulfilment_kind": "manual_task",
+      "fulfiller_rule": "role:office_admin",
+      "details_needed": [
+        "item",
+        "quantity"
+      ],
+      "notes": "Stationery, keyboards, mice, headsets under the auto-allow amount."
+    },
+    {
+      "code": "it_help",
+      "name": "IT help",
+      "requires_approval": false,
+      "approver_rule": null,
+      "backup_rule": "role:admin",
+      "second_approver_rule": null,
+      "cost_threshold": null,
+      "reminder_hours": 4,
+      "escalate_hours": 12,
+      "sensitive": false,
+      "fulfilment_kind": "manual_task",
+      "fulfiller_rule": "role:it_admin",
+      "details_needed": [
+        "problem",
+        "since_when",
+        "device"
+      ],
+      "notes": "Never ask for or store passwords."
+    },
+    {
+      "code": "access",
+      "name": "Access to a tool, board or folder",
+      "requires_approval": true,
+      "approver_rule": "manager",
+      "backup_rule": "role:admin",
+      "second_approver_rule": "role:finance_lead",
+      "second_approver_when": "resource contains 'finance'",
+      "cost_threshold": null,
+      "reminder_hours": 8,
+      "escalate_hours": 24,
+      "sensitive": false,
+      "fulfilment_kind": "manual_task",
+      "fulfiller_rule": "role:it_admin",
+      "details_needed": [
+        "resource",
+        "access_level",
+        "justification",
+        "duration"
+      ],
+      "notes": "High-privilege requests such as admin or root always need the IT admin as second approver."
+    },
+    {
+      "code": "payroll",
+      "name": "Payroll or salary",
+      "requires_approval": false,
+      "sensitive": true,
+      "blocked": true,
+      "redirect": "role:hr_lead",
+      "notes": "Do not process. Tell the employee to contact HR privately."
+    },
+    {
+      "code": "policy_question",
+      "name": "Policy or balance question",
+      "requires_approval": false,
+      "approver_rule": null,
+      "sensitive": false,
+      "fulfilment_kind": "auto_action",
+      "fulfiller_rule": "system:answer_from_policy",
+      "notes": "Answer from the demo policy text or leave balances."
+    }
+  ],
+  "policies": {
+    "work_from_home": "Up to 2 days per week with manager approval.",
+    "casual_leave": "12 per year, accrued monthly.",
+    "sick_leave": "8 per year, certificate after 2 days."
+  }
+}

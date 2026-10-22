@@ -1,4 +1,4 @@
-# Deskhand (agent platform, Phase 1: companies and sign-in)
+# Deskhand (agent platform, Phase 2: company setup)
 
 An agent that handles employee requests end to end: understands the request, routes it by rule to the right approver,
 tracks approve / reject (reason required) / pending, escalates on time, acts through guarded actions and keeps an audit trail.
@@ -13,7 +13,7 @@ pip install -r requirements-dev.txt
 DESKHAND_SIGNUP_CODES=any-code-you-like make dev        # or: uvicorn app.main:app --reload --port 8000
 ```
 Open http://localhost:8000. Without `DESKHAND_SIGNUP_CODES` registration is closed and only "Try the demo" works. Needs Python 3.11+. Run the tests with
-`make test` (174 tests, including the 7-minute demo script and two-company isolation). `make reset` deletes the local data directory (`.deskhand/`).
+`make test` (235 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
 Requests are understood by a deterministic rules classifier. An admin of a real company can switch on viaSocket AI (a Claude model, no model key needed)
 on the Health page; it only proposes the request type and details, waits at most 25 seconds, falls back to the rules on any failure, and never sees salary or
 payroll messages. (`requirements.txt` is the deploy list; `requirements-dev.txt` adds pytest.)
@@ -35,10 +35,19 @@ payroll messages. (`requirements.txt` is the deploy list; `requirements-dev.txt`
   Act as, the demo clock and Reset; the Reliability lab on Health runs only there. In the demo, connecting apps, the AI switch, inviting people and changing passwords are
   switched off and nothing is ever sent. A real company never has Act as, chaos, reset or the clock.
 
+## Company setup (Phase 2)
+Admins open **Setup** (and **Integrations**, **People**) from the sidebar; on a phone the **Admin** tab opens a list of them. Everything is validated, audited (`setup_changed`: who, what, from and to) and applies to **new** requests.
+- **Roles.** IT admin, Office admin, HR lead and Finance lead exist in every company; add custom roles. One person holds a role at a time. If nobody does (or the holder is deactivated), requests that need the role go to the type's backup rule, then to an admin.
+- **Request types.** The 8 built-in types are editable, not new ones (that is Phase 5): switch on or off, needs approval, who approves (the requester's manager, a role or a named person), up to two extra approvers each with a condition (the cost is above an amount, or a detail such as the resource mentions words), an automatic allowance for accessories, reminder and escalation hours, who is the backup, who does the manual task, which details are asked. Payroll is always blocked; you only choose who employees are told to contact. A switched-off type creates no request and tells the employee who to ask.
+- **Policies.** A new company starts with none, so Acme's texts never leak. Policy questions are answered with the company's own words, else "ask HR". Leave balances are never invented for a company (the leave ledger is Phase 3).
+- **Routing test.** Pick a person, a type and optionally a cost or resource to see the approvers, the fulfiller, reminder and escalation times and warnings (empty role, deactivated holder, no manager). It calls the same functions as a real request, and a test compares the two.
+- **Checklist.** Six steps that tick themselves from the data: invite people, set managers, choose role holders, review the request types ("Looks right"), connect Slack and Gmail, send a test request.
+- The **demo company** shows its prepared rules read-only. Under the hood: tables `roles`, `type_rules`, `policies` in each company's own database file, merged over the template by `Directory.for_company`; `tests/test_setup_directory.py` runs the old hard-coded router against the new data-driven one for over 50,000 combinations.
+
 ## What works (and is tested)
 - Lifecycle: submitted, needs info, pending approval (one or two approvers), approved, rejected (reason mandatory),
   fulfilling, fulfilled, closed, parked, cancelled. Invalid transitions are refused.
-- Routing from the company's people and the request types in data/request_types.demo.json (editable per company in Phase 2). The approver never comes from message text.
+- Routing from the company's people, its business roles and the rules of the 8 request types (defaults in data/request_types.demo.json, edited per company on the Setup page). The approver never comes from message text.
 - Notifications to the employee at every state change; "pending with X since Y"; reminder and two escalations. For real companies a background sweep sends them on
   time; the demo moves only with its +1h / +9h / +25h clock buttons.
 - Guard: dedupe, own-message ignore, circuit breaker, idempotent actions with retry, parking and replay, read-before-write
@@ -70,15 +79,18 @@ password is no longer needed; set `DESKHAND_DEMO_PASSWORD` only if you want an e
 Environment variable names: DESKHAND_SIGNUP_CODES, DESKHAND_BASE_URL, VIASOCKET_ORG_ID, VIASOCKET_PROJECT_ID, VIASOCKET_EMBED_SECRET, VIASOCKET_API_URL, VIASOCKET_RUN_URL
 (optional: DESKHAND_DEMO_PASSWORD). No ANTHROPIC_API_KEY. Set the values yourself in Embarko's App setup; never put them in a file in the repository. An old
 single-company `deskhand.db` found in the data directory becomes the demo company's database the first time the new version starts.
+If people report being signed out, the hosted log says why (Embarko: `GET https://ship.embarko.ai/apps/<app>/logs`, with the deploy token): `session refused: <reason> on <method> <path>` where the reason is one of
+`no_cookie`, `unknown_session`, `expired`, `idle`, `user_<status>`, `no_user`, `no_org`, `org_inactive`, `org_mismatch` or `company_unavailable`, and `gate refused <method> <path>: no_authorization_header | wrong_password`
+when the shared password (not the session) turned a signed-in browser away. Cookies, passwords and tokens are never logged. The browser re-checks `/api/auth/me` and retries once before it signs anyone out on a single 401.
 
 ## What is NOT done or NOT verified
 - No emails from Deskhand itself: invite and reset links are copied by an admin. A locked-out owner needs another admin to make a reset link. No email verification, no SSO or MFA (Phase 6).
-- Leave still runs against the in-memory mock HR; the persisted leave ledger, Slack and Gmail request flow come in Phase 3. Request types and approval rules are the demo template for every company until Phase 2.
+- Leave still runs against the in-memory mock HR; the persisted leave ledger, Slack and Gmail request flow come in Phase 3. Request types cannot be created, only edited (Phase 5).
 - A request is understood while the sender waits (about 25 seconds at worst with AI on). Slack inbound is slow (viaSocket polls every 15 minutes), so asking happens in Deskhand chat.
 - SQLite on one process with no backups: fine for a pilot, not for real customers (Phase 6 moves to Postgres with backups).
 - The rules classifier scores 100% on data/sample_requests.json because it was tuned while looking at that file. That number is optimistic. Measure on real past requests.
 - The direct-Anthropic path (app/classifier.py: classify_anthropic) has never been run against the live API and is unused.
 
 ## Next steps
-Phase 2: company setup (roles such as HR and IT, request types and approval rules edited by the admin, routing simulator, onboarding checklist). Phase 3: leave through Slack and
+Phase 3: leave through Slack and
 Gmail end to end with a Deskhand-owned leave ledger. See `docs/AGENT_PLATFORM_PLAN.md`.

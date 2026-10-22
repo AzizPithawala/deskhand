@@ -1,5 +1,5 @@
 {
-  "_note": "The routing map. Approvers and thresholds come from here and the directory, never from message text.",
+  "_note": "The routing map (defaults for every company). Approvers and thresholds come from here, the company's own edits and the directory, never from message text. extra_approvers: each entry adds an approver when its condition holds ({cost_above: N} or {detail_contains: {field, words}}); no condition means always.",
   "roles": [
     "manager",
     "it_admin",
@@ -15,8 +15,6 @@
       "requires_approval": true,
       "approver_rule": "manager",
       "backup_rule": "role:hr_lead",
-      "second_approver_rule": null,
-      "cost_threshold": null,
       "reminder_hours": 8,
       "escalate_hours": 24,
       "sensitive": false,
@@ -28,7 +26,8 @@
         "half_day",
         "reason"
       ],
-      "notes": "Only for the requester."
+      "notes": "Only for the requester.",
+      "extra_approvers": []
     },
     {
       "code": "software_seat",
@@ -36,8 +35,6 @@
       "requires_approval": true,
       "approver_rule": "role:it_admin",
       "backup_rule": "role:admin",
-      "second_approver_rule": "manager",
-      "cost_threshold": 5000,
       "currency": "INR per month",
       "reminder_hours": 8,
       "escalate_hours": 24,
@@ -50,7 +47,15 @@
         "project",
         "duration"
       ],
-      "notes": "Never handle credentials. Approver clicks Done after granting access."
+      "notes": "Never handle credentials. Approver clicks Done after granting access.",
+      "extra_approvers": [
+        {
+          "rule": "manager",
+          "when": {
+            "cost_above": 5000
+          }
+        }
+      ]
     },
     {
       "code": "equipment",
@@ -58,8 +63,6 @@
       "requires_approval": true,
       "approver_rule": "role:office_admin",
       "backup_rule": "role:admin",
-      "second_approver_rule": "manager",
-      "cost_threshold": 20000,
       "currency": "INR",
       "reminder_hours": 12,
       "escalate_hours": 48,
@@ -72,7 +75,15 @@
         "estimated_cost",
         "urgency"
       ],
-      "notes": "Laptops, monitors, desks, chairs."
+      "notes": "Laptops, monitors, desks, chairs.",
+      "extra_approvers": [
+        {
+          "rule": "manager",
+          "when": {
+            "cost_above": 20000
+          }
+        }
+      ]
     },
     {
       "code": "accessories",
@@ -81,8 +92,6 @@
       "auto_allow_up_to": 2000,
       "approver_rule": null,
       "backup_rule": "role:admin",
-      "second_approver_rule": null,
-      "cost_threshold": 2000,
       "currency": "INR",
       "reminder_hours": 24,
       "escalate_hours": 72,
@@ -93,7 +102,8 @@
         "item",
         "quantity"
       ],
-      "notes": "Stationery, keyboards, mice, headsets under the auto-allow amount."
+      "notes": "Stationery, keyboards, mice, headsets under the auto-allow amount.",
+      "extra_approvers": []
     },
     {
       "code": "it_help",
@@ -101,8 +111,6 @@
       "requires_approval": false,
       "approver_rule": null,
       "backup_rule": "role:admin",
-      "second_approver_rule": null,
-      "cost_threshold": null,
       "reminder_hours": 4,
       "escalate_hours": 12,
       "sensitive": false,
@@ -113,7 +121,8 @@
         "since_when",
         "device"
       ],
-      "notes": "Never ask for or store passwords."
+      "notes": "Never ask for or store passwords.",
+      "extra_approvers": []
     },
     {
       "code": "access",
@@ -121,9 +130,6 @@
       "requires_approval": true,
       "approver_rule": "manager",
       "backup_rule": "role:admin",
-      "second_approver_rule": "role:finance_lead",
-      "second_approver_when": "resource contains 'finance'",
-      "cost_threshold": null,
       "reminder_hours": 8,
       "escalate_hours": 24,
       "sensitive": false,
@@ -135,7 +141,36 @@
         "justification",
         "duration"
       ],
-      "notes": "High-privilege requests such as admin or root always need the IT admin as second approver."
+      "notes": "High-privilege requests such as admin or root always need the IT admin as an extra approver; finance resources need the finance lead.",
+      "extra_approvers": [
+        {
+          "rule": "role:finance_lead",
+          "when": {
+            "detail_contains": {
+              "field": "resource",
+              "words": [
+                "finance",
+                "finances"
+              ]
+            }
+          }
+        },
+        {
+          "rule": "role:it_admin",
+          "when": {
+            "detail_contains": {
+              "field": "resource",
+              "words": [
+                "admin",
+                "root",
+                "aws",
+                "production",
+                "prod"
+              ]
+            }
+          }
+        }
+      ]
     },
     {
       "code": "payroll",

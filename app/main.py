@@ -2,6 +2,7 @@
 database file; admin, demo-only and visibility rules are enforced here, in code."""
 import contextlib
 import hmac
+import logging
 import os
 import re
 import threading
@@ -11,9 +12,9 @@ from dataclasses import dataclass
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-from . import accounts as ac, chaos, delivery as dl, viasocket_adapter as vs, viasocket_ai as vsai
+from . import accounts as ac, chaos, delivery as dl, setup as st, viasocket_adapter as vs, viasocket_ai as vsai
 from .engine import InvalidTransition, NotAuthorized, Refused
 from .registry import DEMO_ORG_ID, open_platform
 
@@ -22,6 +23,7 @@ DATA_DIR = os.environ.get("DESKHAND_DATA_DIR", ".deskhand")
 SIGNUP_CODES = [c.strip() for c in os.environ.get("DESKHAND_SIGNUP_CODES", "").split(",") if c.strip()]
 accounts, registry = open_platform(DATA_DIR, SIGNUP_CODES)
 COOKIE = "dh_session"
+log = logging.getLogger("uvicorn.error")  # shows in the hosted log next to the access lines
 
 app = FastAPI(title="Deskhand", docs_url=None, redoc_url=None, openapi_url=None)
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -52,6 +54,8 @@ async def password_gate(request, call_next):
     if not hmac.compare_digest(hashlib.sha256(given.encode()).digest(), hashlib.sha256(pw.encode()).digest()):
         if h:
             _gate_failures.append(now)
+        if h or request.cookies.get(COOKIE):  # a browser that had signed in was refused by the shared password, which is not a session problem
+            log.warning("gate refused %s %s: %s", request.method, request.url.path, "wrong_password" if h else "no_authorization_header")
         return PlainTextResponse("Password required.", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Deskhand"'})
     return await call_next(request)
 
@@ -104,14 +108,17 @@ def _ip(request):
 
 def auth(request: Request) -> Ctx:
     token = request.cookies.get(COOKIE)
-    sess = accounts.get_session(token)
+    sess, why = accounts.session_state(token)
     if not sess:
+        if request.url.path != "/api/auth/me":  # that one is how a signed-out visitor finds out; anything else refused is a signed-in browser losing its session
+            log.warning("session refused: %s on %s %s", why, request.method, request.url.path)  # a fixed word and the path, never the cookie
         raise HTTPException(401, "Sign in to continue.")
     if request.method not in ("GET", "HEAD", "OPTIONS") and not hmac.compare_digest(request.headers.get("x-csrf-token", ""), sess["csrf"]):
         raise HTTPException(403, "This request did not come from the Deskhand page. Reload and try again.")
     try:
         eng = registry.engine_for(sess["org"]["id"])
     except KeyError:
+        log.warning("session refused: company_unavailable on %s %s", request.method, request.url.path)
         raise HTTPException(401, "Sign in to continue.")
     if not eng.d.emp(sess["user"]["id"]) and not sess["org"]["is_demo"]:
         registry.refresh_directory(sess["org"]["id"])
@@ -343,7 +350,7 @@ def _get_visible(ctx, rid):
 def state(ctx: Ctx = Depends(auth)):
     people = list(ctx.engine.d.employees.values())
     if not ctx.is_admin:  # colleagues' contact details are for admins
-        people = [{k: p.get(k) for k in ("id", "name", "role", "department", "manager_id", "active")} for p in people]
+        people = [{k: p.get(k) for k in ("id", "name", "role", "roles", "department", "manager_id", "active")} for p in people]
     return {"employees": people, "types": list(ctx.engine.d.types.values()), "now": ctx.engine.now()}
 
 
@@ -489,7 +496,11 @@ class PersonEdit(BaseModel):
 
 @app.get("/api/people")
 def people(ctx: Ctx = Depends(admin)):
-    return accounts.list_users(ctx.org["id"])
+    held = {}
+    for r in st.list_roles(ctx.engine.d):
+        if r["holder_id"]:
+            held.setdefault(r["holder_id"], []).append(r["name"])
+    return [{**u, "roles": held.get(u["id"], [])} for u in accounts.list_users(ctx.org["id"])]
 
 
 @app.post("/api/people/invite")
@@ -522,6 +533,152 @@ def person_link(uid: str, ctx: Ctx = Depends(real_admin)):
         return _fail(e)
     ctx.engine.audit(None, ctx.uid, "reset_link_created", {"user": uid})
     return {"join_token": token}
+
+
+# ---------------- Company setup (admin). Reads work in the demo company (read-only); every write is validated, audited and refused in the demo. ----------------
+class RoleAdd(BaseModel):
+    name: str
+
+
+class RoleHolder(BaseModel):
+    holder_id: str | None = None
+
+
+class PolicyIn(BaseModel):
+    title: str
+    text: str
+
+
+class TypePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # an unknown or non-editable field is refused, never ignored
+    enabled: bool | None = None
+    requires_approval: bool | None = None
+    approver_rule: str | None = None
+    backup_rule: str | None = None
+    extra_approvers: list[dict] | None = None
+    auto_allow_up_to: float | None = None
+    reminder_hours: int | None = None
+    escalate_hours: int | None = None
+    fulfiller_rule: str | None = None
+    details_needed: list[str] | None = None
+    redirect: str | None = None
+
+
+class Simulate(BaseModel):
+    person_id: str
+    type_code: str
+    estimated_cost: float | None = None
+    resource: str | None = None
+
+
+def _setup(fn, *a):
+    try:
+        return fn(*a)
+    except st.SetupError as e:
+        raise HTTPException(e.status, str(e))
+
+
+def _setup_changed(ctx, area, code, changes):
+    """Every setup write leaves an audit event (who, what, from and to) and refreshes the company's directory so the next request uses it."""
+    ctx.engine.audit(None, ctx.uid, "setup_changed", {"area": area, "code": code, "changes": changes})
+    registry.refresh_directory(ctx.org["id"])
+
+
+def _pickable(ctx):
+    d = ctx.engine.d
+    return {"people": [{"id": e["id"], "name": e["name"]} for e in d.employees.values() if e["active"]], "role_options": [{"code": r["code"], "name": r["name"], "holder_name": r["holder_name"]} for r in st.list_roles(d)]}
+
+
+@app.get("/api/setup/roles")
+def setup_roles(ctx: Ctx = Depends(admin)):
+    return {"roles": st.list_roles(ctx.engine.d), **_pickable(ctx), "demo": ctx.is_demo}
+
+
+@app.post("/api/setup/roles")
+def setup_role_add(b: RoleAdd, ctx: Ctx = Depends(real_admin)):
+    code = _setup(st.add_role, ctx.engine.s, ctx.engine.d, b.name)
+    _setup_changed(ctx, "roles", code, {"added": True})
+    return {"code": code, "roles": st.list_roles(ctx.engine.d)}
+
+
+@app.post("/api/setup/roles/{code}")
+def setup_role_holder(code: str, b: RoleHolder, ctx: Ctx = Depends(real_admin)):
+    changes = _setup(st.set_holder, ctx.engine.s, ctx.engine.d, code, b.holder_id)
+    _setup_changed(ctx, "roles", code, changes)
+    return {"roles": st.list_roles(ctx.engine.d)}
+
+
+@app.post("/api/setup/roles/{code}/delete")
+def setup_role_delete(code: str, ctx: Ctx = Depends(real_admin)):
+    _setup(st.delete_role, ctx.engine.s, ctx.engine.d, code)
+    _setup_changed(ctx, "roles", code, {"deleted": True})
+    return {"roles": st.list_roles(ctx.engine.d)}
+
+
+@app.get("/api/setup/types")
+def setup_types(ctx: Ctx = Depends(admin)):
+    return {"types": st.list_types(ctx.engine.d, ctx.engine.s), **_pickable(ctx), "demo": ctx.is_demo}
+
+
+@app.post("/api/setup/types/{code}")
+def setup_type_edit(code: str, b: TypePatch, ctx: Ctx = Depends(real_admin)):
+    changes = _setup(st.patch_type, ctx.engine.s, ctx.engine.d, code, b.model_dump(exclude_unset=True), ctx.uid)
+    _setup_changed(ctx, "types", code, changes)
+    return st.type_view(ctx.engine.d, ctx.engine.s, code)
+
+
+@app.post("/api/setup/types/{code}/reset")
+def setup_type_reset(code: str, ctx: Ctx = Depends(real_admin)):
+    changes = _setup(st.reset_type, ctx.engine.s, ctx.engine.d, code, ctx.uid)
+    _setup_changed(ctx, "types", code, {"reset_to_default": changes})
+    return st.type_view(ctx.engine.d, ctx.engine.s, code)
+
+
+@app.post("/api/setup/types/{code}/reviewed")
+def setup_type_reviewed(code: str, ctx: Ctx = Depends(real_admin)):
+    _setup(st.mark_reviewed, ctx.engine.s, code, ctx.uid)
+    _setup_changed(ctx, "types", code, {"reviewed": True})
+    return st.type_view(ctx.engine.d, ctx.engine.s, code)
+
+
+@app.get("/api/setup/policies")
+def setup_policies(ctx: Ctx = Depends(admin)):
+    return {"policies": st.list_policies(ctx.engine.d, ctx.engine.s), "demo": ctx.is_demo}
+
+
+@app.post("/api/setup/policies")
+def setup_policy_set(b: PolicyIn, ctx: Ctx = Depends(real_admin)):
+    key = _setup(st.set_policy, ctx.engine.s, ctx.engine.d, b.title, b.text)
+    _setup_changed(ctx, "policies", key, {"saved": True})
+    return {"policies": st.list_policies(ctx.engine.d, ctx.engine.s)}
+
+
+@app.post("/api/setup/policies/{key}/delete")
+def setup_policy_delete(key: str, ctx: Ctx = Depends(real_admin)):
+    _setup(st.delete_policy, ctx.engine.s, ctx.engine.d, key)
+    _setup_changed(ctx, "policies", key, {"deleted": True})
+    return {"policies": st.list_policies(ctx.engine.d, ctx.engine.s)}
+
+
+@app.post("/api/setup/simulate")
+def setup_simulate(b: Simulate, ctx: Ctx = Depends(admin)):
+    return _setup(st.simulate, ctx.engine.d, b.person_id, b.type_code, b.estimated_cost, b.resource)
+
+
+@app.get("/api/setup/checklist")
+def setup_checklist(ctx: Ctx = Depends(admin)):
+    if ctx.is_demo:
+        return {"demo": True, "steps": [], "done": 0, "total": 0, "dismissed": True}
+    store = vs.ConnectionStore(ctx.engine.s, ctx.org["id"])
+    connected = {a: bool((store.get(a) or {}).get("script_id")) for a in ("slack", "gmail")}
+    n = ctx.engine.s.one("SELECT COUNT(*) c FROM requests")["c"]
+    return {"demo": False, **st.checklist(ctx.engine.d, ctx.engine.s, accounts.list_users(ctx.org["id"]), connected, n)}
+
+
+@app.post("/api/setup/checklist/dismiss")
+def setup_checklist_dismiss(ctx: Ctx = Depends(real_admin)):
+    ctx.engine.s.set_setting("checklist_dismissed", 1)
+    return {"ok": True}
 
 
 # ---------------- Connections (viaSocket). Admin only. auth_id and script_id never leave the server. ----------------

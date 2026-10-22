@@ -112,6 +112,21 @@ def test_sessions_expire_when_idle_or_old_and_die_on_logout_and_deactivation(a, 
         a.authenticate("m@acme.test", "a-long-password")
 
 
+def test_a_refused_session_says_why_in_a_fixed_word(a, clock):
+    org, owner = register(a)
+    token, _ = a.create_session(owner)
+    assert a.session_state(token)[1] is None and a.session_state("")[1] == "no_cookie" and a.session_state("forged")[1] == "unknown_session"
+    clock.t += ac.SESSION_IDLE_S + 1
+    assert a.session_state(token) == (None, "idle") and a.session_state(token) == (None, "unknown_session")  # a refused session is removed, so the next look finds nothing
+    t2, _ = a.create_session(owner)
+    clock.t += ac.SESSION_ABSOLUTE_S + 1
+    assert a.session_state(t2) == (None, "expired")
+    member = a.create_user(org["id"], "m@acme.test", "Mia", "member", status="active", password="a-long-password")
+    t3, _ = a.create_session(member)
+    a.s.q("UPDATE users SET status='disabled' WHERE id=?", (member["id"],))
+    assert a.session_state(t3) == (None, "user_disabled")
+
+
 def test_invites_are_single_use_expire_and_make_the_person_active(a, clock):
     org, owner = register(a)
     user, token = a.create_invite(org["id"], "Mia@Acme.test", "Mia Member", "member", owner["id"])
