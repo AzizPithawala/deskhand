@@ -179,3 +179,10 @@ def test_two_companies_have_separate_ledgers(tmp_path):
     e1.ledger.set_yearly("casual", 20)
     assert e1.ledger.balance(u1["id"], "casual") == 17 and e2.ledger.balance(u2["id"], "casual") == 12 and e2.ledger.types()[0]["yearly_days"] == 12
     assert e2.s.all("SELECT * FROM leave_ledger WHERE person_id=?", (u1["id"],)) == []
+
+
+def test_the_approver_message_has_no_empty_brackets_when_a_person_has_no_department(company):
+    e, owner, boss, ann = company
+    rid = e.ingest("chat", ann["id"], "I need Friday and Monday off, family function.")["request_ids"][0]
+    body = e.s.one("SELECT body FROM outbox WHERE request_id=? AND kind='approval_request' AND channel='chat'", (rid,))["body"]
+    assert "from Ann Employee\n" in body and "()" not in body

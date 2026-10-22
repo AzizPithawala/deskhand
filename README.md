@@ -1,4 +1,4 @@
-# Deskhand (agent platform, Phase 2: company setup)
+# Deskhand (agent platform, Phase 3: leave through Slack and Gmail)
 
 An agent that handles employee requests end to end: understands the request, routes it by rule to the right approver,
 tracks approve / reject (reason required) / pending, escalates on time, acts through guarded actions and keeps an audit trail.
@@ -13,7 +13,7 @@ pip install -r requirements-dev.txt
 DESKHAND_SIGNUP_CODES=any-code-you-like make dev        # or: uvicorn app.main:app --reload --port 8000
 ```
 Open http://localhost:8000. Without `DESKHAND_SIGNUP_CODES` registration is closed and only "Try the demo" works. Needs Python 3.11+. Run the tests with
-`make test` (328 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
+`make test` (330 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
 Requests are understood by a deterministic rules classifier. An admin of a real company can switch on viaSocket AI (a Claude model, no model key needed)
 on the Health page; it only proposes the request type and details, waits at most 25 seconds, falls back to the rules on any failure, and never sees salary or
 payroll messages. (`requirements.txt` is the deploy list; `requirements-dev.txt` adds pytest.)
@@ -78,6 +78,9 @@ Admins connect Slack and Gmail once on **Integrations** (you sign in on each app
 - **Approve / Reject buttons in Slack** (live mode only, once an admin switches them on): a live approval DM carries buttons. Deskhand builds one viaSocket automation per company from code; each approval starts one run that DMs the buttons and waits for the click, then calls
   `POST /api/hooks/slack-decision` (public, open past the shared password). The call needs a one-time token issued for that very message (only its hash is stored) and the Slack user id Slack reports must belong to a directory person who can act on the request now; Approve decides it,
   Reject sends them to the web page for the mandatory reason, and every repeat, forgery or stale click answers 200 with a status word and changes nothing. If the buttons cannot be started the plain message with the link goes instead; reminders and decisions never have buttons. Verified with a real press on 2026-10-22 (spike S2); an admin checks their own company with "Send me a test approval" on Integrations. Needs `DESKHAND_BASE_URL` to be the public https address.
+**Going live on Embarko, in order:** (1) set `DESKHAND_BASE_URL` to the app's public https address and `DESKHAND_SIGNUP_CODES` in Embarko's App setup (admins see a red banner while the address is missing); (2) register the company and invite people on the People page;
+(3) on Integrations connect Slack and Gmail and press Match Slack accounts; (4) set managers and role holders on Setup; (5) stay in rehearsal, ask for leave as an employee and look at what the rehearsal admin receives in Slack and email; (6) optionally Switch on Slack buttons and Send me a test approval;
+(7) press Go live. Each person may also connect their own Gmail on Your mailbox. A full rehearsal on real accounts (2026-10-22) sent the approval email from the requester's own Gmail and the decision and completion emails from the approver's own Gmail, all labelled "[Rehearsal]" and addressed only to the admin.
 Unchanged: approvals never wait for delivery; each row is delivered exactly once (atomic claim, single-flight sweep); a failed delivery is parked with a Retry button and never resent when the outcome is unknown; 150 deliveries per UTC day per company as a backstop; Slack text is escaped and email is HTML-escaped. The Slack DM was verified with a real call on 2026-10-22 (spike S1). `make preflight` prints yes/no per company.
 
 ## Hosted (Embarko)

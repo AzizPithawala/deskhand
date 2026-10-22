@@ -332,7 +332,7 @@ class Engine:
         have = "; ".join(f"{a}: {b}" for a, b in r["details_view"])
         aliases = {"justification": ["justification", "project", "reason"], "dates": ["dates"], "item": ["item", "tool", "resource"], "issue": ["issue"]}
         missing = [k for k in t.get("details_needed", []) if not any(d.get(a) not in (None, "", []) for a in aliases.get(k, [k]))]
-        lines = [f"New request #{r['id']} from {emp['name']} ({emp['department']})", f"Request: {r['summary']}", f"Type: {t['name']}"]
+        lines = [f"New request #{r['id']} from {emp['name']}" + (f" ({emp['department']})" if emp.get("department") else ""), f"Request: {r['summary']}", f"Type: {t['name']}"]
         if have:
             lines.append(f"Details: {have}")
         if missing:
