@@ -101,3 +101,10 @@ Org-level credentials act for people only inside admin-defined workflows and onl
 
 ## Verification
 Per phase: `make test` green including tenant-isolation tests, a browser demo of the step, README updated, no secrets in code, logs or UI. Milestone (end of Phase 3): a newly registered company configures itself and connects Slack and Gmail, an employee asks for leave in Slack, the manager gets Slack buttons and an email from the employee's mailbox, approves, the leave is deducted once in Deskhand's record, and the employee is told in Slack and by an email from the manager's mailbox; a second company registered alongside sees none of it.
+
+
+## Phase 0 results (2026-10-22) and what they change
+- **Slack buttons: confirmed.** Approve and Reject clicks work through a viaSocket automation that waits for the click and returns the clicker's Slack id and the button value.
+- **Per-person Gmail: confirmed.** Emails really leave from the requester's and the approver's own mailboxes.
+- **Slack inbound: not real time.** viaSocket polls every 15 minutes (2.8 to 13.2 minutes observed), gives no channel id, and the app does not accept DMs. "Ask in Slack" as the main way to raise a request cannot feel instant with this route.
+- **Gmail connect for outside accounts** can be blocked until viaSocket's Google app is verified.

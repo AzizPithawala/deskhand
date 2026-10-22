@@ -154,3 +154,27 @@ VERIFIED
 - Real latency over 7 calls: 5.0, 6.9, 11.0, 11.0, 14.5, 17.5 s and two calls above 8 s that hit an 8 s timeout. The timeout was therefore raised to 25 s. The feature is opt-in (off by default), so nobody waits unless an admin turns it on.
 - On timeout the engine used the rules, recorded `ai_failed_fallback`, and the request still went to the right approver.
 - Salary text was never sent (`ai_skipped_sensitive`). The injection message was flagged by the rules and routed to normal approval.
+
+## PHASE 0 SPIKES for the agent platform (2026-10-22, real calls on org 4160; no secrets or ids recorded)
+VERIFIED: Slack approval buttons through a viaSocket automation
+- A direct run of "Send Interactive Message" (Approval) answers immediately (about 1 s) with a dry-run echo; the message is delivered with buttons but a click resumes nothing.
+- Inside an **automation** (webhook trigger, step 1 Send Interactive Message, step 2 reads `context.res.<step1>`), the webhook answers in 0.5 s with
+  "Flow is currently paused, waiting for human intervention". The run waits for the click with no time limit seen (the click came 26 s later).
+- The click resumes the run. The step result is Slack's `block_actions` payload: `user.id` and `user.username` of the clicker, `actions[].value` / `action_id`
+  (the button's value: "approve" or "reject", both verified), the message `ts` and channel. The payload also holds a Slack verification token, `trigger_id` and
+  `response_url`: **never store or forward the raw payload**; keep only user id, button value and ts.
+- The run history shows the final result up to about a minute after the click.
+- Creating the automation from code works: `GET /users/register` (answers 201) gives the token, then create, set trigger (webhook) and save steps.
+VERIFIED: Slack inbound messages are NOT real time
+- "New Message on Slack" (all channels) delivers `user`, `type`, `ts`, `client_msg_id`, `text`, `team`, `blocks`. There is **no channel id** in the event, so the agent cannot reply in the channel or thread (it would DM the sender).
+- It **polls every 15 minutes** (`scheduledTime: "15"` in the subscription). Messages sent at 09:29, 09:34, 09:38 and 09:41 arrived together at 09:37 and 09:52: delay 2.8 to 13.2 minutes.
+- A subscription created with `scheduledTime: "1"` was accepted but produced no events in 18 minutes, so the interval could not be shortened. A "New Mention" subscription on one channel also produced nothing in 18 minutes.
+- Direct messages to the viaSocket Slack app are switched off by that app: employees cannot "DM the bot".
+- The spike flows and subscriptions were deleted afterwards.
+VERIFIED: Gmail sent from each person's own mailbox
+- Two people connected under their own identities (`unique_identifier` per person) with two different Google accounts. Sending as the requester arrived From the requester's mailbox
+  and sending as the approver From the approver's mailbox, confirmed by reading the sent message's headers with "Get Gmail Message by ID". Each send took about 3 s.
+- One identity can hold several Gmail connections (each connection record carries `connection_label`, JSON with the account email, usable for "Connected as ..."); the runner followed the connection that was stored last.
+  Revoke the old connection when someone reconnects.
+- Connecting an outside Google account can show "ask plugs@viasocket.com for permission": viaSocket's Google app is in testing mode, so only added test users can connect until it is verified by Google.
+UNVERIFIED: Keka (no test account); viaSocket Table (not needed).
