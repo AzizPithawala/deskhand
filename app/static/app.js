@@ -370,12 +370,15 @@ async function sendMsg(mode) {
     (LOG.email[who] ??= []).push({ who: 'me', subject: s || '(no subject)', text: b, ts: NOW });
     $('#subj').value = ''; $('#body').value = '';
   }
+  const pending = { who: 'bot', text: 'Reading your request…' };
+  if (mode === 'chat') { (LOG.chat[who] ??= []).push(pending); updateAsk(); }
   try {
     const res = await api('/ingest', { channel: mode, sender: who, text, source_event_id: uuid() });
     await loadLists();
     if (res.request_ids && res.request_ids.length) (LOG[mode][who] ??= []).push({ who: 'cards', ids: res.request_ids });
     if (res.outcome === 'paused_breaker') toast('Intake is paused after a burst of messages. An admin resets it on Health.', 6000);
   } catch (e) { toast(e.network ? e.message : `Could not send (${e.status || 'error'}): ${e.message}`, 6000); }
+  const L = LOG.chat[who]; if (L) { const i = L.indexOf(pending); if (i >= 0) L.splice(i, 1); }
   await updateAsk();
 }
 
@@ -573,9 +576,23 @@ async function paintConnections() {
   el.innerHTML = `<h2>Connections</h2><p class="meta">The only setup. You sign in on each app's own screen; Deskhand never sees a password or token. Once Slack and its channel are set, chat notifications are delivered there. Once Gmail and the notification email are set, email notifications go to that one address.</p>
     ${!c.configured ? emptyState('viaSocket is not configured on the server', 'Connecting is switched off until the server has its viaSocket values. See the README.') : ''}
     ${c.note ? `<p role="alert" style="color:var(--rejected)">Could not read connection status: ${esc(c.note)}</p>` : ''}
-    ${c.apps.map(a => appRow(a, c)).join('')}`;
+    ${c.apps.map(a => appRow(a, c)).join('')}<div id="aiblock"></div>`;
+  paintAI(c.configured);
   for (const a of c.apps) if (a.can_run) for (const st of a.settings) if (st.kind === 'picker') loadPicker(a, st);
   wireConnections(el);
+}
+async function paintAI(configured) {
+  const el = $('#aiblock'); if (!el) return;
+  let ai; try { ai = await api('/ai?actor_id=' + who); } catch { return; }
+  el.innerHTML = `<div class="approw" style="display:block"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><b style="flex:1">Understanding requests</b>
+    <span class="chip ${ai.enabled ? 'approved' : 'neutral'}">${icon(ai.enabled ? 's-done' : 's-upcoming')}${ai.enabled ? 'viaSocket AI is on' : 'Built-in rules'}</span></div>
+    <p class="meta" style="margin:6px 0 8px;max-width:640px">By default Deskhand reads each message with its built-in rules. Switch viaSocket AI on and each message is sent to a Claude model to work out the request type and details. It waits at most ${ai.timeout_s} seconds and uses the rules if the AI is slow, fails or runs out of credits. Salary and payroll messages are never sent. The AI only proposes: approvers and approvals always come from your routing map.</p>
+    <label style="display:flex;gap:10px;align-items:center;min-height:44px;cursor:pointer"><input type="checkbox" id="aiswitch" ${ai.switch ? 'checked' : ''} ${configured ? '' : 'disabled'} style="width:20px;height:20px"> Use viaSocket AI to understand requests</label></div>`;
+  $('#aiswitch').onchange = async e => {
+    try { await api('/ai', { actor_id: who, enabled: e.target.checked }); toast(e.target.checked ? 'viaSocket AI is on.' : 'Using the built-in rules.'); }
+    catch (err) { toast(err.message, 6000); e.target.checked = !e.target.checked; }
+    paintAI(configured);
+  };
 }
 function appRow(a, c) {
   const setting = x => `<div class="setrow"><label class="meta" for="s_${a.key}_${x.key}">${esc(x.label)}${x.required ? ' (required)' : ' (optional)'}</label>${x.kind === 'picker'

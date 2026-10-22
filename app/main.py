@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import chaos, delivery as dl, viasocket_adapter as vs
+from . import chaos, delivery as dl, viasocket_adapter as vs, viasocket_ai as vsai
 from .engine import Engine, InvalidTransition, NotAuthorized, Refused
 from .db import Store
 
@@ -57,6 +57,8 @@ async def password_gate(request, call_next):
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")  # css, js, fonts; the password gate middleware covers it too
 engine = Engine(Store(os.environ.get("DESKHAND_DB", "deskhand.db")))
+_ai = vsai.ViaSocketClassifier(engine.s, os.environ.get("DESKHAND_TENANT_ID", "acme-demo"))
+engine.ai_classify, engine.ai_enabled = _ai, _ai.enabled  # viaSocket AI understands requests only when an admin has switched it on; otherwise the rules do
 engine.live = dl.Delivery(engine, tenant=os.environ.get("DESKHAND_TENANT_ID", "acme-demo"))  # live-only: delivery starts by itself once Slack and Gmail are set up
 
 
@@ -452,3 +454,27 @@ async def _lifespan(_app):
 
 
 app.router.lifespan_context = _lifespan
+
+
+# ---------------- Understanding requests with viaSocket AI (admin switch, off by default) ----------------
+class AISet(BaseModel):
+    actor_id: str
+    enabled: bool
+
+
+@app.get("/api/ai")
+def ai_status(actor_id: str):
+    _admin(actor_id)
+    configured = vs.VsClient(TENANT).configured()
+    return {"enabled": _ai.enabled(), "switch": vs.ConnectionStore(engine.s, TENANT).ai_enabled(), "configured": configured,
+            "calls_today": int(engine.s.get_setting("ai_calls_today", 0)), "budget": int(engine.s.get_setting("ai_budget_per_day", 0)), "timeout_s": vsai.TIMEOUT_S}
+
+
+@app.post("/api/ai")
+def ai_set(b: AISet):
+    _admin(b.actor_id)
+    if b.enabled and not vs.VsClient(TENANT).configured():
+        raise HTTPException(409, "viaSocket is not configured on the server. See the README.")
+    vs.ConnectionStore(engine.s, TENANT).set_ai_enabled(b.enabled)
+    engine.audit(None, b.actor_id, "ai_setting_changed", {"enabled": b.enabled})
+    return {"ok": True, "enabled": _ai.enabled()}

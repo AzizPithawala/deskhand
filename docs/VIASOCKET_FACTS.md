@@ -147,3 +147,10 @@ IMPLICATIONS for the adapter
 - 5 to 12 s is too slow to wait on silently in the chat request: use a short timeout (about 8 s) and fall back to the rules classifier.
 - The prompt must say not to browse or open links; the model's web and browser access cannot be switched off.
 - Treat any non-200, non-object `content`, schema mismatch or timeout as "use the rules".
+
+## SPIKE RESULT 3: end to end through Deskhand (2026-10-22, real calls)
+VERIFIED
+- With the switch on, "I need Friday and Monday off, family function." was classified by viaSocket AI (provider shown as `viasocket`), summary and dates correct, approver Rahul Mehta from the routing map.
+- Real latency over 7 calls: 5.0, 6.9, 11.0, 11.0, 14.5, 17.5 s and two calls above 8 s that hit an 8 s timeout. The timeout was therefore raised to 25 s. The feature is opt-in (off by default), so nobody waits unless an admin turns it on.
+- On timeout the engine used the rules, recorded `ai_failed_fallback`, and the request still went to the right approver.
+- Salary text was never sent (`ai_skipped_sensitive`). The injection message was flagged by the rules and routed to normal approval.

@@ -77,13 +77,14 @@ class Refused(Exception):
 
 
 class Engine:
-    def __init__(self, store=None, directory=None, hr=None, api_key=None, ai_classify=None):
+    def __init__(self, store=None, directory=None, hr=None, api_key=None, ai_classify=None, ai_enabled=None):
         self.s = store or Store(os.environ.get("DESKHAND_DB", ":memory:"))
         self.d = directory or Directory.load()
         self.hr = hr or MockHR(self.d)
         self.api_key = os.environ.get("ANTHROPIC_API_KEY", "") if api_key is None else api_key
         self.model = os.environ.get("DESKHAND_MODEL", "claude-haiku-5-5")
         self.ai_classify = ai_classify
+        self.ai_enabled = ai_enabled  # optional switch consulted before each AI call; None means always on when an AI classifier is given
         self.live = None  # set by the web app: outbound delivery (app/delivery.py). None (engine tests) means rows are only ever written to the outbox.
         self._mock_depth = 0
         self._defaults()
@@ -252,7 +253,10 @@ class Engine:
 
     def _classify(self, text):
         calls, budget = int(self.s.get_setting("ai_calls_today")), int(self.s.get_setting("ai_budget_per_day"))
-        use_ai = bool(self.api_key or self.ai_classify)
+        use_ai = bool(self.api_key) or bool(self.ai_classify and (self.ai_enabled() if self.ai_enabled else True))
+        if use_ai and classifier.PAYROLL.search(text):  # salary and payroll text is never sent to any AI: the rules classify it and the HR redirect follows
+            self.audit(None, "system", "ai_skipped_sensitive", {})
+            use_ai = False
         if use_ai and calls >= budget:
             if self.s.get_setting("ai_budget_exhausted_logged") != "1":
                 self.audit(None, "system", "ai_budget_exhausted", {"budget": budget})

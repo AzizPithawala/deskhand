@@ -7,11 +7,12 @@ Everything runs on simulated channels (chat and email) and a mock HR system. No 
 ## Run it
 ```
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 make dev                                                # or: uvicorn app.main:app --reload --port 8000
 ```
-Open http://localhost:8000. Needs Python 3.11+. Run the tests with `make test` (39 tests, including the 7-minute demo script as one test). Optional: copy `.env.example` to `.env` and set
-`ANTHROPIC_API_KEY` to use Claude for understanding requests. Without a key a deterministic rules classifier is used.
+Open http://localhost:8000. Needs Python 3.11+. Run the tests with `make test` (39 tests, including the 7-minute demo script as one test). Requests are understood by a deterministic rules classifier. An admin can switch on viaSocket AI (a Claude model, no model key needed) on the Health page; it
+only proposes the request type and details, waits at most 8 seconds, falls back to the rules on any failure, and never sees salary or payroll messages.
+(`requirements.txt` is the deploy list; `requirements-dev.txt` adds pytest. The old direct-Anthropic code stays in `app/classifier.py` but needs `pip install anthropic` and is unused.)
 
 ## What works (and is tested)
 - Lifecycle: submitted, needs info, pending approval (one or two approvers), approved, rejected (reason mandatory),
@@ -51,7 +52,7 @@ VIASOCKET_API_URL, VIASOCKET_RUN_URL. No ANTHROPIC_API_KEY. The notification ema
 
 ## What is NOT done or NOT verified
 - Real viaSocket integration (Slack, Gmail, Keka). See docs/VIASOCKET_INTEGRATION.md and milestones M1.5 and M8.
-- The Claude classification path (app/classifier.py: classify_anthropic) has never been run against the live API. It is
+- viaSocket AI classification was verified with real calls in a spike (docs/VIASOCKET_FACTS.md) and is off until an admin switches it on. The direct-Anthropic path (app/classifier.py: classify_anthropic) has never been run against the live API. It is
   validated and falls back to the rules on any error, but check it against the current SDK docs before relying on it.
 - The rules classifier scores 100% on data/sample_requests.json because it was tuned while looking at that file. That number
   is optimistic. Measure on real past requests.
