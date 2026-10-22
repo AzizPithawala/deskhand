@@ -52,3 +52,15 @@ def test_every_element_the_script_looks_up_exists_in_the_page():
                                                                   "re", "rp", "rk", "rerr", "jform", "jp", "jq", "jerr", "aiswitch", "ff0", "t_approver_rule", "t_backup_rule", "t_fulfiller_rule", "t_redirect"}
     unknown = sorted(w for w in wanted if w not in ids and w not in dynamic and not w.startswith(("v_", "s_", "tres_", "ff")))
     assert not unknown, unknown
+
+
+def test_the_delivery_log_page_never_reads_what_a_message_said():
+    block = JS[JS.index("/* ---------- delivery log (admin)"):JS.index("/* ---------- render loop")]
+    assert "dlRowHTML" in block and not re.search(r"\.(text|body|subject)\b", block)  # the API sends none of it, and the page must not look for it
+
+
+def test_notifications_are_in_the_menu_for_everyone_including_the_demo_and_the_log_is_admin_only():
+    link = re.search(r'<a href="#notifications"[^>]*>', HTML).group(0)
+    assert "data-admin" not in link and "data-real" not in link and 'id="nbadge"' in HTML
+    assert "'notifications'" in JS.split("const APP_PAGES")[1].split("\n")[0] and "'notifications'" not in JS.split("const ADMIN_PAGES")[1].split("\n")[0]
+    assert "'deliverylog'" in JS.split("const ADMIN_PAGES")[1].split("\n")[0]

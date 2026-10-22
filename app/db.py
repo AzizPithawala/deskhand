@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS outbox(
   id INTEGER PRIMARY KEY AUTOINCREMENT, request_id INTEGER, channel TEXT, to_person TEXT, subject TEXT, body TEXT,
   kind TEXT, idempotency_key TEXT UNIQUE, status TEXT DEFAULT 'sent', created_at REAL,
   delivery_status TEXT DEFAULT 'skipped', delivery_attempts INTEGER DEFAULT 0, delivery_error TEXT, delivery_next_at REAL,
-  delivered_at REAL, delivery_note TEXT, from_person TEXT);
+  delivered_at REAL, delivery_note TEXT, from_person TEXT, read_at REAL, sent_to TEXT);
+CREATE INDEX IF NOT EXISTS outbox_person ON outbox(to_person, id);
 CREATE TABLE IF NOT EXISTS connections(
   tenant TEXT NOT NULL, app TEXT NOT NULL, auth_id TEXT, script_id TEXT, settings_json TEXT DEFAULT '{}', updated_at REAL,
   PRIMARY KEY(tenant, app));
@@ -41,6 +42,8 @@ CREATE TABLE IF NOT EXISTS type_rules(
   code TEXT PRIMARY KEY, rules_json TEXT NOT NULL DEFAULT '{}', reviewed_at REAL, updated_at REAL, updated_by TEXT);
 CREATE TABLE IF NOT EXISTS policies(
   key TEXT PRIMARY KEY, title TEXT NOT NULL, text TEXT NOT NULL, updated_at REAL);
+CREATE TABLE IF NOT EXISTS notification_prefs(
+  person_id TEXT NOT NULL, category TEXT NOT NULL, slack INTEGER NOT NULL DEFAULT 1, email INTEGER NOT NULL DEFAULT 1, updated_at REAL, PRIMARY KEY(person_id, category));
 CREATE TABLE IF NOT EXISTS slack_decisions(
   token_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, request_id INTEGER, person_id TEXT, outbox_id INTEGER, created_at REAL NOT NULL, expires_at REAL NOT NULL,
   used_at REAL, outcome TEXT, clicked_by TEXT);
@@ -58,8 +61,8 @@ CREATE TRIGGER IF NOT EXISTS leave_ledger_no_delete BEFORE DELETE ON leave_ledge
   BEGIN SELECT RAISE(ABORT, 'leave records are append-only'); END;
 """
 OUTBOX_MIGRATION = {"delivery_status": "TEXT DEFAULT 'skipped'", "delivery_attempts": "INTEGER DEFAULT 0", "delivery_error": "TEXT",
-                    "delivery_next_at": "REAL", "delivered_at": "REAL", "delivery_note": "TEXT", "from_person": "TEXT"}
-# "connections", "delivery_ledger", "roles", "type_rules", "policies", "leave_types", "leave_ledger" and "slack_decisions" are deliberately NOT here: a demo reset must not disconnect apps, reset the daily live-delivery cap or undo company setup
+                    "delivery_next_at": "REAL", "delivered_at": "REAL", "delivery_note": "TEXT", "from_person": "TEXT", "read_at": "REAL", "sent_to": "TEXT"}
+# "connections", "delivery_ledger", "roles", "type_rules", "policies", "leave_types", "leave_ledger", "slack_decisions" and "notification_prefs" are deliberately NOT here: a demo reset must not disconnect apps, reset the daily live-delivery cap or undo company setup
 TABLES = ["settings", "inbound_events", "requests", "events", "action_runs", "outbox"]
 
 
@@ -84,6 +87,8 @@ class Store:
         for col, decl in OUTBOX_MIGRATION.items():
             if col not in have:
                 self.conn.execute(f"ALTER TABLE outbox ADD COLUMN {col} {decl}")
+        if "read_at" not in have:  # messages from before notifications existed are not "new": a company must not open to hundreds of unread
+            self.conn.execute("UPDATE outbox SET read_at=created_at WHERE read_at IS NULL")
 
     def q(self, sql, args=()):
         with self.lock:

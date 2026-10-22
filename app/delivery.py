@@ -11,7 +11,7 @@ import time
 from urllib.parse import urlsplit
 from contextlib import contextmanager
 
-from . import viasocket_adapter as vs
+from . import notifications, viasocket_adapter as vs
 
 # The system notice about a failed delivery is never delivered: if Slack is down, delivering that notice through Slack would fail and create the next notice,
 # forever. It stays in the outbox (and on Integrations and the dashboard).
@@ -150,6 +150,8 @@ class Delivery:
             return "skipped", "daily delivery cap reached"
         if not self.ready(channel):
             return "skipped", ("Slack" if channel == "chat" else "Gmail") + " not connected or not configured"
+        if to_id is not None and self.mode() == "live" and not notifications.allowed(self.e.s, to_id, kind, channel):  # rehearsal ignores preferences: the admin sees everything
+            return "skipped", notifications.OFF_NOTE
         if to_id is not None:
             rec = self.recipient(to_id)
             if not rec:
@@ -226,12 +228,13 @@ class Delivery:
             e.s.q("INSERT INTO action_runs(request_id,step,idempotency_key,attempts,status,updated_at) VALUES(?,?,?,?,?,?)", (row["request_id"], "deliver", "deliver:" + ik, 0, "pending", e.now()))
         e.s.q("UPDATE action_runs SET attempts=?, updated_at=? WHERE idempotency_key=?", (attempt, e.now(), "deliver:" + ik))
         e.s.q("INSERT INTO delivery_ledger(day,ikey,ts) VALUES(?,?,?)", (_today(), f"{ik}#{attempt}", time.time()))  # counts every real send attempt
+        target = self.recipient(row["to_person"])  # who Slack or Gmail is really asked to reach: the rehearsal admin in rehearsal, the person in live
         try:
             res = self._send(row)
         except Exception as ex:  # a bug here must never break approvals
             res = vs.Result(vs.PERMANENT, error=vs.redact(f"delivery error: {type(ex).__name__}"), code="exception")
         if res.ok:
-            e.s.q("UPDATE outbox SET delivery_status='delivered', delivered_at=?, delivery_error=NULL WHERE id=?", (e.now(), row["id"]))
+            e.s.q("UPDATE outbox SET delivery_status='delivered', delivered_at=?, delivery_error=NULL, sent_to=? WHERE id=?", (e.now(), (target or {}).get("id"), row["id"]))
             e.s.q("UPDATE action_runs SET status='succeeded' WHERE idempotency_key=?", ("deliver:" + ik,))
             e.audit(row["request_id"], "system", "delivery_succeeded", {"outbox": row["id"], "kind": row["kind"], "channel": row["channel"], "attempt": attempt})
             return "delivered"

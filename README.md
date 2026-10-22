@@ -4,7 +4,7 @@ An agent that handles employee requests end to end: understands the request, rou
 tracks approve / reject (reason required) / pending, escalates on time, acts through guarded actions and keeps an audit trail.
 Many companies can use one Deskhand, each strictly separate. People sign in; the server, not the browser, decides who is acting.
 Requests are raised in the Ask chat inside Deskhand. Slack and Gmail notifications are delivered through viaSocket (see below). HR actions still run
-against a mock HR system until the Phase 3 leave ledger. The plan for all phases is in `docs/AGENT_PLATFORM_PLAN.md`.
+against a mock HR system in the demo company; real companies keep leave in Deskhand's own ledger. The plan for all phases is in `docs/AGENT_PLATFORM_PLAN.md`.
 
 ## Run it
 ```
@@ -13,7 +13,7 @@ pip install -r requirements-dev.txt
 DESKHAND_SIGNUP_CODES=any-code-you-like make dev        # or: uvicorn app.main:app --reload --port 8000
 ```
 Open http://localhost:8000. Without `DESKHAND_SIGNUP_CODES` registration is closed and only "Try the demo" works. Needs Python 3.11+. Run the tests with
-`make test` (330 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
+`make test` (382 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
 Requests are understood by a deterministic rules classifier. An admin of a real company can switch on viaSocket AI (a Claude model, no model key needed)
 on the Health page; it only proposes the request type and details, waits at most 25 seconds, falls back to the rules on any failure, and never sees salary or
 payroll messages. (`requirements.txt` is the deploy list; `requirements-dev.txt` adds pytest.)
@@ -65,7 +65,7 @@ Weekend-only dates ask again instead of reaching an approver. Everyone has a **L
 ## The interface ("Dusk")
 Static HTML, CSS and JS in `app/static` (no build step, no dependencies; the Geist font is self-hosted under its OFL licence). Signed out: **Sign in**, **Create a company**
 and the join link. Signed in: **Ask** (a chat; every request appears inline with its journey), **My requests**, **Needs you** (the approver queue, with a decision bar made for
-one-handed phone use), and for admins **People**, **Health** (dashboard, delivery, Connections) and **Audit**. The account button (top right) has your details, the theme, change password
+one-handed phone use), **Notifications** (everyone, with an unread badge), and for admins **Setup**, **People**, **Integrations**, **Health**, the **Delivery log** and **Audit**. The account button (top right) has your details, the theme, change password
 and Sign out. The request journey shows each stage, who holds it, how long it has waited and what happens next; every status has its
 own shape as well as a colour. Light and dark follow the system; reduced motion is respected. `tests/test_ui_contract.py` checks that every API path the script calls exists.
 
@@ -83,6 +83,17 @@ Admins connect Slack and Gmail once on **Integrations** (you sign in on each app
 (7) press Go live. Each person may also connect their own Gmail on Your mailbox. A full rehearsal on real accounts (2026-10-22) sent the approval email from the requester's own Gmail and the decision and completion emails from the approver's own Gmail, all labelled "[Rehearsal]" and addressed only to the admin.
 Unchanged: approvals never wait for delivery; each row is delivered exactly once (atomic claim, single-flight sweep); a failed delivery is parked with a Retry button and never resent when the outcome is unknown; 150 deliveries per UTC day per company as a backstop; Slack text is escaped and email is HTML-escaped. The Slack DM was verified with a real call on 2026-10-22 (spike S1). `make preflight` prints yes/no per company.
 
+## Notifications and the delivery log (Phase 4)
+Everything a person is told is a row in their company's outbox; **Notifications** is the person's own view of it, for everyone including the demo (the badge rides the 4-second clock poll, so it updates by itself).
+- **What shows:** everything addressed to the person except the Ask conversation (chat replies, policy answers, "request received", confirmations of their own click). Five categories: *Needs your decision*, *Reminders and escalations*, *About your requests*, *Tasks for you*, *System and admin*
+  (`CATEGORIES` in `app/notifications.py`; a test reads the source and fails if the code can write a message kind that is in no category, so a new kind cannot silently vanish). One entry per message, with how its Slack copy and its email copy fared: delivered, sent to the admin (rehearsal), waiting, failed, not sent, or turned off by you.
+- **Find things:** All or Unread, category, request type and status, delivered by Slack or email, dates (UTC), and a literal search of subject and text (`%` and `_` are just characters). Newest first, paged with "Show older". On a phone the filters sit behind a Filters button.
+- **Read marks:** opening an entry marks it read and goes to the request; opening a request marks what was said about it read; "Mark all read" does the rest. Messages from before this feature start as read.
+- **Preferences** (Notifications, Preferences): per category, Slack and email on or off. They apply in **live** mode only (rehearsal still sends everything to the one admin); a copy a person switched off is written as "not sent: turned off in this person's notification settings" and says so in their list. The in-app copy is always kept, and
+  "Needs your decision" cannot have both off, so an approval cannot go unseen (the server refuses and says why). Read-only in the demo. No daily digest or quiet hours yet.
+- **Delivery log** (admins; Admin hub, linked from Health): what the company tried to send, to whom, who really received it, Slack or email, status, attempts, a redacted error and times. Filters: status chips with totals, channel, person, kind, dates; Retry on failed rows (audited). **Metadata only:** the log never returns a subject or body.
+API: `GET /api/notifications`, `POST /api/notifications/read`, `GET/POST /api/notifications/preferences`, `GET /api/delivery/log`; `/api/clock` carries `unread`.
+
 ## Hosted (Embarko)
 One process, no managed database and no backups, so everything lives in `DATA_DIR` (the root `main.py` points `DESKHAND_DATA_DIR` there). The app has its own sign-in, so the old shared
 password is no longer needed; set `DESKHAND_DEMO_PASSWORD` only if you want an extra HTTP Basic gate in front of everything.
@@ -95,12 +106,12 @@ when the shared password (not the session) turned a signed-in browser away. Cook
 
 ## What is NOT done or NOT verified
 - No emails from Deskhand itself: invite and reset links are copied by an admin. A locked-out owner needs another admin to make a reset link. No email verification, no SSO or MFA (Phase 6).
-- Leave still runs against the in-memory mock HR; the persisted leave ledger, Slack and Gmail request flow come in Phase 3. Request types cannot be created, only edited (Phase 5).
+- The demo company's leave still runs against a prepared mock HR (real companies use the ledger). Request types cannot be created, only edited (Phase 5).
+- Notifications are kept for ever and only paged (no archive); preferences are per category, not per request type; the unread badge counts the signed-in person's own messages only; no push or browser notifications.
 - A request is understood while the sender waits (about 25 seconds at worst with AI on). Slack inbound is slow (viaSocket polls every 15 minutes), so asking happens in Deskhand chat.
 - SQLite on one process with no backups: fine for a pilot, not for real customers (Phase 6 moves to Postgres with backups).
 - The rules classifier scores 100% on data/sample_requests.json because it was tuned while looking at that file. That number is optimistic. Measure on real past requests.
 - The direct-Anthropic path (app/classifier.py: classify_anthropic) has never been run against the live API and is unused.
 
 ## Next steps
-Phase 3: leave through Slack and
-Gmail end to end with a Deskhand-owned leave ledger. See `docs/AGENT_PLATFORM_PLAN.md`.
+Phase 5 (more catalog actions such as a ticketing tool, new request types and ordered steps, AI-assisted workflow drafting) and Phase 6 (enterprise hardening: Postgres and backups, MFA, SSO). See `docs/AGENT_PLATFORM_PLAN.md`.
