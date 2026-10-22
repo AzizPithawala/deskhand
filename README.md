@@ -13,7 +13,7 @@ pip install -r requirements-dev.txt
 DESKHAND_SIGNUP_CODES=any-code-you-like make dev        # or: uvicorn app.main:app --reload --port 8000
 ```
 Open http://localhost:8000. Without `DESKHAND_SIGNUP_CODES` registration is closed and only "Try the demo" works. Needs Python 3.11+. Run the tests with
-`make test` (269 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
+`make test` (289 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
 Requests are understood by a deterministic rules classifier. An admin of a real company can switch on viaSocket AI (a Claude model, no model key needed)
 on the Health page; it only proposes the request type and details, waits at most 25 seconds, falls back to the rules on any failure, and never sees salary or
 payroll messages. (`requirements.txt` is the deploy list; `requirements-dev.txt` adds pytest.)
@@ -69,15 +69,13 @@ one-handed phone use), and for admins **People**, **Health** (dashboard, deliver
 and Sign out. The request journey shows each stage, who holds it, how long it has waited and what happens next; every status has its
 own shape as well as a colour. Light and dark follow the system; reduced motion is respected. `tests/test_ui_contract.py` checks that every API path the script calls exists.
 
-## Connections and delivery (live-only, per company)
-Admin only, on Health, and the only setup. The admin connects Slack and picks the notification channel, then connects Gmail, picks the
-"send from" mailbox and enters ONE notification email. Sign-in happens on each app's own screen; Deskhand stores only connection ids on the server
-(never shown, never logged). There is no switch and no mock: as soon as Slack and its channel are set, every chat notification goes to that channel,
-prefixed "[Deskhand to <name>]"; as soon as Gmail and the notification email are set, every email notification goes to that one address with
-"To <name>:" in the subject, never any other address. If either is missing, an admin sees a red banner on every tab and everything else keeps working.
-Approvals never wait for delivery: a sweep delivers outbox rows, exactly once each (atomic claim, single-flight sweep), and never resends when the
-outcome is unknown (failed rows show with a Retry button). Backstop cap: 150 deliveries per UTC day per company. Message text is escaped for Slack; approver messages
-carry a link to Deskhand. `make preflight` prints yes/no for every company's setup.
+## Messaging: Slack, email and rehearsal (Phase 3, step 2)
+Admins connect Slack and Gmail once on **Integrations** (you sign in on each app's own screen; Deskhand stores only connection ids on the server, never shown or logged). After that every message is addressed to a **person in the directory**:
+- **Slack:** a direct message to that person's Slack account. "Match Slack accounts" finds each person's account from their directory email (a batch of 25 per press); a person with no match gets email only, and an admin can also type a Slack user id on the People page.
+- **Email:** to the person's directory address, with a link to the request. The request email asking an approver comes from the **requester's own Gmail** and decisions and completion come from the **approver's own Gmail** when they connected one on **Your mailbox** (account menu); otherwise the company mailbox sends. A personal mailbox is used only for messages about that person's own requests, with text Deskhand writes, and if it cannot send, the company mailbox does.
+- **What goes where:** chat replies, policy answers and "request received" stay in the Deskhand chat. Approval needed, reminders, escalations, decisions, completion, tasks and failures go to Slack; the important ones are also emailed (`SLACK_KINDS` and `EMAIL_KINDS` in `app/delivery.py`).
+- **Rehearsal first.** Every company starts in rehearsal: all Slack messages and emails go only to one admin, labelled "[Rehearsal] To <person>", so you can see exactly what each person would get. **Go live** (an audited admin action) switches to the real people; nothing written before the switch is sent after it, and **Back to rehearsal** is always available. Admins see a note about the mode and about people with no Slack match.
+Unchanged: approvals never wait for delivery; each row is delivered exactly once (atomic claim, single-flight sweep); a failed delivery is parked with a Retry button and never resent when the outcome is unknown; 150 deliveries per UTC day per company as a backstop; Slack text is escaped and email is HTML-escaped. The Slack DM action is catalog-documented but **not yet verified with a real call** (spike S1). `make preflight` prints yes/no per company.
 
 ## Hosted (Embarko)
 One process, no managed database and no backups, so everything lives in `DATA_DIR` (the root `main.py` points `DESKHAND_DATA_DIR` there). The app has its own sign-in, so the old shared

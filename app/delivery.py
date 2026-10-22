@@ -12,10 +12,17 @@ from contextlib import contextmanager
 
 from . import viasocket_adapter as vs
 
-# Every kind is delivered, except the system notice about a failed delivery: if Slack is down, delivering that notice through Slack would fail
-# and create the next notice, forever. It stays in the outbox (and on the Connections tab and dashboard).
+# The system notice about a failed delivery is never delivered: if Slack is down, delivering that notice through Slack would fail and create the next notice,
+# forever. It stays in the outbox (and on Integrations and the dashboard).
 NOT_DELIVERED_KINDS = {"delivery_failed"}
-LINK_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "task", "parked", "breaker"}  # addressed to someone who acts in the Deskhand UI
+# Who gets what (docs/AGENT_PLATFORM_PLAN.md). Chat replies, policy answers and "request received" stay in the Deskhand chat; everything that needs someone's attention
+# or tells them a decision goes to their Slack DM, and the important ones also by email.
+SLACK_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "escalated", "stage_approved", "approved", "rejected", "pending_update", "task", "assigned", "fulfilled",
+               "parked", "delay", "breaker"}
+EMAIL_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "escalated", "approved", "rejected", "fulfilled", "task", "parked"}
+NEEDS_LINK_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "task", "parked"}  # addressed to someone who acts: link to the decision page
+FROM_REQUESTER_KINDS = {"approval_request"}  # the request email comes from the requester's own mailbox when they connected one
+FROM_DECIDER_KINDS = {"approved", "rejected", "fulfilled", "stage_approved"}  # decisions and completion come from the approver's own mailbox when they connected one
 DAILY_CAP = 150
 MAX_ATTEMPTS = 3
 SENDING_TIMEOUT_S = 300
@@ -31,40 +38,75 @@ def slack_escape(text):
 
 
 class Delivery:
-    def __init__(self, engine, integration_factory=None, base_url=None, tenant=None):
+    def __init__(self, engine, integration_factory=None, base_url=None, tenant=None, personal_factory=None, fanout=None):
         self.e = engine
         self.tenant = tenant or os.environ.get("DESKHAND_TENANT_ID", "acme-demo")
         self.conns = vs.ConnectionStore(engine.s, self.tenant)
-        self.factory = integration_factory or (lambda: vs.get_integration(engine.s, self.tenant))
+        self.factory = integration_factory or (lambda: vs.get_integration(engine.s, self.tenant))  # the company's Slack and Gmail
+        self.personal_factory = personal_factory or (lambda tenant: vs.get_integration(engine.s, tenant))  # one person's own mailbox
+        self.fanout = (not getattr(engine, "is_demo", False)) if fanout is None else fanout  # one message becomes a Slack DM row and an email row
         self.base_url = (base_url or os.environ.get("DESKHAND_BASE_URL") or "http://localhost:8000").rstrip("/")
         self._flight = threading.Lock()  # single-flight: only one sweep runs at a time (the 10 s worker and the manual endpoint share it)
 
-    # ---------- readiness: configuration lives in the database, set on the Connections tab ----------
+    # ---------- mode: rehearsal sends everything to one admin, live sends to the real people ----------
+    def mode(self):
+        return "live" if self.e.s.get_setting("delivery_mode") == "live" else "rehearsal"
+
+    def rehearsal_person(self):
+        pid = self.e.s.get_setting("rehearsal_person")
+        p = self.e.d.emp(pid) if pid else None
+        return p if p and p["active"] and p.get("role") == "admin" else self.e.d.role_holder("admin")
+
+    def recipient(self, person_id):
+        """The directory person a message really goes to: in rehearsal always the rehearsing admin, in live the person it is for. Never anyone outside the directory."""
+        if self.mode() != "live":
+            return self.rehearsal_person()
+        p = self.e.d.emp(person_id)
+        return p if p and p["active"] else None
+
+    def set_mode(self, mode, actor, person_id=None):
+        if mode not in ("rehearsal", "live"):
+            raise ValueError("choose rehearsal or live")
+        who = self.e.d.emp(person_id) if person_id else self.rehearsal_person()
+        if not who or not who["active"] or who.get("role") != "admin":
+            raise ValueError("the person who receives rehearsal messages must be an admin who has joined")
+        old = (self.mode(), (self.rehearsal_person() or {}).get("id"))
+        dropped = 0
+        if mode != old[0]:  # nothing written under one mode is sent under the other: a rehearsal message must never reach a real person, nor a live one be redirected
+            dropped = self.e.s.q("UPDATE outbox SET delivery_status='skipped', delivery_note='written before the mode changed, not sent' WHERE delivery_status IN ('pending','failed')").rowcount
+        self.e.s.set_setting("delivery_mode", mode)
+        self.e.s.set_setting("rehearsal_person", who["id"])
+        self.e.audit(None, actor, "delivery_mode_changed", {"mode": mode, "rehearsal_person": who["id"], "was": list(old), "unsent_messages_dropped": dropped})
+
+    # ---------- readiness: configuration lives in the database, set on the Integrations page ----------
     def _conn(self, app):
         c = self.conns.get(app)
         return c if c and c["script_id"] else None
 
-    def notify_email(self):
-        """The one stored notification address, or '' when unset or not a single valid address. Email never goes anywhere else."""
-        c = self._conn("gmail")
-        v = ((c or {}).get("settings", {}).get("notify_email") or "").strip()
-        return v if ONE_EMAIL.match(v) else ""
+    def _personal_gmail(self, person_id):
+        if not person_id:
+            return None
+        c = vs.ConnectionStore(self.e.s, vs.personal_tenant(self.tenant, person_id)).get("gmail")
+        return c if c and c["script_id"] else None
 
     def problems(self):
-        """Why delivery is not (fully) working right now; shown as a red banner on every tab. Empty list means all good."""
+        """Why delivery is not (fully) working right now; shown as a red banner to admins. Empty list means all good."""
         out = []
         if not vs.VsClient(self.tenant).configured():
             return ["viaSocket is not configured on the server: notifications are not being delivered"]
-        slack = self._conn("slack")
-        if not slack:
+        if not self._conn("slack"):
             out.append("Slack not connected: notifications are not being delivered")
-        elif not slack["settings"].get("channel_id"):
-            out.append("Slack channel not chosen: notifications are not being delivered")
         if not self._conn("gmail"):
             out.append("Gmail not connected: email notifications are not being delivered")
-        elif not self.notify_email():
-            out.append("Notification email not set: email notifications are not being delivered")
         return out
+
+    def notes(self):
+        """Things an admin should know that are not faults: which mode is on, and who has no Slack account matched."""
+        who = self.rehearsal_person()
+        if self.mode() != "live":
+            return [f"Rehearsal: every Slack message and email goes only to {who['name'] if who else 'an admin'}, labelled with the person it is for. Go live on Integrations when it looks right."]
+        missing = [e["name"] for e in self.e.d.employees.values() if e["active"] and not e.get("slack_id")]
+        return [f"{len(missing)} people have no Slack account matched, so they get email only: {', '.join(missing[:5])}{'…' if len(missing) > 5 else ''}."] if missing else []
 
     def ready(self, channel):
         if getattr(self.e, "is_demo", False):  # the demo company never sends, even if it inherited real connection rows from an older database
@@ -72,10 +114,9 @@ class Delivery:
         if not vs.VsClient(self.tenant).configured():
             return False
         if channel == "chat":
-            c = self._conn("slack")
-            return bool(c and c["settings"].get("channel_id"))
+            return bool(self._conn("slack"))
         if channel == "email":
-            return bool(self._conn("gmail") and self.notify_email())
+            return bool(self._conn("gmail"))
         return False
 
     def used_today(self):
@@ -84,21 +125,37 @@ class Delivery:
     def capped(self):
         return self.used_today() >= DAILY_CAP
 
-    def status_for(self, kind, channel):
+    def status_for(self, kind, channel, to_id=None):
         """Decided when the row is written: (status, note). Only rows that can really be delivered now wait for the sweep."""
         if kind in NOT_DELIVERED_KINDS or channel not in ("chat", "email"):
             return "skipped", "system notice, outbox only"
+        if channel == "chat" and kind not in SLACK_KINDS:
+            return "skipped", "in the Deskhand chat only"
+        if channel == "email" and kind not in EMAIL_KINDS:
+            return "skipped", "email is not sent for this kind"
         if self.capped():
             return "skipped", "daily delivery cap reached"
         if not self.ready(channel):
             return "skipped", ("Slack" if channel == "chat" else "Gmail") + " not connected or not configured"
+        if to_id is not None:
+            rec = self.recipient(to_id)
+            if not rec:
+                return "skipped", "no active person to deliver to"
+            if channel == "chat" and not rec.get("slack_id"):
+                return "skipped", f"no Slack account matched for {rec['name']}"
+            if channel == "email" and not rec.get("email"):
+                return "skipped", f"no email address for {rec['name']}"
         return "pending", None
 
     # ---------- the sweep ----------
     def summary(self):
         counts = {r["delivery_status"]: r["c"] for r in self.e.s.all("SELECT delivery_status, COUNT(*) c FROM outbox GROUP BY delivery_status")}
-        return {"used_today": self.used_today(), "cap": DAILY_CAP, "capped": self.capped(), "counts": counts,
-                "ready": {"slack": self.ready("chat"), "email": self.ready("email")}, "problems": self.problems()}
+        who = self.rehearsal_person()
+        people = [e for e in self.e.d.employees.values() if e["active"]]
+        return {"used_today": self.used_today(), "cap": DAILY_CAP, "capped": self.capped(), "counts": counts, "mode": self.mode(),
+                "rehearsal_person": {"id": who["id"], "name": who["name"]} if who else None,
+                "slack_matched": sum(1 for e in people if e.get("slack_id")), "people": len(people),
+                "ready": {"slack": self.ready("chat"), "email": self.ready("email")}, "problems": self.problems(), "notes": self.notes()}
 
     def deliver_pending(self, limit=20):
         out = {"delivered": 0, "failed": 0, "retry": 0, "skipped": 0}
@@ -193,22 +250,37 @@ class Delivery:
         self.e.audit(row["request_id"], actor_id, "delivery_replayed", {"outbox": outbox_id})
 
     # ---------- composing and sending ----------
+    def _link(self, row):
+        rid = row["request_id"]
+        if not rid:
+            return self.base_url
+        return f"{self.base_url}/#{'needs' if row['kind'] in NEEDS_LINK_KINDS else 'request'}/{rid}"
+
     def _send(self, row):
         e = self.e
-        name = e.name(row["to_person"])
+        rec = self.recipient(row["to_person"])
+        if not rec:
+            return vs.Result(vs.PERMANENT, error="there is no active person to deliver this to", code="no_recipient")
+        rehearsal = self.mode() != "live"
+        tag = f"[Rehearsal] To {e.name(row['to_person'])}: " if rehearsal else ""
         subject = re.sub(r"[\r\n]+", " ", row["subject"] or f"Request #{row['request_id']}")[:150]
         body = vs.redact(row["body"] or "")
-        link = f"{self.base_url}/#inbox/{row['to_person']}" if row["kind"] in LINK_KINDS else ""
-        integ = self.factory()
+        link = self._link(row)
         if row["channel"] == "email":
-            to = self.notify_email()
-            if not to:
-                return vs.Result(vs.PERMANENT, error="no single notification email is set on the Connections tab", code="no_notify_email")
-            html_body = "<p>" + html.escape(body).replace("\n", "<br>") + "</p>" + (f'<p><a href="{html.escape(link)}">Open your Deskhand inbox</a></p>' if link else "")
-            assert to == self.notify_email()  # never any other address
-            return integ.gmail_send(to, f"To {name}: {subject}", html_body)
-        text = f"[Deskhand to {name}] {slack_escape(subject)}\n{slack_escape(body)}" + (f"\nOpen your Deskhand inbox: {link}" if link else "")
-        return integ.slack_send(text)
+            if not rec.get("email"):
+                return vs.Result(vs.PERMANENT, error=f"{rec['name']} has no email address", code="no_address")
+            intro = f"Rehearsal: this is the message {e.name(row['to_person'])} would get once Deskhand is live." if rehearsal else ""
+            html_body = ("<p><i>" + html.escape(intro) + "</i></p>" if intro else "") + "<p>" + html.escape(body).replace("\n", "<br>") + f'</p><p><a href="{html.escape(link)}">Open it in Deskhand</a></p>'
+            mailbox = row.get("from_person")
+            if self._personal_gmail(mailbox):  # their own mailbox; if it cannot send (nothing was sent), the company mailbox does
+                res = self.personal_factory(vs.personal_tenant(self.tenant, mailbox)).gmail_send(rec["email"], tag + subject, html_body)
+                if res.ok or res.kind != vs.PERMANENT:
+                    return res
+            return self.factory().gmail_send(rec["email"], tag + subject, html_body)
+        if not rec.get("slack_id"):
+            return vs.Result(vs.PERMANENT, error=f"no Slack account is matched for {rec['name']}", code="no_slack_id")
+        text = f"{slack_escape(tag)}*{slack_escape(subject)}*\n{slack_escape(body)}\nOpen it: {link}"
+        return self.factory().slack_dm(rec["slack_id"], text)
 
 
 @contextmanager

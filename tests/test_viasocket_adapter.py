@@ -166,7 +166,7 @@ def test_connections_are_admin_only_and_list_every_setting(client):
     assert mia.get("/api/connections").status_code == 403
     r = owner.get("/api/connections").json()
     assert [a["key"] for a in r["apps"]] == ["slack", "gmail"] and "mode" not in r
-    assert [x["key"] for x in r["apps"][1]["settings"]] == ["from", "notify_email"] and r["problems"]
+    assert r["apps"][0]["settings"] == [] and [x["key"] for x in r["apps"][1]["settings"]] == ["from"] and r["problems"]  # people are messaged one by one: no shared channel or address to choose
     tok = owner.get("/api/connections/token").json()["token"]
     assert tok.count(".") == 2 and SECRET not in tok
     assert mia.get("/api/connections/token").status_code == 403
@@ -206,20 +206,40 @@ def test_reset_keeps_connections(client):
     assert vs.ConnectionStore(owner.engine.s, owner.org_id).get("slack")["script_id"] == SCRIPT
 
 
-def test_test_calls_validate_input_and_email_only_the_stored_address(client, monkeypatch):
+def test_test_calls_validate_input_and_only_ever_message_the_admin_who_asked(client, monkeypatch):
     owner, main = client
     mia = apiutil.add_person(owner, "mia@acme.test", "Mia")
     assert mia.post("/api/connections/test", {"action": "slack_send"}).status_code == 403
     assert owner.post("/api/connections/test", {"action": "slack_lookup", "email": "a@b.co, c@d.co"}).status_code == 422
-    assert owner.post("/api/connections/test", {"action": "gmail_send"}).status_code == 409  # no notification email yet
+    assert owner.post("/api/connections/test", {"action": "slack_send"}).status_code == 409  # your own Slack account is not matched yet
     cs = vs.ConnectionStore(owner.engine.s, owner.org_id)
     cs.save("gmail", "gmailauth000001", "scriGMAILSCRIPT01")
-    cs.set_setting("gmail", "notify_email", "stored@example.test")
+    cs.save("slack", "slackauth000001", SCRIPT)
     t = FakeTransport(ok({"success": True, "data": {"id": "m1", "threadId": "t1"}}))
     real = vs.VsClient
     monkeypatch.setattr(vs, "VsClient", lambda tenant, transport=None: real(tenant, t))
     r = owner.post("/api/connections/test", {"action": "gmail_send", "email": "someone-else@example.test"}).json()
-    assert r["outcome"] == "success" and t.calls[0][3]["inputData"]["to"] == "stored@example.test"  # a typed address is ignored
+    assert r["outcome"] == "success" and t.calls[0][3]["inputData"]["to"] == "owner@acme.test"  # a typed address is ignored: it goes to the admin's own
+    main.accounts.update_user(owner.org_id, owner.uid, owner.uid, slack_id="U0OWNER01")
+    main.registry.refresh_directory(owner.org_id)
+    t.answers = [ok({"success": True, "data": {"ok": True, "ts": "1.2", "channel": "D1"}})]
+    r = owner.post("/api/connections/test", {"action": "slack_send"}).json()
+    sent = t.calls[-1][3]
+    assert r["outcome"] == "success" and sent["inputData"]["userId"] == "U0OWNER01" and sent["action_version_id"] == "rowa5mg9fywy"
+
+
+def test_slack_dm_uses_the_documented_action_and_returns_only_what_we_need():
+    integ, t = _integ(ok({"success": True, "data": {"ok": True, "ts": "1.2", "channel": "D9", "message": {"metadata": {"event_payload": {"script_id": SCRIPT}}}}}))
+    r = integ.slack_dm("U0ABC1234", "hello there")
+    method, url, _, body = t.calls[0]
+    assert r.ok and r.data == {"ts": "1.2", "channel": "D9"} and SCRIPT not in json.dumps(r.data)  # the raw reply carries our runner id: never passed on
+    assert url.endswith("/func/" + SCRIPT) and body["action_version_id"] == "rowa5mg9fywy"
+    assert body["inputData"] == {"userId": "U0ABC1234", "content": "hello there", "isScheduledMessage": "no", "bot_details": {"bot_name": "Deskhand"}}
+    assert vs.APPS["slack"]["actions"]["send_dm"][1] == "rowovgwtt9u4"  # the catalog action id from viaSocket's own Slack document
+    empty = vs.ViaSocketIntegration(Store(":memory:"), "acme-demo", vs.VsClient("acme-demo", FakeTransport(ok({}))))
+    assert empty.slack_dm("U1", "x").code == "not_connected"
+    bad, _ = _integ(ok({"success": True, "data": {"ok": False, "error": "user_not_found"}}))
+    assert bad.slack_dm("U9", "x").kind == vs.PERMANENT
 
 
 def test_no_secret_or_viasocket_ids_in_client_code():

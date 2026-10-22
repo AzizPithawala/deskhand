@@ -360,6 +360,8 @@ table.people td.pact { white-space: normal; min-width: 210px; }
 .simres { margin-top: 20px; border-top: 1px solid var(--rule); padding-top: 16px; max-width: 640px; }
 .simchain { margin: 8px 0 12px; padding-left: 20px; }
 .neg { color: var(--rejected); }
+#banner .b.info { background: var(--wash); border-bottom-color: var(--rule); font-weight: 400; }
+#banner .b.info svg { color: var(--pending); }
 #idlg { max-width: min(680px, 94vw); max-height: 90vh; overflow-y: auto; }
 table.roles td { vertical-align: top; }
 table.roles select.field { min-width: 200px; }

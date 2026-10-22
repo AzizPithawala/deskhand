@@ -63,6 +63,10 @@ interfaces; the simulator stays the default until the spike (M1.5) proves each c
     people from the company's directory, never an address found in message text.
 15. Company setup (roles, holders, request-type rules, policies) is validated data: rules may name only `manager`, a role or a person of that company, every value is bounded, every
     change writes a `setup_changed` audit event, writes are admin-only and refused in the demo company, and an edit never changes the approvers of a request already routed.
+16. A company starts in rehearsal: every Slack message and email goes only to the one rehearsing admin, labelled with the person it is for. Going live is an audited admin act, and nothing written
+    before a mode change is sent after it.
+17. A person's own mailbox is used only for messages about that person's own requests and decisions, to people in the company directory, with text Deskhand composes; if it cannot send,
+    the company mailbox does. Recipients are directory people only, never an address found in message text.
 
 ## Commands
 `make dev` (run the app on :8000), `make test` (pytest), `make reset` (delete the demo database).

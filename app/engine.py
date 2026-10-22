@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import datetime
 
-from . import classifier
+from . import classifier, delivery as dl
 from .adapters import ActionError, MockHR
 from .db import Store, dumps
 from .directory import Directory
@@ -121,20 +121,43 @@ class Engine:
         self.s.q("INSERT INTO events(request_id,ts,actor,type,data_json) VALUES(?,?,?,?,?)",
                  (request_id, self.now(), actor, type_, dumps(data or {})))
 
-    def _notify(self, rid, to_id, body, kind, n=0, subject=None, channel=None):
+    SUBJECTS = {"approved": "Request #{rid} approved", "rejected": "Request #{rid} rejected", "fulfilled": "Request #{rid} is done", "stage_approved": "Request #{rid} moves on",
+                "reminder": "Reminder: request #{rid} is waiting", "escalation_1": "Escalated: request #{rid}", "escalation_2": "Escalated again: request #{rid}",
+                "escalated": "Request #{rid} was escalated", "task": "Task: request #{rid}", "parked": "Needs attention: request #{rid}", "pending_update": "Request #{rid} is still pending",
+                "assigned": "Request #{rid} has someone on it", "delay": "Request #{rid} hit a delay"}
+
+    def _decider(self, rid):
+        """Who last approved this request: whose mailbox a decision or completion email comes from."""
+        row = self.s.one("SELECT actor FROM events WHERE request_id=? AND type='approved_stage' ORDER BY id DESC LIMIT 1", (rid,)) if rid else None
+        return row["actor"] if row else None
+
+    def _notify(self, rid, to_id, body, kind, n=0, subject=None, channel=None, by=None):
+        """Write a message to the outbox. In a company one message is also written as an email row for the kinds that are emailed; each row is delivered exactly once on its own."""
         if not to_id:
             return
         req = self.req(rid) if rid else None
         ch = channel or (req["channel"] if req else "chat")
+        from_id = None
+        if req and kind in dl.FROM_REQUESTER_KINDS:
+            from_id = req["employee_id"]
+        elif req and kind in dl.FROM_DECIDER_KINDS:
+            from_id = by or self._decider(rid)
+        self._write_row(rid, req, to_id, body, kind, n, subject, ch, from_id)
+        if self.live and self.live.fanout and not self._mock_depth and ch == "chat" and kind in dl.EMAIL_KINDS:
+            self._write_row(rid, req, to_id, body, kind, n, subject, "email", from_id, suffix=":email")
+
+    def _write_row(self, rid, req, to_id, body, kind, n, subject, ch, from_id, suffix=""):
+        if not subject and rid and kind in self.SUBJECTS:
+            subject = self.SUBJECTS[kind].format(rid=rid)
         if ch == "email":
             first = (self.name(to_id) or "there").split()[0]
             body = f"Hi {first},\n\n{body}\n\n— Deskhand"
-            if req and to_id == req["employee_id"]:
+            if req and to_id == req["employee_id"] and req["channel"] == "email":  # a reply to an email the requester sent
                 subject = "Re: " + (req["email_subject"] or f"Request #{rid}")
-        key = f"{rid}:{kind}:{to_id}:{n}"
-        dstatus, dnote = self.live.status_for(kind, ch) if self.live and not self._mock_depth else ("skipped", "no delivery for this run")
-        self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at,delivery_status,delivery_note) "
-                 "VALUES(?,?,?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now(), dstatus, dnote))
+        key = f"{rid}:{kind}:{to_id}:{n}{suffix}"
+        dstatus, dnote = self.live.status_for(kind, ch, to_id) if self.live and not self._mock_depth else ("skipped", "no delivery for this run")
+        self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at,delivery_status,delivery_note,from_person) "
+                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now(), dstatus, dnote, from_id))
 
     # ---------- request helpers ----------
     def req(self, rid):
@@ -392,12 +415,12 @@ class Engine:
             emp = self.d.emp(r["employee_id"])
             self._notify(rid, nxt, self._rewrite(r2, emp, self.d.type(r["type_code"])), "approval_request", n=r["chain_index"] + 1,
                          subject=f"Approval needed: {self.d.type(r['type_code'])['name']} #{rid}")
-            self._notify(rid, r["employee_id"], f"{self.name(actor_id)} approved your request #{rid}. It now needs {self.name(nxt)}.", "stage_approved", n=r["chain_index"])
+            self._notify(rid, r["employee_id"], f"{self.name(actor_id)} approved your request #{rid}. It now needs {self.name(nxt)}.", "stage_approved", n=r["chain_index"], by=actor_id)
             return self.req(rid)
         self.s.q("UPDATE requests SET decided_at=? WHERE id=?", (self.now(), rid))
         self._set_status(rid, "APPROVED", actor_id, "all approvals given")
         if self.d.type(r["type_code"])["fulfilment_kind"] == "auto_action":
-            self._notify(rid, r["employee_id"], f"Your request #{rid} was approved by {self.name(actor_id)}.", "approved")
+            self._notify(rid, r["employee_id"], f"Your request #{rid} was approved by {self.name(actor_id)}.", "approved", by=actor_id)
         self._start_fulfilment(rid, approved_by=actor_id)
         return self.req(rid)
 
@@ -413,7 +436,7 @@ class Engine:
         clean, _ = classifier.redact(reason.strip())
         self.s.q("UPDATE requests SET rejection_reason=?, decided_at=? WHERE id=?", (clean, self.now(), rid))
         self._set_status(rid, "REJECTED", actor_id, clean)
-        self._notify(rid, r["employee_id"], f"Your request #{rid} was rejected by {self.name(actor_id)}. Reason: {clean}", "rejected")
+        self._notify(rid, r["employee_id"], f"Your request #{rid} was rejected by {self.name(actor_id)}. Reason: {clean}", "rejected", by=actor_id)
         return self.req(rid)
 
     def mark_pending(self, rid, actor_id, note=""):
@@ -442,7 +465,7 @@ class Engine:
             self.audit(rid, actor_id, "unauthorized_action_refused", {"action": "done"})
             raise NotAuthorized("only the assigned fulfiller or an admin can mark this done")
         self._set_status(rid, "FULFILLED", actor_id, "marked done")
-        self._notify(rid, r["employee_id"], f"Your request #{rid} is ready: {self.name(actor_id)} has completed it.", "fulfilled")
+        self._notify(rid, r["employee_id"], f"Your request #{rid} is ready: {self.name(actor_id)} has completed it.", "fulfilled", by=actor_id)
         self._set_status(rid, "CLOSED", "system")
         return self.req(rid)
 
@@ -460,7 +483,7 @@ class Engine:
         note = " Do not send credentials in chat or email; grant access in the tool, then click Done." if r["type_code"] in ("software_seat", "access") else ""
         self._notify(rid, ful["id"], f"Task for request #{rid}: {t['name']} for {emp['name']}.{note}\nClick Done when finished.", "task", subject=f"Task: {t['name']} #{rid}")
         lead = f"Your request #{rid} was approved by {self.name(approved_by)}. " if approved_by else ""
-        self._notify(rid, emp["id"], f"{lead}{ful['name']} will take care of it. I'll tell you when it's done.", "approved" if lead else "assigned")
+        self._notify(rid, emp["id"], f"{lead}{ful['name']} will take care of it. I'll tell you when it's done.", "approved" if lead else "assigned", by=approved_by)
 
     def _run_leave(self, rid):
         r = self.req(rid)

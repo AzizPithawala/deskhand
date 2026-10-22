@@ -210,7 +210,8 @@ def test_reviewed_marks_and_the_checklist_follow_the_data(team):
     owner.post(f"/api/people/{boss.uid}", {"manager_id": owner.uid})
     ann.post("/api/ingest", {"text": "I need Friday and Monday off, family function.", "source_event_id": "c"})
     c = owner.get("/api/setup/checklist").json()
-    assert [s["done"] for s in c["steps"]] == [True, True, True, True, False, True] and c["done"] == 5 and c["total"] == 6 and c["dismissed"] is False
+    assert [s["done"] for s in c["steps"]] == [True, True, True, True, False, True, False] and c["done"] == 5 and c["total"] == 7 and c["dismissed"] is False
+    assert c["steps"][6]["key"] == "live" and c["steps"][6]["detail"].startswith("Rehearsal: everything goes only to Owner of Acme Ltd")
     assert owner.post("/api/setup/checklist/dismiss").status_code == 200 and owner.get("/api/setup/checklist").json()["dismissed"] is True
 
 

@@ -178,3 +178,13 @@ VERIFIED: Gmail sent from each person's own mailbox
   Revoke the old connection when someone reconnects.
 - Connecting an outside Google account can show "ask plugs@viasocket.com for permission": viaSocket's Google app is in testing mode, so only added test users can connect until it is verified by Google.
 UNVERIFIED: Keka (no test account); viaSocket Table (not needed).
+
+
+## PHASE 3 PREPARATION (2026-10-22): documented, NOT yet verified with a real call
+Read from viaSocket's public Slack document (`documentation/rowbu58rc.md` and its event pages, no sign-in, no action run):
+- Send Direct Message: action_id `rowovgwtt9u4`, version V3, action_version_id `rowa5mg9fywy`. inputData `{userId, content, isScheduledMessage:"no"|"yes", post_at?, bot_details?{bot_name, ...}}`;
+  `userId` is "Select or Enter the user's unique ID". The sample result is Slack's own `{ok, ts, channel:"D...", message}` (same shape as Send Message). Our adapter (`slack_dm`) sends `userId`, `content`, `isScheduledMessage`, `bot_details.bot_name`.
+- Send Interactive Message: action_id `rowbevmtsy7h`, version V61. inputData `{messageto:"user"|"channel", userId?, channel_id?, content, operation:"Approval"|"Form", buttons?: Record<string,string>, bot_details?}`:
+  an approval message can be addressed to a user directly (so spike S3 is likely to pass).
+- The Slack "Send Message" action also accepts a user as the destination, but its input shape was not documented in the pages read.
+UNVERIFIED until spike S1: that a DM by Slack user id is delivered and answers Slack's `ok:true` with a `ts`; what a wrong or unknown user id answers.

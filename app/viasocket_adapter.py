@@ -22,16 +22,14 @@ USER_AGENT = "deskhand/0.1 (+viasocket-adapter)"  # Python's default urllib agen
 APPS = {
     "slack": {
         "service_id": "rowbu58rc", "name": "Slack", "icon": "https://stuff.thingsofbrand.com/slack.com/images/img668216333e_slack.jpg",
-        "actions": {"send_message": ("rowj2u3wc8h5", "row1jrbor"), "get_user": ("rowrubgppa5r", "rowtstp3fqlh")},
-        # chosen once by the company admin in a picker filled from their own workspace
-        "settings": [{"key": "channel_id", "label": "Notification channel", "kind": "picker", "action": "send_message", "field": "destination.channel_id",
-                      "existing": {"destination": {"messageto": "channel"}}, "required": True}],
+        # send_dm: catalog ids from viaSocket's public Slack document (action rowovgwtt9u4, V3). A real DM has NOT been verified yet (spike S1).
+        "actions": {"send_message": ("rowj2u3wc8h5", "row1jrbor"), "get_user": ("rowrubgppa5r", "rowtstp3fqlh"), "send_dm": ("rowa5mg9fywy", "rowovgwtt9u4")},
+        "settings": [],  # people are messaged one by one by Slack user id; no shared channel to choose any more
     },
     "gmail": {
         "service_id": "rowo0bqrhj5g", "name": "Gmail", "icon": "https://stuff.thingsofbrand.com/gmail.com/images/imge_idrA5FDGTH_1763454052978.svg",
         "actions": {"send_email": ("rowwj0sfmhub", "rowogelpy0h6")},
-        "settings": [{"key": "from", "label": "Send from mailbox", "kind": "picker", "action": "send_email", "field": "from", "existing": {}, "required": False},
-                     {"key": "notify_email", "label": "Notification email", "kind": "email", "required": True}],
+        "settings": [{"key": "from", "label": "Send from mailbox", "kind": "picker", "action": "send_email", "field": "from", "existing": {}, "required": False}],
     },
 }
 
@@ -305,6 +303,9 @@ class Integration:
     def slack_send(self, text):
         raise NotImplementedError
 
+    def slack_dm(self, user_id, text):
+        raise NotImplementedError
+
     def gmail_send(self, to, subject, body):
         raise NotImplementedError
 
@@ -359,6 +360,13 @@ class ViaSocketIntegration(Integration):
             r.data = {"ts": r.data.get("ts"), "channel": r.data.get("channel")}
         return r
 
+    def slack_dm(self, user_id, text):
+        """A direct message to one workspace member by Slack user id (from our directory, never from message text). UNVERIFIED until spike S1."""
+        r = self._run("slack", "send_dm", {"userId": user_id, "content": text[:3000], "isScheduledMessage": "no", "bot_details": {"bot_name": "Deskhand"}}, _slack_sent_ok)
+        if r.ok:
+            r.data = {"ts": r.data.get("ts"), "channel": r.data.get("channel")}
+        return r
+
     def gmail_send(self, to, subject, body):
         c, err = self._conn("gmail")
         if err:
@@ -370,6 +378,11 @@ class ViaSocketIntegration(Integration):
         if r.ok:
             r.data = {"id": r.data.get("id"), "threadId": r.data.get("threadId")}
         return r
+
+
+def personal_tenant(org_id, person_id):
+    """The viaSocket identity of one person's own connections (their mailbox) inside a company."""
+    return f"{org_id}:{person_id}"
 
 
 def get_integration(store, tenant=None):
