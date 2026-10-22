@@ -87,6 +87,9 @@ class Store:
         for col, decl in OUTBOX_MIGRATION.items():
             if col not in have:
                 self.conn.execute(f"ALTER TABLE outbox ADD COLUMN {col} {decl}")
+        if "read_at" not in have:  # messages from before notifications existed are not "new": a company must not open to hundreds of unread
+            self.conn.execute("UPDATE outbox SET read_at=created_at WHERE read_at IS NULL")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS outbox_person ON outbox(to_person, id)")
 
     def q(self, sql, args=()):
         with self.lock:

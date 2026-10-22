@@ -10,13 +10,13 @@ import threading
 import time
 from dataclasses import dataclass
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from . import accounts as ac, chaos, delivery as dl, setup as st, viasocket_adapter as vs, viasocket_ai as vsai
-from . import slack_decisions as sd
+from . import notifications as nt, slack_decisions as sd
 from .ledger import num
 from .engine import InvalidTransition, NotAuthorized, Refused
 from .registry import DEMO_ORG_ID, open_platform
@@ -446,7 +446,7 @@ def clock(ctx: Ctx = Depends(auth)):
     banners = [] if (ctx.is_demo or not ctx.is_admin) else list(d["problems"]) + (
         [f"Delivery paused: the daily cap of {d['cap']} messages is reached ({d['used_today']}). Messages stay in the outbox until tomorrow (UTC)."] if d["capped"] else [])
     return {"now": ctx.engine.now(), "banners": banners, "notes": d["notes"] if (ctx.is_admin and not ctx.is_demo) else [], "demo": ctx.is_demo, "mode": d["mode"],
-            "delivery": {"used_today": d["used_today"], "cap": d["cap"], "capped": d["capped"]}}
+            "unread": nt.unread_count(ctx.engine, ctx.uid), "delivery": {"used_today": d["used_today"], "cap": d["cap"], "capped": d["capped"]}}
 
 
 @app.post("/api/admin/breaker_reset")
@@ -952,6 +952,54 @@ def delivery_retry(oid: int, ctx: Ctx = Depends(admin)):
     except ValueError as ex:
         raise HTTPException(409, str(ex))
     return ctx.engine.live.deliver_pending()
+
+
+# ---------------- Notifications: each person's own list, read marks and preferences ----------------
+class ReadIn(BaseModel):
+    ids: list[int] | None = None
+    request_id: int | None = None
+    all: bool = False
+
+
+class PrefsIn(BaseModel):
+    prefs: dict
+
+
+@app.get("/api/notifications")
+def notifications_list(unread: bool = False, category: str | None = None, type_: str | None = Query(None, alias="type"), status: str | None = None, channel: str | None = None,
+                       since: float | None = None, until: float | None = None, q: str | None = None, before: int | None = None, limit: int = 30, ctx: Ctx = Depends(auth)):
+    """Only ever the signed-in person's own messages: there is no way to name someone else."""
+    f = {"unread": unread, "category": category, "type": type_, "status": status, "channel": channel, "since": since, "until": until, "q": q, "before": before, "limit": limit}
+    return {**_val(nt.entries, ctx.engine, ctx.uid, f), "categories": [{"code": c, "title": t} for c, t, _ in nt.CATEGORIES]}
+
+
+@app.post("/api/notifications/read")
+def notifications_read(b: ReadIn, ctx: Ctx = Depends(auth)):
+    changed = nt.mark_read(ctx.engine, ctx.uid, ids=b.ids, request_id=b.request_id, everything=b.all)
+    return {"changed": changed, "unread": nt.unread_count(ctx.engine, ctx.uid)}
+
+
+def _prefs_view(ctx):
+    now = nt.get_prefs(ctx.engine.s, ctx.uid)
+    return {"categories": [{"code": c, "title": t, "description": nt.DESCRIPTIONS[c], **now[c], "protected": c == nt.PROTECTED} for c, t, _ in nt.CATEGORIES],
+            "mode": ctx.engine.live.mode(), "demo": ctx.is_demo}
+
+
+@app.get("/api/notifications/preferences")
+def notification_prefs(ctx: Ctx = Depends(auth)):
+    return _prefs_view(ctx)
+
+
+@app.post("/api/notifications/preferences")
+def notification_prefs_save(b: PrefsIn, ctx: Ctx = Depends(auth)):
+    if ctx.is_demo:
+        raise HTTPException(403, "This is switched off in the demo company.")
+    before = nt.get_prefs(ctx.engine.s, ctx.uid)
+    after = _val(nt.set_prefs, ctx.engine.s, ctx.uid, b.prefs)
+    changed = sorted(c for c in after if after[c] != before[c])
+    if changed:
+        ctx.engine.audit(None, ctx.uid, "notification_prefs_changed", {"categories": changed})
+    return _prefs_view(ctx)
 
 
 # ---------------- Understanding requests with viaSocket AI (admin switch, off by default) ----------------
