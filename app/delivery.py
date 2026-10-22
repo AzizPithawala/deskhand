@@ -8,6 +8,7 @@ import os
 import re
 import threading
 import time
+from urllib.parse import urlsplit
 from contextlib import contextmanager
 
 from . import viasocket_adapter as vs
@@ -98,7 +99,14 @@ class Delivery:
             out.append("Slack not connected: notifications are not being delivered")
         if not self._conn("gmail"):
             out.append("Gmail not connected: email notifications are not being delivered")
+        if not self.public_address():
+            out.append("Deskhand's public address is not set (DESKHAND_BASE_URL): links in Slack messages and emails would point to this computer, and Slack buttons cannot work")
         return out
+
+    def public_address(self):
+        """False when links would point to the machine itself instead of a place colleagues can open."""
+        host = (urlsplit(self.base_url).hostname or "").lower()
+        return urlsplit(self.base_url).scheme in ("http", "https") and host not in ("", "localhost", "127.0.0.1", "0.0.0.0", "::1")
 
     def notes(self):
         """Things an admin should know that are not faults: which mode is on, and who has no Slack account matched."""

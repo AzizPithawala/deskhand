@@ -208,3 +208,17 @@ def test_the_rehearsal_note_and_summary_tell_an_admin_what_is_on(live):
     assert s["mode"] == "rehearsal" and s["rehearsal_person"] == {"id": "e10", "name": "Arjun Patel"} and "Rehearsal" in s["notes"][0] and s["slack_matched"] == 10 and s["people"] == 10
     d.set_mode("live", "e10")
     assert d.summary()["mode"] == "live" and d.summary()["notes"] == []
+
+
+def test_a_missing_public_address_is_a_banner_for_admins_because_links_would_point_at_localhost(env):
+    e, fake = Engine(api_key=""), Fake()
+    setup_apps(e)
+    d = e.live = dl.Delivery(e, lambda: vs.ViaSocketIntegration(e.s, "acme-demo", vs.VsClient("acme-demo", fake)), tenant="acme-demo")  # the default base address
+    assert d.base_url == "http://localhost:8000" and not d.public_address()
+    assert d.problems() == ["Deskhand's public address is not set (DESKHAND_BASE_URL): links in Slack messages and emails would point to this computer, and Slack buttons cannot work"]
+    for ok_url in ("https://deskhand.example.com", "http://deskhand.test", "https://deskhand.example.com:8443/"):
+        d.base_url = ok_url.rstrip("/")
+        assert d.public_address() and d.problems() == []
+    for bad in ("http://127.0.0.1:8000", "http://0.0.0.0", "ftp://x.example", "", "not a url"):
+        d.base_url = bad
+        assert not d.public_address()
