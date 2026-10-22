@@ -87,3 +87,15 @@ def test_chaos_in_the_demo_never_touches_real_companies_and_never_sends(two):
         assert demo.post(f"/api/chaos/{name}").status_code == 200
     assert a.get("/api/requests").json() == [] and b.get("/api/dashboard").json()["total"] == 0
     assert not demo.engine.s.all("SELECT * FROM outbox WHERE delivery_status='pending'")
+
+
+def test_preflight_walks_every_company_and_prints_names_only(two, monkeypatch):
+    from app import preflight
+    main, a, b, *_ = two
+    monkeypatch.setenv("DESKHAND_SIGNUP_CODES", "code-1,code-2")
+    rows = preflight.report_all(main.DATA_DIR)
+    assert {"-- One Ltd", "-- Two Ltd", "-- Acme Demo"} <= {k for k, _ in rows}
+    blob = json.dumps(rows)
+    for secret in ("code-1", "code-2", "a@one.test", a.uid, a.org_id, b.org_id):
+        assert secret not in blob
+    assert [v for k, v in rows if k == "Slack connected"] == ["NO", "NO"]  # the two real companies; the demo company is never checked

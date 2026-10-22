@@ -4,7 +4,7 @@ import subprocess
 import sqlite3
 import sys
 
-from . import delivery as dl, viasocket_adapter as vs
+from . import accounts as ac, delivery as dl, viasocket_adapter as vs
 from .db import Store
 
 
@@ -18,7 +18,7 @@ def _git():
 
 
 def report(db_path=None, tenant=None):
-    db_path = db_path or os.environ.get("DESKHAND_DB", "deskhand.db")
+    db_path = db_path or os.environ.get("DESKHAND_DB", "deskhand.db")  # one company's file; report_all() walks every company
     tenant = tenant or os.environ.get("DESKHAND_TENANT_ID", "acme-demo")
     yn = lambda b: "yes" if b else "NO"
     lines = [("viaSocket values set on the server", yn(vs.VsClient(tenant).configured())),
@@ -44,8 +44,31 @@ def report(db_path=None, tenant=None):
     return lines
 
 
+GLOBAL = ("viaSocket values set on the server", "password gate configured", "commit checked out")
+
+
+def report_all(data_dir=None):
+    """Every company in the data directory: sign-up is open or closed, and per company whether delivery is set up. Names only, never ids or secrets."""
+    data_dir = data_dir or os.environ.get("DESKHAND_DATA_DIR", ".deskhand")
+    yn = lambda b: "yes" if b else "NO"
+    codes = [c for c in os.environ.get("DESKHAND_SIGNUP_CODES", "").split(",") if c.strip()]
+    lines = [("viaSocket values set on the server", yn(vs.VsClient("preflight").configured())),
+             ("sign-up codes set (registration open)", yn(bool(codes))),
+             ("shared password gate (optional)", "on" if os.environ.get("DESKHAND_DEMO_PASSWORD") else "off")]
+    plat = os.path.join(data_dir, "platform.db")
+    if not os.path.exists(plat):
+        return lines + [("companies", "none yet (created on first start)"), ("commit checked out", _git())]
+    orgs = ac.Accounts(Store(plat, schema=ac.SCHEMA)).list_orgs()
+    lines.append(("companies", str(len(orgs))))
+    for org in orgs:
+        lines.append((f"-- {org['name']}", "demo company: nothing is ever sent" if org["is_demo"] else ""))
+        if not org["is_demo"]:
+            lines += [(k, v) for k, v in report(os.path.join(data_dir, "orgs", org["id"] + ".db"), org["id"]) if k not in GLOBAL and k != "database"]
+    return lines + [("commit checked out", _git())]
+
+
 if __name__ == "__main__":
     vs.load_dotenv()
-    for k, v in report():
+    for k, v in report_all():
         print(f"{k + ':':38} {v}")
     sys.exit(0)
