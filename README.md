@@ -13,7 +13,7 @@ pip install -r requirements-dev.txt
 DESKHAND_SIGNUP_CODES=any-code-you-like make dev        # or: uvicorn app.main:app --reload --port 8000
 ```
 Open http://localhost:8000. Without `DESKHAND_SIGNUP_CODES` registration is closed and only "Try the demo" works. Needs Python 3.11+. Run the tests with
-`make test` (235 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
+`make test` (269 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
 Requests are understood by a deterministic rules classifier. An admin of a real company can switch on viaSocket AI (a Claude model, no model key needed)
 on the Health page; it only proposes the request type and details, waits at most 25 seconds, falls back to the rules on any failure, and never sees salary or
 payroll messages. (`requirements.txt` is the deploy list; `requirements-dev.txt` adds pytest.)
@@ -43,6 +43,12 @@ Admins open **Setup** (and **Integrations**, **People**) from the sidebar; on a 
 - **Routing test.** Pick a person, a type and optionally a cost or resource to see the approvers, the fulfiller, reminder and escalation times and warnings (empty role, deactivated holder, no manager). It calls the same functions as a real request, and a test compares the two.
 - **Checklist.** Six steps that tick themselves from the data: invite people, set managers, choose role holders, review the request types ("Looks right"), connect Slack and Gmail, send a test request.
 - The **demo company** shows its prepared rules read-only. Under the hood: tables `roles`, `type_rules`, `policies` in each company's own database file, merged over the template by `Directory.for_company`; `tests/test_setup_directory.py` runs the old hard-coded router against the new data-driven one for over 50,000 combinations.
+
+## Leave record (Phase 3, step 1)
+A real company keeps leave in its own **append-only ledger** (database triggers forbid editing or deleting a line). Each person gets the yearly allowance (default casual 12, sick 8, editable under Setup, Leave) the first time leave is looked at in a calendar year; leave taken
+and an admin's corrections (Setup, Leave, Adjust: plus or minus days with a reason) are further lines, each with who and why. A balance is the sum of a person's lines for the year; a leave is keyed by its request, so a retry can never deduct twice. Only Monday to Friday count, a half day is 0.5,
+and the reader now knows whether two dates are a range ("2 Nov to 6 Nov") or separate days ("Friday and Monday"). The approver's card shows the working days and the balance before and after, and warns about a shortfall or an overlap; the approver decides and the balance may go negative (shown in red).
+Weekend-only dates ask again instead of reaching an approver. Everyone has a **Leave** page with their balance and history; policy questions answer from the ledger. The demo company keeps its prepared mock HR. Not done yet: cancelling an applied leave, accrual, holidays, carry-forward.
 
 ## What works (and is tested)
 - Lifecycle: submitted, needs info, pending approval (one or two approvers), approved, rejected (reason mandatory),

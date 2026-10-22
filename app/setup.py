@@ -361,7 +361,7 @@ def simulate(d, person_id, code, estimated_cost=None, resource=None):
     else:
         out["outcome"] = "no_approval"
     if t.get("fulfilment_kind") == "auto_action":
-        out["fulfilment"] = "Deskhand applies it in the HR system"
+        out["fulfilment"] = "Deskhand applies it in the HR system" if d.balances else "Deskhand records it in the company's leave record"
     else:
         ful = d.resolve_rule(t.get("fulfiller_rule"), e) or d.role_holder("admin")
         out["fulfiller"], out["fulfilment"] = nm(ful), f"{ful['name'] if ful else 'no one'} does the task and clicks Done"

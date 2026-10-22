@@ -30,6 +30,7 @@
     <symbol id="i-admin" viewBox="0 0 24 24"><path d="M4 4.5h6.5v6.5H4zM13.5 4.5H20v6.5h-6.5zM4 13.5h6.5V20H4zM13.5 13.5H20V20h-6.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
     <symbol id="i-setup" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M13 7a2 2 0 1 0 4 0 2 2 0 0 0-4 0zM7 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3.5v5M15 3.5v5M6.5 8.5h11v3a5.5 5.5 0 0 1-11 0zM12 17v3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-leave" viewBox="0 0 24 24"><path d="M4.5 6.5h15v13h-15zM4.5 10.5h15M8.5 4v4M15.5 4v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-audit" viewBox="0 0 24 24"><path d="M6 3.5h12v17H6zM9 8h6M9 12h6M9 16h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </defs>
 </svg>
@@ -51,6 +52,7 @@
       <a href="#ask" data-page="ask"><svg aria-hidden="true"><use href="#i-ask"/></svg><span>Ask</span></a>
       <a href="#mine" data-page="mine"><svg aria-hidden="true"><use href="#i-mine"/></svg><span>My requests</span></a>
       <a href="#needs" data-page="needs"><svg aria-hidden="true"><use href="#i-needs"/></svg><span>Needs you</span><span class="badge" id="badge" hidden></span></a>
+      <a href="#leave" data-page="leave" data-real><svg aria-hidden="true"><use href="#i-leave"/></svg><span>Leave</span></a>
       <a href="#admin" data-page="admin" data-admin data-hub hidden><svg aria-hidden="true"><use href="#i-admin"/></svg><span>Admin</span></a>
       <a href="#setup" data-page="setup" data-admin data-desk hidden><svg aria-hidden="true"><use href="#i-setup"/></svg><span>Setup</span></a>
       <a href="#people" data-page="people" data-admin data-desk hidden><svg aria-hidden="true"><use href="#i-people"/></svg><span>People</span></a>
@@ -122,6 +124,11 @@
     <div class="err" id="td-err" role="alert"></div>
     <div class="actions"><button class="btn quiet" type="button" id="td-reset">Reset to default</button><button class="btn" type="button" id="td-cancel">Cancel</button><button class="btn primary" id="td-ok">Save</button></div>
   </form>
+</dialog>
+
+<dialog id="idlg" aria-labelledby="idlg-title">
+  <div class="stack"><h2 id="idlg-title"></h2><div id="idlg-body"></div></div>
+  <div class="actions"><button class="btn" id="idlg-close">Close</button></div>
 </dialog>
 
 <dialog id="ldlg" aria-labelledby="ldlg-title">

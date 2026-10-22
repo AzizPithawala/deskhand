@@ -41,10 +41,21 @@ CREATE TABLE IF NOT EXISTS type_rules(
   code TEXT PRIMARY KEY, rules_json TEXT NOT NULL DEFAULT '{}', reviewed_at REAL, updated_at REAL, updated_by TEXT);
 CREATE TABLE IF NOT EXISTS policies(
   key TEXT PRIMARY KEY, title TEXT NOT NULL, text TEXT NOT NULL, updated_at REAL);
+CREATE TABLE IF NOT EXISTS leave_types(
+  code TEXT PRIMARY KEY, name TEXT NOT NULL, yearly_days REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS leave_ledger(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, person_id TEXT NOT NULL, leave_type TEXT NOT NULL, year INTEGER NOT NULL, days REAL NOT NULL,
+  kind TEXT NOT NULL, request_id INTEGER, ref TEXT UNIQUE, group_ref TEXT, dates_json TEXT DEFAULT '[]', note TEXT, actor TEXT, created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS leave_ledger_person ON leave_ledger(person_id, leave_type, year);
+CREATE INDEX IF NOT EXISTS leave_ledger_group ON leave_ledger(group_ref);
+CREATE TRIGGER IF NOT EXISTS leave_ledger_no_update BEFORE UPDATE ON leave_ledger
+  BEGIN SELECT RAISE(ABORT, 'leave records are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS leave_ledger_no_delete BEFORE DELETE ON leave_ledger
+  BEGIN SELECT RAISE(ABORT, 'leave records are append-only'); END;
 """
 OUTBOX_MIGRATION = {"delivery_status": "TEXT DEFAULT 'skipped'", "delivery_attempts": "INTEGER DEFAULT 0", "delivery_error": "TEXT",
                     "delivery_next_at": "REAL", "delivered_at": "REAL", "delivery_note": "TEXT"}
-# "connections", "delivery_ledger", "roles", "type_rules" and "policies" are deliberately NOT here: a demo reset must not disconnect apps, reset the daily live-delivery cap or undo company setup
+# "connections", "delivery_ledger", "roles", "type_rules", "policies", "leave_types" and "leave_ledger" are deliberately NOT here: a demo reset must not disconnect apps, reset the daily live-delivery cap or undo company setup
 TABLES = ["settings", "inbound_events", "requests", "events", "action_runs", "outbox"]
 
 

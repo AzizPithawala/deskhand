@@ -49,11 +49,11 @@ def details_view(d):
     """Readable (label, value) pairs for people. No Python reprs, no empty values."""
     rows = []
     for k, v in d.items():
-        if v in (None, "", [], False):
+        if k in ("date_range", "leave_check") or v in (None, "", [], False) or (k == "balance" and d.get("leave_check")):
             continue
         label = LABELS.get(k, k.replace("_", " ").capitalize())
         if k == "dates":
-            val = ", ".join(_day(x) for x in v)
+            val = (" to " if d.get("date_range") and len(v) == 2 else ", ").join(_day(x) for x in v)
         elif k == "balance":
             label, val = "Leave balance", ", ".join(f"{a} {b}" for a, b in v.items())
         elif v is True:
@@ -61,6 +61,11 @@ def details_view(d):
         else:
             val = ", ".join(map(str, v)) if isinstance(v, list) else str(v)
         rows.append((label, val))
+    chk = d.get("leave_check")
+    if chk:  # what the leave would do to the balance, for the approver
+        rows.append(("Working days", str(chk["days"])))
+        rows.append(("Balance", f"{chk['type']} {chk['balance']} → {chk['after']}"))
+        rows += [("Check", w) for w in chk.get("warnings", [])]
     return rows
 
 
@@ -326,7 +331,15 @@ class Engine:
             self._notify(rid, emp["id"], self._answer_policy(emp, r["raw_text"]), "answer")
             self._set_status(rid, "CLOSED", "system")
             return
-        if r["type_code"] == "leave" and self.d.balances:
+        if r["type_code"] == "leave" and getattr(self.hr, "records_balances", False):  # a company: the balance comes from its own ledger
+            chk = self.hr.check(emp["id"], r["details"])
+            r["details"]["balance"], r["details"]["leave_check"] = self.hr.list_leave_balances(emp["id"]), chk
+            self.s.q("UPDATE requests SET details_json=? WHERE id=?", (dumps(r["details"]), rid))
+            if chk["days"] == 0:  # only weekend days: there is nothing to take off
+                self._set_status(rid, "NEEDS_INFO", "system", "no working days in the dates")
+                self._reply(emp, r["channel"], "Those dates fall on a weekend, so there is no working day to take off. Which working days do you need off?", rid)
+                return
+        elif r["type_code"] == "leave" and self.d.balances:
             bal = self.hr.list_leave_balances(emp["id"])
             r["details"]["balance"] = bal
             self.s.q("UPDATE requests SET details_json=? WHERE id=?", (dumps(r["details"]), rid))
@@ -352,7 +365,7 @@ class Engine:
         t = text.lower()
         hr = self._hr_contact(emp)
         if re.search(r"how many|balance|left", t):
-            if not self.d.balances:  # a company has no leave ledger yet (Phase 3): say so rather than invent figures
+            if not (self.d.balances or getattr(self.hr, "records_balances", False)):  # no records and no prepared figures: say so rather than invent them
                 return f"I can't see leave balances yet. Please ask {hr['name'] if hr else 'HR'}."
             b = self.hr.list_leave_balances(emp["id"])
             return "Your leave balance: " + ", ".join(f"{k} {v}" for k, v in b.items()) + "."
@@ -458,12 +471,16 @@ class Engine:
             existing = self.hr.find_leave_by_ref(ref)  # read before write: a lost response must not apply the leave twice
             if existing:
                 return existing
-            return self.hr.create_leave_request(r["employee_id"], d.get("dates"), d.get("leave_type"), d.get("reason"), ref, d.get("half_day", False))
+            return self.hr.create_leave_request(r["employee_id"], d.get("dates"), d.get("leave_type"), d.get("reason"), ref, d.get("half_day", False), date_range=d.get("date_range", False))
 
         res = self.run_action(rid, "apply_leave", fn)
         if res is not None:
-            self._set_status(rid, "FULFILLED", "system", "leave applied in HR system")
-            self._notify(rid, r["employee_id"], f"Done: your leave ({', '.join(d.get('dates', []))}) has been applied in the HR system.", "fulfilled")
+            self._set_status(rid, "FULFILLED", "system", f"leave {self.hr.applied}")
+            left = ""
+            if getattr(self.hr, "records_balances", False):
+                left = f" {d.get('leave_type', 'casual').capitalize()} leave left: {self.hr.list_leave_balances(r['employee_id']).get(d.get('leave_type', 'casual'), 0)}."
+            shown = (" to " if d.get("date_range") and len(d.get("dates", [])) == 2 else ", ").join(_day(x) for x in d.get("dates", []))
+            self._notify(rid, r["employee_id"], f"Done: your leave ({shown}) has been {self.hr.applied}.{left}", "fulfilled")
             self._set_status(rid, "CLOSED", "system")
 
     def run_action(self, rid, step, fn, max_attempts=3):
@@ -495,7 +512,7 @@ class Engine:
                 admin = self.d.role_holder("admin")
                 self._notify(rid, admin["id"] if admin else None, f"Request #{rid} is parked: {step} failed after {attempts} attempt(s): {ex}. Use Replay once the system is back.",
                              "parked", subject=f"Needs attention: request #{rid}")
-                self._notify(rid, self.req(rid)["employee_id"], f"Your request #{rid} hit a delay in the HR system. It's with the admin and nothing is lost.", "delay")
+                self._notify(rid, self.req(rid)["employee_id"], f"Your request #{rid} hit a delay in {self.hr.label}. It's with the admin and nothing is lost.", "delay")
                 return None
         return None
 

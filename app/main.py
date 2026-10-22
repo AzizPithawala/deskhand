@@ -2,6 +2,7 @@
 database file; admin, demo-only and visibility rules are enforced here, in code."""
 import contextlib
 import hmac
+import json
 import logging
 import os
 import re
@@ -15,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from . import accounts as ac, chaos, delivery as dl, setup as st, viasocket_adapter as vs, viasocket_ai as vsai
+from .ledger import num
 from .engine import InvalidTransition, NotAuthorized, Refused
 from .registry import DEMO_ORG_ID, open_platform
 
@@ -351,7 +353,8 @@ def state(ctx: Ctx = Depends(auth)):
     people = list(ctx.engine.d.employees.values())
     if not ctx.is_admin:  # colleagues' contact details are for admins
         people = [{k: p.get(k) for k in ("id", "name", "role", "roles", "department", "manager_id", "active")} for p in people]
-    return {"employees": people, "types": list(ctx.engine.d.types.values()), "now": ctx.engine.now()}
+    hr = ctx.engine.hr
+    return {"employees": people, "types": list(ctx.engine.d.types.values()), "now": ctx.engine.now(), "hr_label": hr.label, "hr_applied": hr.applied}
 
 
 @app.post("/api/ingest")
@@ -679,6 +682,85 @@ def setup_checklist(ctx: Ctx = Depends(admin)):
 def setup_checklist_dismiss(ctx: Ctx = Depends(real_admin)):
     ctx.engine.s.set_setting("checklist_dismissed", 1)
     return {"ok": True}
+
+
+# ---------------- Leave: the company's own ledger. A person sees their own; admins manage allowances and corrections. ----------------
+class LeaveAllowance(BaseModel):
+    yearly_days: float
+
+
+class LeaveAdjust(BaseModel):
+    person_id: str
+    leave_type: str
+    days: float
+    note: str
+
+
+def _entry(e, r):
+    return {"id": r["id"], "type": r["leave_type"], "year": r["year"], "days": num(r["days"]), "kind": r["kind"], "request_id": r["request_id"],
+            "dates": json.loads(r["dates_json"] or "[]"), "note": r["note"] or "", "by": e.name(r["actor"]) if r["actor"] not in (None, "system") else "Deskhand", "at": r["created_at"]}
+
+
+def _ledger(ctx):
+    led = getattr(ctx.engine, "ledger", None)
+    if led is None:
+        raise HTTPException(409, "The demo company uses prepared figures, not a ledger.")
+    return led
+
+
+def _val(fn, *a):
+    try:
+        return fn(*a)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/leave/me")
+def leave_me(ctx: Ctx = Depends(auth)):
+    led = getattr(ctx.engine, "ledger", None)
+    if led is None:  # the demo: its prepared balances, no history
+        return {"demo": True, "year": None, "types": [{"code": k, "name": k.capitalize() + " leave", "yearly_days": None, "balance": v} for k, v in ctx.engine.hr.list_leave_balances(ctx.uid).items()], "entries": []}
+    names = {t["code"]: t["name"] for t in led.types()}
+    return {"demo": False, "year": led.year(), "types": [{"code": t["code"], "name": t["name"], "yearly_days": num(t["yearly_days"]), "balance": num(led.balance(ctx.uid, t["code"]))} for t in led.types()],
+            "entries": [{**_entry(ctx.engine, r), "type_name": names.get(r["leave_type"], r["leave_type"])} for r in led.entries(ctx.uid)]}
+
+
+@app.get("/api/setup/leave")
+def setup_leave(ctx: Ctx = Depends(admin)):
+    led = getattr(ctx.engine, "ledger", None)
+    if led is None:
+        return {"demo": True, "types": [], "people": []}
+    people = [{"id": e["id"], "name": e["name"], "balances": {k: num(v) for k, v in led.balances(e["id"]).items()}} for e in ctx.engine.d.employees.values() if e["active"]]
+    return {"demo": False, "year": led.year(), "types": [{"code": t["code"], "name": t["name"], "yearly_days": num(t["yearly_days"])} for t in led.types()], "people": people}
+
+
+@app.post("/api/setup/leave/{code}")
+def setup_leave_allowance(code: str, b: LeaveAllowance, ctx: Ctx = Depends(real_admin)):
+    old = _val(_ledger(ctx).set_yearly, code, b.yearly_days)
+    ctx.engine.audit(None, ctx.uid, "setup_changed", {"area": "leave", "code": code, "changes": {"yearly_days": [num(old), num(b.yearly_days)]}})
+    return setup_leave(ctx)
+
+
+@app.post("/api/leave/adjust")
+def leave_adjust(b: LeaveAdjust, ctx: Ctx = Depends(real_admin)):
+    led = _ledger(ctx)
+    person = ctx.engine.d.emp(b.person_id)
+    if not person or not person["active"]:
+        raise HTTPException(422, "Choose someone from this company who has joined and is active.")
+    note = re.sub(r"\s+", " ", re.sub(r"[\x00-\x1f\x7f]", " ", b.note or "")).strip()
+    if not 3 <= len(note) <= 200:
+        raise HTTPException(422, "Say why in 3 to 200 characters: the record keeps the reason.")
+    balance = _val(led.adjust, b.person_id, b.leave_type, b.days, note, ctx.uid)
+    ctx.engine.audit(None, ctx.uid, "leave_adjusted", {"person": b.person_id, "type": b.leave_type, "days": num(b.days), "note": note, "balance": num(balance)})
+    return setup_leave(ctx)
+
+
+@app.get("/api/leave/people/{pid}")
+def leave_person(pid: str, ctx: Ctx = Depends(admin)):
+    led = _ledger(ctx)
+    if not ctx.engine.d.emp(pid):
+        raise HTTPException(404, "Not found.")
+    return {"person": ctx.engine.name(pid), "entries": [_entry(ctx.engine, r) for r in led.entries(pid)]}
 
 
 # ---------------- Connections (viaSocket). Admin only. auth_id and script_id never leave the server. ----------------

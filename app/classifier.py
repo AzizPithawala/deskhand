@@ -73,7 +73,7 @@ def _next_weekday(today, idx):
 
 def parse_leave(text, today):
     t = text.lower()
-    d = {"dates": [], "leave_type": "casual", "half_day": bool(re.search(r"half day", t)), "reason": None}
+    d = {"dates": [], "leave_type": "casual", "half_day": bool(re.search(r"half day", t)), "reason": None, "date_range": False}  # date_range: two dates are the ends of a range, not two separate days
     if re.search(r"\bsick\b|fever|unwell|not well|doctor", t):
         d["leave_type"] = "sick"
     m = re.search(r"(\d{1,2})\s*(?:st|nd|rd|th)?\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s*(?:to|-|till|until)\s*"
@@ -84,9 +84,11 @@ def parse_leave(text, today):
             mon1 = MONTHS[m.group(2)[:3]]
             mon2 = MONTHS[m.group(4)[:3]] if m.group(4) else mon1
             d["dates"] = [date(today.year, mon1, int(m.group(1))).isoformat(), date(today.year, mon2, int(m.group(3))).isoformat()]
+            d["date_range"] = True
         elif m2:
             mon = MONTHS[m2.group(1)[:3]]
             d["dates"] = [date(today.year, mon, int(m2.group(2))).isoformat(), date(today.year, mon, int(m2.group(3))).isoformat()]
+            d["date_range"] = True
     except ValueError:
         d["dates"] = []
     if not d["dates"]:
@@ -100,6 +102,7 @@ def parse_leave(text, today):
         if wd and n and ("starting" in t or "from" in t):
             start = _next_weekday(today, sorted(wd)[0][1])
             days = [start, start + timedelta(days=int(n.group(1)) - 1)]
+            d["date_range"] = True
         else:
             for _, i in sorted(wd):
                 days.append(_next_weekday(today, i))
@@ -184,7 +187,8 @@ def _summary(code, details):
     """One line a person can scan. Falls back to the generic label."""
     if code == "leave" and details.get("dates"):
         kind = ("Half-day " if details.get("half_day") else "") + f"{details.get('leave_type', 'casual')} leave"
-        days = ", ".join(datetime.strptime(x, "%Y-%m-%d").strftime("%a %d %b").replace(" 0", " ") for x in details["dates"])
+        shown = [datetime.strptime(x, "%Y-%m-%d").strftime("%a %d %b").replace(" 0", " ") for x in details["dates"]]
+        days = " to ".join(shown) if details.get("date_range") and len(shown) == 2 else ", ".join(shown)  # a range reads as a range, not as two separate days
         return f"{kind[0].upper() + kind[1:]}: {days}"
     if code == "software_seat" and details.get("tool"):
         return f"{details['tool']} seat" + (f" for the {details['project']} project" if details.get("project") else "")

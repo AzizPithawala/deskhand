@@ -131,11 +131,11 @@ function stagesFor(r, tl) {
     if (r.status === 'FULFILLING') state = 'current';
     else if (r.status === 'PARKED') state = 'parked';
     else if (['FULFILLED', 'CLOSED'].includes(r.status)) state = 'done';
-    const st = { k: 'ful', state, title: auto ? 'Applied in the HR system' : `Done by ${ful ? nm(ful) : 'the fulfiller'}` };
+    const st = { k: 'ful', state, title: auto ? cap(hrApplied()) : `Done by ${ful ? nm(ful) : 'the fulfiller'}` };
     if (state === 'current') st.note = auto ? 'Deskhand is applying it now.' : `${nm(ful)} grants access, then clicks Done.`;
     if (state === 'parked') {
       const f = ev('action_failed').slice(-1)[0];
-      st.note = `The HR system did not answer after three tries${f && f.data && f.data.error ? ` (${f.data.error})` : ''}. Nothing was lost. An admin can replay it.`;
+      st.note = `${isHRDemo() ? 'The HR system did not answer after three tries' : 'It could not be recorded'}${f && f.data && f.data.error ? ` (${f.data.error})` : ''}. Nothing was lost. An admin can replay it.`;
     }
     if (state === 'done') { const f = ev('status_change').find(e => e.data && e.data.to === 'FULFILLED'); if (f) st.time = f.ts; }
     out.push(st);
@@ -173,11 +173,11 @@ function sentence(r) {
       const holder = r.escalated_to || (r.chain || [])[r.chain_index];
       return `With ${nm(holder)}, waiting ${dur(NOW - ((r.escalated_to && r.escalated_at) || r.assigned_at || r.created_at))}.`;
     }
-    case 'FULFILLING': return TYPE[r.type_code] && TYPE[r.type_code].fulfilment_kind === 'auto_action' ? 'Applying it in the HR system.' : 'Approved. Waiting for the fulfiller to finish.';
+    case 'FULFILLING': return TYPE[r.type_code] && TYPE[r.type_code].fulfilment_kind === 'auto_action' ? (isHRDemo() ? 'Applying it in the HR system.' : 'Recording it in the leave record.') : 'Approved. Waiting for the fulfiller to finish.';
     case 'APPROVED': return 'Approved.';
     case 'CLOSED': case 'FULFILLED': return 'Completed.';
     case 'REJECTED': return r.rejection_reason ? `Rejected: ${r.rejection_reason}` : 'Rejected.';
-    case 'PARKED': return 'Parked: the HR system is not answering. An admin can replay it.';
+    case 'PARKED': return isHRDemo() ? 'Parked: the HR system is not answering. An admin can replay it.' : 'Parked: it could not be recorded. An admin can replay it.';
     case 'CANCELLED': return 'Cancelled.';
     default: return 'Needs one more detail from the requester.';
   }
@@ -256,7 +256,7 @@ function dialogPrompt({ title, body = '', label = '', confirm = 'OK', match = nu
 
 /* ---------- routing ---------- */
 const AUTH_PAGES = ['login', 'register', 'join'];
-const APP_PAGES = ['ask', 'mine', 'needs', 'admin', 'setup', 'people', 'integrations', 'health', 'audit'];
+const APP_PAGES = ['ask', 'mine', 'needs', 'leave', 'admin', 'setup', 'people', 'integrations', 'health', 'audit'];
 const ADMIN_PAGES = ['admin', 'setup', 'people', 'integrations', 'health', 'audit'];
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
@@ -694,6 +694,7 @@ function paintShell() {
   $('#shell').classList.toggle('solo', !inn);
   $('#nav').hidden = !inn;
   $$('#nav [data-admin]').forEach(a => { a.hidden = !isAdmin(); });
+  $$('#nav [data-real]').forEach(a => { a.hidden = isDemo(); });
   $('#demobtn').hidden = !(inn && isDemo());
   const ab = $('#acctbtn'); ab.hidden = !inn;
   if (inn) {
@@ -894,13 +895,13 @@ async function pageIntegrations() {
   await paintConnections();
 }
 
-const SETUP_TABS = [['', 'Overview'], ['roles', 'Roles'], ['types', 'Request types'], ['policies', 'Policies'], ['test', 'Routing test']];
+const SETUP_TABS = [['', 'Overview'], ['roles', 'Roles'], ['types', 'Request types'], ['policies', 'Policies'], ['leave', 'Leave'], ['test', 'Routing test']];
 let TD = { types: [], people: [], role_options: [] };  // the last request-type listing, also used by the editor's pickers
 async function pageSetup(section) {
   const sec = SETUP_TABS.some(t => t[0] === (section || '')) ? (section || '') : '';
   $('#main').innerHTML = `<div class="page-head"><h1>Setup</h1><span class="meta">${isDemo() ? 'The demo company\'s rules are prepared and read-only.' : 'How requests are routed in your company.'}</span></div>
     <nav class="tabs" aria-label="Setup sections">${SETUP_TABS.map(([k, l]) => `<a href="#setup${k ? '/' + k : ''}" ${k === sec ? 'aria-current="page"' : ''}>${esc(l)}</a>`).join('')}</nav><div id="sbody">${loading('setup')}</div>`;
-  const fn = { '': setupOverview, roles: setupRoles, types: setupTypes, policies: setupPolicies, test: setupTest }[sec];
+  const fn = { '': setupOverview, roles: setupRoles, types: setupTypes, policies: setupPolicies, leave: setupLeave, test: setupTest }[sec];
   try { await fn(); } catch (e) { $('#sbody').innerHTML = errorState('setup', e, () => pageSetup(section)); }
 }
 
@@ -959,7 +960,7 @@ function typeLines(t) {
   if (!t.requires_approval && t.auto_allow_up_to != null) out[0] = `No approval up to ${esc(amount(t.auto_allow_up_to))}; above that ${L(t.approver_rule || 'manager')} approves.`;
   (t.extra_approvers || []).forEach(x => out.push(`Also ${L(x.rule)} when ${esc(whenText(t, x.when))}.`));
   out.push(`Reminder after ${t.reminder_hours} h. If nobody acts, it escalates after ${t.escalate_hours} h to ${L(t.backup_rule)}${t.backup_rule ? '' : ' (an admin)'}.`);
-  out.push(t.fulfilment_kind === 'auto_action' ? 'Applied by Deskhand in the HR system.' : `Task done by ${L(t.fulfiller_rule)}.`);
+  out.push(t.fulfilment_kind === 'auto_action' ? `Applied by Deskhand in ${isHRDemo() ? 'the HR system' : 'your leave record'}.` : `Task done by ${L(t.fulfiller_rule)}.`);
   return out;
 }
 const typeWarnings = t => Object.values(t.labels || {}).filter(l => !l.ok && l.rule !== 'manager').map(l => `${l.label}: ${l.note || 'cannot be found'}. Requests that need it use the backup, then an admin.`);
@@ -1097,15 +1098,65 @@ async function setupTest() {
   };
 }
 
+/* ---------- leave: balances, history, allowances and corrections ---------- */
+const cap = s => String(s).charAt(0).toUpperCase() + String(s).slice(1);
+const hrLabel = () => S.hr_label || 'the HR system';
+const hrApplied = () => S.hr_applied || 'applied in the HR system';
+const isHRDemo = () => hrLabel() === 'the HR system';
+const dayName = iso => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+const daysText = n => `${n} day${Math.abs(n) === 1 ? '' : 's'}`;
+const signed = n => (n > 0 ? '+' : '') + n;
+function infoDialog(title, html) { $('#idlg-title').textContent = title; $('#idlg-body').innerHTML = html; $('#idlg-close').onclick = () => $('#idlg').close(); $('#idlg').showModal(); }
+function entryText(e) {
+  if (e.kind === 'grant') return 'Yearly allowance';
+  if (e.kind === 'use') return `Leave taken: ${esc(e.dates.map(dayName).join(', '))}${e.request_id ? ` (<a href="#request/${e.request_id}">request ${e.request_id}</a>)` : ''}`;
+  return `Adjusted by ${esc(e.by)}: ${esc(e.note)}`;
+}
+const entryRows = rows => rows.length ? `<div class="scroll"><table class="t"><tr><th>When</th><th>What</th><th class="num">Days</th></tr>${rows.map(e =>
+  `<tr><td class="num">${stamp(e.at)}</td><td>${e.type_name ? esc(e.type_name) + ': ' : esc(cap(e.type)) + ': '}${entryText(e)}</td><td class="num ${e.days < 0 ? 'neg' : ''}">${signed(e.days)}</td></tr>`).join('')}</table></div>` : emptyState('Nothing yet', 'Leave you take and any corrections appear here.');
+
+async function pageLeave() {
+  const d = await api('/leave/me');
+  $('#main').innerHTML = `<div class="page-head"><h1>My leave</h1><span class="meta">${d.year || ''}</span></div>
+    <div class="grid">${d.types.map(t => `<div><div class="v ${t.balance < 0 ? 'neg' : ''}">${t.balance}</div><div class="meta">${esc(t.name)} left${t.yearly_days != null ? `, of ${t.yearly_days} a year` : ''}</div></div>`).join('')}</div>
+    <p style="margin:16px 0"><a href="#ask">Ask for leave</a> in plain words, for example "I need Friday and Monday off". Only Monday to Friday count; a half day counts 0.5.</p>
+    <h2 style="margin-top:24px">History</h2><div id="lhist">${entryRows(d.entries)}</div>`;
+}
+
+async function setupLeave() {
+  const d = await api('/setup/leave');
+  if (d.demo) { $('#sbody').innerHTML = '<div class="state"><b>The demo company uses prepared figures</b>Real companies keep leave in their own record. Create your own company to try allowances and corrections.</div>'; return; }
+  $('#sbody').innerHTML = `<p class="meta" style="max-width:640px">Each person gets the yearly allowance the first time leave is looked at in a calendar year. A new allowance applies to people who have not had this year's yet; for anyone else use Adjust. Every change is a line in the leave record with your name and the reason, and cannot be edited later.</p>
+    <h2>Yearly allowance</h2><div class="scroll"><table class="t"><tr><th>Leave type</th><th>Days a year</th><th></th></tr>${d.types.map(t =>
+      `<tr><td><b>${esc(t.name)}</b></td><td><input class="field" id="al_${esc(t.code)}" type="number" min="0" max="366" step="0.5" value="${t.yearly_days}" style="max-width:140px" aria-label="Days a year for ${esc(t.name)}"></td><td><button class="btn small" data-allow="${esc(t.code)}">Save</button></td></tr>`).join('')}</table></div>
+    <h2 style="margin-top:28px">Balances, ${d.year}</h2><div class="scroll"><table class="t"><tr><th>Person</th>${d.types.map(t => `<th class="num">${esc(t.name)}</th>`).join('')}<th></th></tr>${d.people.map(p =>
+      `<tr><td><b>${esc(p.name)}</b></td>${d.types.map(t => `<td class="num ${p.balances[t.code] < 0 ? 'neg' : ''}">${p.balances[t.code]}</td>`).join('')}<td><button class="btn small" data-adjust="${esc(p.id)}">Adjust</button> <button class="btn small" data-hist="${esc(p.id)}">History</button></td></tr>`).join('')}</table></div>`;
+  $$('[data-allow]').forEach(b => b.onclick = async () => {
+    try { await api(`/setup/leave/${encodeURIComponent(b.dataset.allow)}`, { yearly_days: Number($('#al_' + b.dataset.allow).value) }); toast('Saved.'); } catch (e) { toast(e.message, 6000); }
+    setupLeave();
+  });
+  $$('[data-adjust]').forEach(b => b.onclick = () => {
+    const p = d.people.find(x => x.id === b.dataset.adjust);
+    formDialog({ title: `Adjust ${p.name}'s leave`, intro: 'Add or take away days in the current year. The reason is kept in the leave record with your name.', confirm: 'Record adjustment',
+      fields: [{ key: 'leave_type', label: 'Leave type', options: d.types.map(t => [t.code, `${t.name} (now ${p.balances[t.code]})`]), value: d.types[0].code },
+        { key: 'days', label: 'Days (use a minus sign to take days away)', type: 'number', hint: 'Whole or half days, for example 3 or -0.5.' }, { key: 'note', label: 'Reason', hint: 'For example: joined mid-year, extra days agreed.' }],
+      submit: async v => { await api('/leave/adjust', { person_id: p.id, leave_type: v.leave_type, days: Number(v.days), note: v.note }); toast('Recorded.'); setupLeave(); } });
+  });
+  $$('[data-hist]').forEach(b => b.onclick = async () => {
+    try { const h = await api('/leave/people/' + encodeURIComponent(b.dataset.hist)); infoDialog(`Leave record: ${h.person}`, entryRows(h.entries.map(e => ({ ...e, type_name: '' })))); } catch (e) { toast(e.message, 6000); }
+  });
+}
+
 /* ---------- render loop ---------- */
-const TITLES = { login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', admin: 'Admin', setup: 'Setup', people: 'People', integrations: 'Integrations', health: 'Health', audit: 'Audit' };
-const LOADING = { health: 'health', people: 'people', setup: 'setup', integrations: 'integrations', admin: 'the admin page', audit: 'the audit record' };
+const TITLES = { login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', leave: 'My leave', admin: 'Admin', setup: 'Setup', people: 'People', integrations: 'Integrations', health: 'Health', audit: 'Audit' };
+const LOADING = { leave: 'your leave', health: 'health', people: 'people', setup: 'setup', integrations: 'integrations', admin: 'the admin page', audit: 'the audit record' };
 async function render(userNav) {
   const my = ++seq;
   const route = parseHash();
   const authPage = AUTH_PAGES.includes(route.page);
   if (!ME && !authPage) { NEXT = location.hash; return go('#login'); }
   if (ME && (route.page === 'login' || route.page === 'register')) return go('#ask');
+  if (ME && isDemo() && route.page === 'leave') return go('#ask');  // the demo's figures are prepared, not a record
   if (ME && ADMIN_PAGES.includes(route.page) && !isAdmin()) return go('#ask');
   const changedPage = route.page !== current.page || route.id !== current.id;
   current = route;
@@ -1126,6 +1177,7 @@ async function render(userNav) {
     if (route.page === 'ask') await pageAsk();
     else if (route.page === 'mine') await pageMine(route.id);
     else if (route.page === 'needs') await pageNeeds(route.id);
+    else if (route.page === 'leave') await pageLeave();
     else if (route.page === 'admin') await pageAdmin();
     else if (route.page === 'setup') await pageSetup(route.id);
     else if (route.page === 'integrations') await pageIntegrations();
