@@ -256,8 +256,8 @@ function dialogPrompt({ title, body = '', label = '', confirm = 'OK', match = nu
 
 /* ---------- routing ---------- */
 const AUTH_PAGES = ['login', 'register', 'join'];
-const APP_PAGES = ['ask', 'mine', 'needs', 'leave', 'mailbox', 'admin', 'setup', 'people', 'integrations', 'health', 'audit'];
-const ADMIN_PAGES = ['admin', 'setup', 'people', 'integrations', 'health', 'audit'];
+const APP_PAGES = ['ask', 'mine', 'needs', 'notifications', 'leave', 'mailbox', 'admin', 'setup', 'people', 'integrations', 'health', 'deliverylog', 'audit'];
+const ADMIN_PAGES = ['admin', 'setup', 'people', 'integrations', 'health', 'deliverylog', 'audit'];
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
   const [p, a] = h.split('/');
@@ -265,7 +265,7 @@ function parseHash() {
   if (AUTH_PAGES.includes(p)) return { page: p, id: null };
   if (p === 'inbox') { history.replaceState(null, '', '#needs'); return { page: 'needs', id: null }; }  // links in notifications: who "you" are comes from the session
   if (p === 'request' && a) return { page: 'mine', id: +a || null };
-  if (p === 'setup') return { page: 'setup', id: a || null };  // a section name, not a number
+  if (p === 'setup' || p === 'deliverylog') return { page: p, id: a || null };  // a section or a starting filter, not a number
   if (APP_PAGES.includes(p)) return { page: p, id: a ? (+a || null) : null };
   return { page: 'ask', id: null };
 }
@@ -283,7 +283,7 @@ async function loadCore() {
   }
 }
 function applyClock(cl) {
-  CLOCKDATA = cl; NOW = cl.now;
+  CLOCKDATA = cl; NOW = cl.now; NUNREAD = cl.unread || 0; paintBadge();
   const showStatus = isAdmin() && !isDemo();  // delivery health is for the people who can fix it; the demo sends nothing
   const b = showStatus ? (cl.banners || []) : [];
   const notes = showStatus ? (cl.notes || []) : [];
@@ -449,6 +449,7 @@ async function paintDetail(id, base) {
     <section class="sec"><h3>${r.email_subject ? 'Original email' : 'Original message'}</h3>${r.email_subject ? `<p class="meta">Subject: ${esc(r.email_subject)}</p>` : ''}<div class="quote">${esc(r.message)}</div></section>
     <section class="sec"><h3>Record</h3><p class="meta">Every change is written once and never edited.</p><ul class="record">${d.timeline.map(e => `<li><span class="meta">${new Date(e.ts * 1000).toLocaleTimeString('en-GB', { timeZone: 'UTC' })}</span><span>${esc(recLine(e))} <span class="meta">· ${esc(nm(e.actor))}</span></span></li>`).join('')}</ul></section></div>`;
   wireDecision(r);
+  if (NUNREAD > 0 && current.id === id) api('/notifications/read', { request_id: id }).then(j => { NUNREAD = NSTATE.painted = j.unread; paintBadge(); }).catch(() => {});  // opening a request is reading what was said about it; the list's own first pick is not
 }
 
 function decisionHTML(it) {
@@ -549,8 +550,7 @@ function paintDelivery(dv) {
   const cnt = Object.entries(dv.counts).map(([k, v]) => `${k} ${v}`).join(', ') || 'none yet';
   el.innerHTML = `<h2>Delivery</h2><p class="meta">Messages go out by themselves once Slack and Gmail are connected on the <a href="#integrations">Integrations</a> page. Approvals never wait for delivery.</p>
     <dl class="kv" style="margin-top:8px"><dt>Slack</dt><dd>${dv.ready.slack ? 'Ready' : 'Not ready'}</dd><dt>Email</dt><dd>${dv.ready.email ? 'Ready' : 'Not ready'}</dd><dt>Mode</dt><dd>${dv.mode === 'live' ? 'Live: to the real people' : `Rehearsal: only to ${esc((dv.rehearsal_person || {}).name || 'an admin')}`}</dd><dt>Delivered today</dt><dd class="num">${dv.used_today} of ${dv.cap}${dv.capped ? ' (cap reached)' : ''}</dd><dt>Outbox</dt><dd>${esc(cnt)}</dd><dt>Links point to</dt><dd>${esc(dv.base_url)}</dd></dl>
-    ${dv.failed.length ? `<h3 style="margin-top:16px">Failed deliveries</h3>${dv.failed.map(f => `<div class="approw"><span style="flex:1">#${f.id} · ${esc(nice(f.kind))} (${esc(f.channel)}) · ${esc(f.delivery_error || '')}</span><button class="btn small" data-retry="${f.id}">Retry</button></div>`).join('')}<p class="meta">Check the channel before retrying: a failed send may already have arrived.</p>` : ''}`;
-  $$('[data-retry]', el).forEach(b => b.onclick = async () => { try { await api('/delivery/retry/' + b.dataset.retry, {}); toast('Retried.'); } catch (e) { toast(e.message, 6000); } pageHealth(); });
+    <p style="margin-top:16px">${(dv.counts.failed || 0) ? `<b>${plural(dv.counts.failed, 'delivery')} failed.</b> <a href="#deliverylog/failed">See why and retry</a>` : 'Nothing has failed.'} <a href="#deliverylog">Open the delivery log</a></p>`;
 }
 function verdictHTML(r) {
   return `<ul class="verdict"><li class="${r.passed ? 'ok' : 'no'}">${icon(r.passed ? 's-check' : 's-cross')}<b>${r.passed ? 'The guard held' : 'The guard failed'}</b></li>${r.steps.map(s => `<li class="meta" style="margin-left:24px">${esc(s)}</li>`).join('')}${Object.entries(r.checks).map(([c, v]) => `<li class="${v ? 'ok' : 'no'}">${icon(v ? 's-check' : 's-cross')}<span style="color:var(--ink)">${esc(c)}${v ? '' : ' (failed)'}</span></li>`).join('')}</ul>${r.replay_id ? `<p style="margin-top:8px"><button class="btn primary small" data-replay="${r.replay_id}">Bring HR back and replay #${r.replay_id}</button></p>` : ''}`;
@@ -682,6 +682,7 @@ const initials = n => String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).
 function go(h) { if (location.hash === h) return render(false); location.hash = h; }  // a changed hash renders by itself
 function resetPerson() {
   REQS = []; INBOX = []; LOG.chat = []; SEENMSG.clear();
+  NUNREAD = 0; NSTATE.f = {}; NSTATE.d = { since: '', until: '' }; NSTATE.items = []; DL.f = {}; DL.d = { since: '', until: '' }; DL.items = [];
   [SEEN, PREV].forEach(o => Object.keys(o).forEach(k => delete o[k]));
 }
 function signedOut(msg) {
@@ -876,7 +877,8 @@ async function personLink(id) {
 
 /* ---------- admin hub, setup and integrations ---------- */
 const ADMIN_LINKS = [['setup', 'Setup', 'Roles, request types, policies and a routing test.'], ['people', 'People', 'Invite people, set managers and access.'],
-  ['integrations', 'Integrations', 'Connect Slack and Gmail; switch viaSocket AI.'], ['health', 'Health', 'Is everything working, and can it be proven?'], ['audit', 'Audit', 'Every change, who made it, when.']];
+  ['integrations', 'Integrations', 'Connect Slack and Gmail; switch viaSocket AI.'], ['health', 'Health', 'Is everything working, and can it be proven?'],
+  ['deliverylog', 'Delivery log', 'Every message Deskhand sent: to whom, by Slack or email, and how it ended.'], ['audit', 'Audit', 'Every change, who made it, when.']];
 const amount = n => `₹${Number(n).toLocaleString('en-IN')}`;
 const afterSetup = async () => { try { await loadCore(); } catch { /* the page shows its own errors */ } };  // people, roles and rules feed the journeys and the status bar
 
@@ -1237,9 +1239,225 @@ async function pageMailbox() {
   };
 }
 
+/* ---------- notifications (everyone) ---------- */
+let NUNREAD = 0;
+const NSTATE = { f: {}, d: { since: '', until: '' }, items: [], next: null, painted: 0, categories: [] };  // f is sent to the server as it is; d holds the two date boxes as typed
+const NCOPY = {
+  delivered: ['approved', 's-check', 'delivered'], rehearsal: ['neutral', 's-upcoming', 'sent to the admin (rehearsal)'], pending: ['pending', 's-pending', 'waiting to send'],
+  sending: ['pending', 's-pending', 'sending'], failed: ['rejected', 's-alert', 'failed'], off: ['neutral', 's-cancelled', 'turned off by you'], skipped: ['neutral', 's-upcoming', 'not sent'],
+};
+const copyChip = (label, c) => {
+  if (!c) return '';
+  const [cls, ic, w] = NCOPY[c.state] || NCOPY.skipped;
+  return `<span class="chip ${cls}"${c.note ? ` title="${esc(c.note)}"` : ''}>${icon(ic)}${label}: ${w}</span>`;
+};
+function paintBadge() {
+  const b = $('#nbadge'); if (!b) return;
+  b.hidden = !NUNREAD; b.textContent = NUNREAD > 99 ? '99+' : NUNREAD;
+  b.setAttribute('aria-label', plural(NUNREAD, 'unread notification'));
+}
+const dayStart = (v, plus = 0) => (v ? Date.parse(v + 'T00:00:00Z') / 1000 + plus * 86400 : '');  // a date box means that whole day in UTC, the zone the app shows
+function queryOf(f, extra) {
+  const p = new URLSearchParams();
+  Object.entries({ ...f, ...extra }).forEach(([k, v]) => { if (v !== '' && v != null && v !== false) p.set(k, String(v)); });
+  return p.toString();
+}
+async function nLoad(more) {
+  const j = await api('/notifications?' + queryOf(NSTATE.f, { limit: 30, before: more ? NSTATE.next : null }));
+  NSTATE.items = more ? NSTATE.items.concat(j.items) : j.items;
+  NSTATE.next = j.next_before; NSTATE.categories = j.categories; NSTATE.painted = NUNREAD = j.unread; paintBadge();
+}
+function nItemHTML(n) {
+  const line = String(n.text || '').replace(/\s+/g, ' ').slice(0, 220);
+  const href = n.request_id ? `#${n.needs_action ? 'needs' : 'request'}/${n.request_id}` : '#notifications';
+  const about = n.request_id ? ` · Request ${n.request_id}${n.type_name ? ' · ' + esc(n.type_name) : ''}` : '';
+  return `<a class="nitem ${n.read ? '' : 'unread'}" href="${href}" data-nid="${n.id}">
+    <span class="ndot" aria-hidden="true"></span>
+    <span class="nbody">
+      <span class="nt"><b>${n.read ? '' : '<span class="sr">Unread. </span>'}${esc(n.subject)}</b><span class="meta">${stamp(n.created_at)}</span></span>
+      <span class="nl">${esc(line)}</span>
+      <span class="meta">${esc(n.category_title)}${about}${n.needs_action ? ' · <span class="act">waiting for you</span>' : ''}</span>
+      <span class="nc">${copyChip('Slack', n.slack)}${copyChip('Email', n.email)}</span>
+    </span></a>`;
+}
+function paintNList() {
+  const el = $('#nlist'); if (!el) return;
+  const f = NSTATE.f, filtered = ['category', 'type', 'status', 'channel', 'q', 'since', 'until'].some(k => f[k] !== '' && f[k] != null);
+  el.innerHTML = NSTATE.items.length ? `<div class="nlist">${NSTATE.items.map(nItemHTML).join('')}</div>`
+    : (filtered ? emptyState('Nothing matches', 'Clear a filter to see more.')
+      : f.unread ? emptyState('You are all caught up', 'Nothing is unread.')
+        : emptyState('No notifications yet', 'When something needs your decision, or something happens to a request you made, it appears here.'));
+  $('#nmore').innerHTML = NSTATE.next ? '<button class="btn" id="nmorebtn">Show older</button>' : '';
+  const mb = $('#nmorebtn');
+  if (mb) mb.onclick = async () => { mb.disabled = true; try { await nLoad(true); paintNList(); } catch (e) { toast(e.message, 6000); mb.disabled = false; } };
+  $('#nunreadnum').textContent = NUNREAD ? ` ${NUNREAD}` : '';
+  $('#nmarkall').disabled = !NUNREAD;
+}
+function paintNFilterCount() {
+  const f = NSTATE.f, n = ['category', 'type', 'status', 'channel', 'q', 'since', 'until'].filter(k => f[k] !== '' && f[k] != null).length;
+  $('#nfilterbtn').textContent = n ? `Filters (${n})` : 'Filters';
+}
+async function pageNotifications() {
+  const m = $('#main'), head = `<div class="page-head"><h1>Notifications</h1><span class="meta">${esc(nm(meId()))}</span></div>`;
+  m.innerHTML = head + loading('your notifications');
+  try { await nLoad(false); } catch (e) { m.innerHTML = head + errorState('your notifications', e, pageNotifications); return; }
+  const f = NSTATE.f, d = NSTATE.d;
+  const opts = (list, cur) => list.map(([v, l]) => `<option value="${esc(v)}" ${v === (cur || '') ? 'selected' : ''}>${esc(l)}</option>`).join('');
+  m.innerHTML = `${head}
+    <div class="nbar">
+      <div class="seg2" role="group" aria-label="Show"><button data-nseg="all" aria-pressed="${!f.unread}">All</button><button data-nseg="unread" aria-pressed="${!!f.unread}">Unread<span id="nunreadnum"></span></button></div>
+      <button class="btn small" id="nfilterbtn" aria-expanded="false" aria-controls="nfbox">Filters</button>
+      <span class="grow"></span>
+      <button class="btn small" id="nmarkall">Mark all read</button><button class="btn small" id="nprefs">Preferences</button>
+    </div>
+    <div class="nfilters" id="nfbox">
+      <div><label class="l" for="nf-cat">What it is about</label><select class="field" id="nf-cat">${opts([['', 'Everything']].concat(NSTATE.categories.map(c => [c.code, c.title])), f.category)}</select></div>
+      <div><label class="l" for="nf-type">Request type</label><select class="field" id="nf-type">${opts([['', 'Any type']].concat(S.types.map(t => [t.code, t.name])), f.type)}</select></div>
+      <div><label class="l" for="nf-status">Request status</label><select class="field" id="nf-status">${opts([['', 'Any status'], ['PENDING_APPROVAL', 'Pending'], ['FULFILLING', 'Approved, in progress'], ['FULFILLED', 'Completed'], ['REJECTED', 'Rejected'], ['PARKED', 'Parked'], ['CANCELLED', 'Cancelled']], f.status)}</select></div>
+      <div><label class="l" for="nf-channel">Delivered by</label><select class="field" id="nf-channel">${opts([['', 'Any channel'], ['slack', 'Slack'], ['email', 'Email']], f.channel)}</select></div>
+      <div><label class="l" for="nf-since">From</label><input class="field" id="nf-since" type="date" value="${esc(d.since)}"></div>
+      <div><label class="l" for="nf-until">To</label><input class="field" id="nf-until" type="date" value="${esc(d.until)}"></div>
+      <div class="nsearch"><label class="l" for="nf-q">Search</label><input class="field" id="nf-q" type="search" value="${esc(f.q || '')}" placeholder="Words in a message" autocomplete="off"></div>
+      <div><button class="btn small quiet" id="nf-clear">Clear filters</button></div>
+    </div>
+    <div id="nlist" aria-live="polite"></div><div id="nmore"></div>`;
+  const reload = async () => { try { await nLoad(false); paintNList(); } catch (e) { $('#nlist').innerHTML = errorState('your notifications', e, reload); } };
+  const apply = () => {
+    const v = id => $(id).value;
+    Object.assign(NSTATE.f, { category: v('#nf-cat'), type: v('#nf-type'), status: v('#nf-status'), channel: v('#nf-channel'), q: v('#nf-q').trim(), since: dayStart(v('#nf-since')), until: dayStart(v('#nf-until'), 1) });
+    NSTATE.d = { since: v('#nf-since'), until: v('#nf-until') };
+    paintNFilterCount(); return reload();
+  };
+  ['#nf-cat', '#nf-type', '#nf-status', '#nf-channel', '#nf-since', '#nf-until'].forEach(s => { $(s).onchange = apply; });
+  let timer; $('#nf-q').oninput = () => { clearTimeout(timer); timer = setTimeout(apply, 300); };
+  $('#nf-clear').onclick = () => {
+    ['#nf-cat', '#nf-type', '#nf-status', '#nf-channel', '#nf-since', '#nf-until', '#nf-q'].forEach(s => { $(s).value = ''; });
+    apply();
+  };
+  $$('[data-nseg]').forEach(b => b.onclick = () => {
+    NSTATE.f.unread = b.dataset.nseg === 'unread';
+    $$('[data-nseg]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    reload();
+  });
+  $('#nfilterbtn').onclick = () => { const open = !$('#nfbox').classList.contains('open'); $('#nfbox').classList.toggle('open', open); $('#nfilterbtn').setAttribute('aria-expanded', String(open)); };
+  $('#nmarkall').onclick = async () => {
+    try {
+      const j = await api('/notifications/read', { all: true });
+      NUNREAD = NSTATE.painted = j.unread; paintBadge();
+      toast(j.changed ? `Marked ${plural(j.changed, 'notification')} as read.` : 'Nothing was unread.');
+      await reload();
+    } catch (e) { toast(e.message, 6000); }
+  };
+  $('#nprefs').onclick = openPrefs;
+  $('#nlist').onclick = e => {  // opening one marks it read; the link itself then goes to the request
+    const a = e.target.closest('.nitem'); if (!a) return;
+    const n = NSTATE.items.find(x => x.id === +a.dataset.nid); if (!n) return;
+    if (!n.request_id) e.preventDefault();
+    if (n.read) return;
+    n.read = true; NUNREAD = NSTATE.painted = Math.max(0, NUNREAD - 1); paintBadge();
+    api('/notifications/read', { ids: [n.id] }).then(j => { NUNREAD = NSTATE.painted = j.unread; paintBadge(); }).catch(() => { n.read = false; });
+    if (!n.request_id) paintNList();
+  };
+  paintNFilterCount(); paintNList();
+}
+async function notificationsTick() {  // the 4-second poll already told us the unread total; a change means something arrived or was read elsewhere
+  if (NUNREAD === NSTATE.painted || document.activeElement === $('#nf-q') || NSTATE.items.length > 30 || !$('#nlist')) return;
+  try { await nLoad(false); paintNList(); } catch { /* the page keeps what it has */ }
+}
+async function openPrefs() {
+  let p;
+  try { p = await api('/notifications/preferences'); } catch (e) { toast(e.message, 6000); return; }
+  const d = $('#pdlg'), ro = p.demo;
+  $('#pd-intro').textContent = ro ? 'Preferences are switched off in the demo company, because it never sends real messages. This is what they look like.'
+    : p.mode === 'live' ? 'Choose how you are reached. These apply from now on. Everything is always kept in this Notifications list, whatever you choose here.'
+      : 'Choose how you want to be reached. Your company is in rehearsal, so every message still goes to one admin and these choices are not applied yet. They start to apply when your admin goes live. Everything is always kept in this Notifications list.';
+  const box = (c, ch) => `<input type="checkbox" data-pc="${esc(c.code)}" data-pch="${ch}" ${c[ch] ? 'checked' : ''} ${ro ? 'disabled' : ''} aria-label="${ch === 'slack' ? 'Slack' : 'Email'} for ${esc(c.title)}">`;
+  $('#pd-grid').innerHTML = `<table class="t prefs"><tr><th>What</th><th>Slack</th><th>Email</th></tr>${p.categories.map(c => `<tr><td><b>${esc(c.title)}</b><div class="meta">${esc(c.description)}</div>${c.protected ? '<div class="meta">At least one of Slack or email stays on, so an approval cannot go unseen.</div>' : ''}</td><td>${box(c, 'slack')}</td><td>${box(c, 'email')}</td></tr>`).join('')}</table>`;
+  $('#pd-err').textContent = '';
+  const ok = $('#pd-ok'); ok.hidden = ro; ok.disabled = false;
+  $('#pd-cancel').textContent = ro ? 'Close' : 'Cancel';
+  $('#pd-cancel').onclick = () => d.close();
+  $('#pdform').onsubmit = async e => {
+    e.preventDefault();
+    const prefs = {};
+    $$('[data-pc]', d).forEach(x => { (prefs[x.dataset.pc] = prefs[x.dataset.pc] || {})[x.dataset.pch] = x.checked; });
+    ok.disabled = true;
+    try { await api('/notifications/preferences', { prefs }); d.close(); toast('Notification preferences saved.'); } catch (err) { $('#pd-err').textContent = err.message; ok.disabled = false; }
+  };
+  d.showModal();
+}
+
+/* ---------- delivery log (admin): what was sent, to whom, and how it ended. Never what the message said. ---------- */
+const DL = { f: {}, d: { since: '', until: '' }, items: [], next: null, counts: {}, kinds: [] };
+const DSTATE = { failed: ['rejected', 's-alert', 'Failed'], pending: ['pending', 's-pending', 'Waiting'], sending: ['pending', 's-pending', 'Sending'], delivered: ['approved', 's-check', 'Delivered'], skipped: ['neutral', 's-upcoming', 'Not sent'] };
+async function dlLoad(more) {
+  const j = await api('/delivery/log?' + queryOf(DL.f, { limit: 50, before: more ? DL.next : null }));
+  DL.items = more ? DL.items.concat(j.items) : j.items; DL.next = j.next_before; DL.counts = j.counts; DL.kinds = j.kinds;
+}
+function dlRowHTML(r) {
+  const [cls, ic, w] = DSTATE[r.status] || DSTATE.skipped;
+  const detail = [r.error ? `<span class="neg">${esc(r.error)}</span>` : '', r.note ? esc(r.note) : '', r.sent_to && r.sent_to !== r.to.name ? `sent to ${esc(r.sent_to)}` : ''].filter(Boolean).join(' · ');
+  return `<tr><td data-l="When" class="num">${stamp(r.created_at)}</td><td data-l="To">${esc(r.to.name)}</td><td data-l="What">${esc(nice(r.kind))}</td>
+    <td data-l="Request" class="num">${r.request_id ? `<a href="#request/${r.request_id}">${r.request_id}</a>${r.type_name ? ' ' + esc(r.type_name) : ''}` : ''}</td>
+    <td data-l="Via">${r.channel === 'slack' ? 'Slack' : 'Email'}</td><td data-l="Status"><span class="chip ${cls}">${icon(ic)}${w}</span></td><td data-l="Tries" class="num">${r.attempts}</td>
+    <td data-l="Detail" class="meta">${detail}</td><td class="dact">${r.can_retry ? `<button class="btn small" data-dretry="${r.id}">Retry</button>` : ''}</td></tr>`;
+}
+function paintDL() {
+  const el = $('#dlist'); if (!el) return;
+  const f = DL.f, c = DL.counts, total = Object.values(c).reduce((a, b) => a + b, 0);
+  const chip = (k, label, n) => `<button data-dstat="${k}" aria-pressed="${(f.status || '') === k}">${label} <span class="num">${n}</span></button>`;
+  $('#dstat').innerHTML = chip('', 'All', total) + chip('failed', 'Failed', c.failed) + chip('pending', 'Waiting', c.pending) + (c.sending ? chip('sending', 'Sending', c.sending) : '') + chip('delivered', 'Delivered', c.delivered) + chip('skipped', 'Not sent', c.skipped);
+  $$('[data-dstat]').forEach(b => b.onclick = () => { DL.f.status = b.dataset.dstat; reloadDL(); });
+  const filtered = ['status', 'channel', 'person', 'kind', 'since', 'until'].some(k => f[k] !== '' && f[k] != null);
+  el.innerHTML = DL.items.length
+    ? `<div class="scroll"><table class="t cards"><tr><th>When</th><th>To</th><th>What</th><th>Request</th><th>Via</th><th>Status</th><th class="num">Tries</th><th>Detail</th><th></th></tr>${DL.items.map(dlRowHTML).join('')}</table></div>
+       ${DL.items.some(r => r.can_retry) ? '<p class="meta" style="margin-top:12px">Check the channel before retrying: a failed send may already have arrived.</p>' : ''}`
+    : emptyState(filtered ? 'Nothing matches' : 'No messages yet', filtered ? 'Clear a filter to see more.' : 'Every message Deskhand sends or decides not to send is listed here.');
+  $('#dmore').innerHTML = DL.next ? '<button class="btn" id="dmorebtn">Show older</button>' : '';
+  const mb = $('#dmorebtn'); if (mb) mb.onclick = async () => { mb.disabled = true; try { await dlLoad(true); paintDL(); } catch (e) { toast(e.message, 6000); mb.disabled = false; } };
+  $$('[data-dretry]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await api('/delivery/retry/' + b.dataset.dretry, {}); toast('Put back in the queue and tried again.'); } catch (e) { toast(e.message, 6000); }
+    reloadDL();
+  });
+}
+async function reloadDL() { try { await dlLoad(false); paintDL(); } catch (e) { $('#dlist').innerHTML = errorState('the delivery log', e, reloadDL); } }
+async function pageDeliveryLog(arrive) {
+  const m = $('#main'), head = `<div class="page-head"><h1>Delivery log</h1><span class="meta">What Deskhand sent, to whom, and how it ended. Message text is never shown here.</span></div>`;
+  if (arrive === 'failed') DL.f.status = 'failed';
+  m.innerHTML = head + loading('the delivery log');
+  try { await dlLoad(false); } catch (e) { m.innerHTML = head + errorState('the delivery log', e, () => pageDeliveryLog()); return; }
+  const f = DL.f, d = DL.d;
+  const opts = (list, cur) => list.map(([v, l]) => `<option value="${esc(v)}" ${v === (cur || '') ? 'selected' : ''}>${esc(l)}</option>`).join('');
+  m.innerHTML = `${head}${isDemo() ? '<p class="meta">The demo company never sends real messages, so everything here is "not sent".</p>' : ''}
+    <div class="dtop"><div class="dstat" id="dstat" role="group" aria-label="Show messages that are"></div><button class="btn small" id="dfilterbtn" aria-expanded="false" aria-controls="dfbox">Filters</button></div>
+    <div class="nfilters" id="dfbox">
+      <div><label class="l" for="df-channel">Via</label><select class="field" id="df-channel">${opts([['', 'Slack and email'], ['slack', 'Slack'], ['email', 'Email']], f.channel)}</select></div>
+      <div><label class="l" for="df-person">To</label><select class="field" id="df-person">${opts([['', 'Everyone']].concat(S.employees.map(e => [e.id, e.name])), f.person)}</select></div>
+      <div><label class="l" for="df-kind">What</label><select class="field" id="df-kind">${opts([['', 'Any message']].concat(DL.kinds.map(k => [k, nice(k)])), f.kind)}</select></div>
+      <div><label class="l" for="df-since">From</label><input class="field" id="df-since" type="date" value="${esc(d.since)}"></div>
+      <div><label class="l" for="df-until">To</label><input class="field" id="df-until" type="date" value="${esc(d.until)}"></div>
+      <div><button class="btn small quiet" id="df-clear">Clear filters</button> <button class="btn small quiet" id="df-refresh">Refresh</button></div>
+    </div>
+    <div id="dlist"></div><div id="dmore"></div>`;
+  const apply = () => {
+    const v = id => $(id).value;
+    Object.assign(DL.f, { channel: v('#df-channel'), person: v('#df-person'), kind: v('#df-kind'), since: dayStart(v('#df-since')), until: dayStart(v('#df-until'), 1) });
+    DL.d = { since: v('#df-since'), until: v('#df-until') };
+    paintDFilterCount(); return reloadDL();
+  };
+  const paintDFilterCount = () => { const n = ['channel', 'person', 'kind', 'since', 'until'].filter(k => DL.f[k] !== '' && DL.f[k] != null).length; $('#dfilterbtn').textContent = n ? `Filters (${n})` : 'Filters'; };
+  ['#df-channel', '#df-person', '#df-kind', '#df-since', '#df-until'].forEach(s => { $(s).onchange = apply; });
+  $('#df-clear').onclick = () => { ['#df-channel', '#df-person', '#df-kind', '#df-since', '#df-until'].forEach(s => { $(s).value = ''; }); DL.f.status = ''; apply(); };
+  $('#df-refresh').onclick = reloadDL;
+  paintDFilterCount();
+  $('#dfilterbtn').onclick = () => { const open = !$('#dfbox').classList.contains('open'); $('#dfbox').classList.toggle('open', open); $('#dfilterbtn').setAttribute('aria-expanded', String(open)); };
+  paintDL();
+}
+
 /* ---------- render loop ---------- */
-const TITLES = { login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', leave: 'My leave', mailbox: 'Your mailbox', admin: 'Admin', setup: 'Setup', people: 'People', integrations: 'Integrations', health: 'Health', audit: 'Audit' };
-const LOADING = { leave: 'your leave', health: 'health', people: 'people', setup: 'setup', integrations: 'integrations', admin: 'the admin page', audit: 'the audit record' };
+const TITLES = { login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', leave: 'My leave', mailbox: 'Your mailbox', admin: 'Admin', setup: 'Setup', people: 'People', integrations: 'Integrations', health: 'Health', audit: 'Audit', notifications: 'Notifications', deliverylog: 'Delivery log' };
+const LOADING = { notifications: 'your notifications', deliverylog: 'the delivery log', leave: 'your leave', health: 'health', people: 'people', setup: 'setup', integrations: 'integrations', admin: 'the admin page', audit: 'the audit record' };
 async function render(userNav) {
   const my = ++seq;
   const route = parseHash();
@@ -1252,7 +1470,7 @@ async function render(userNav) {
   current = route;
   if (userNav && changedPage) window.scrollTo(0, 0);
   paintShell();
-  $$('#nav a').forEach(a => { if (a.dataset.page === route.page || (a.hasAttribute('data-hub') && ADMIN_PAGES.includes(route.page))) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  $$('#nav a').forEach(a => { if (a.dataset.page === route.page || (a.dataset.page === 'health' && route.page === 'deliverylog') || (a.hasAttribute('data-hub') && ADMIN_PAGES.includes(route.page))) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   document.title = TITLES[route.page] + ' · Deskhand';
   const m = $('#main');
   try {
@@ -1273,6 +1491,8 @@ async function render(userNav) {
     else if (route.page === 'setup') await pageSetup(route.id);
     else if (route.page === 'integrations') await pageIntegrations();
     else if (route.page === 'people') await pagePeople();
+    else if (route.page === 'notifications') await pageNotifications();
+    else if (route.page === 'deliverylog') await pageDeliveryLog(route.id);
     else if (route.page === 'health') await pageHealth();
     else await pageAudit();
   } catch (e) { if (my === seq && ME) m.innerHTML = errorState('this page', e, () => render(true)); }
@@ -1281,7 +1501,11 @@ async function render(userNav) {
 
 async function refreshAll(force, afterDecision) {
   if (!ME || AUTH_PAGES.includes(current.page)) return;
-  if (!['ask', 'mine', 'needs'].includes(current.page)) { await pollCore(); if (force || afterDecision) await render(false); return; }
+  if (!['ask', 'mine', 'needs'].includes(current.page)) {
+    await pollCore();
+    if (force || afterDecision) await render(false); else if (current.page === 'notifications') await notificationsTick();
+    return;
+  }
   const interacting = document.activeElement && document.activeElement.closest && document.activeElement.closest('.decide, .composer');
   const typed = $('#reason') && $('#reason').value;
   try {

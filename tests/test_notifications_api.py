@@ -320,3 +320,11 @@ def test_the_demo_has_notifications_for_whoever_you_act_as_but_preferences_are_r
     assert d.post("/api/notifications/preferences", {"prefs": {"mine": {"email": False}}}).status_code == 403
     d.act_as("e01")
     assert items(d)["unread"] == 0 and items(d)["items"] == []  # the requester has nothing but replies
+
+
+def test_a_copy_the_person_switched_off_says_so_in_its_own_word(team):
+    owner, boss, ann, bob = team
+    ask(ann, "I need Friday and Monday off, family function.")
+    owner.engine.s.q("UPDATE outbox SET delivery_note=? WHERE kind='approval_request' AND channel='email'", (nt.OFF_NOTE,))
+    e = items(boss)["items"][0]
+    assert e["email"]["state"] == "off" and e["slack"]["state"] == "skipped"  # off is only for what the person chose; "nothing connected" stays "skipped"

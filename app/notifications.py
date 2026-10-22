@@ -18,6 +18,7 @@ TITLES = {c: t for c, t, _ in CATEGORIES}
 KIND_CATEGORY = {k: c for c, _, kinds in CATEGORIES for k in kinds}
 NOTIFICATION_KINDS = sorted(KIND_CATEGORY)
 PROTECTED = "decide"  # at least one of Slack or email always stays on for this category
+OFF_NOTE = "turned off in this person's notification settings"  # what a copy that the person switched off says about itself
 
 
 class PrefError(ValueError):
@@ -132,6 +133,8 @@ def copy_state(row):
     st = row["delivery_status"]
     if st == "delivered" and row.get("sent_to") and row["sent_to"] != row["to_person"]:
         return "rehearsal"
+    if st == "skipped" and row.get("delivery_note") == OFF_NOTE:
+        return "off"
     return st
 
 
@@ -153,7 +156,7 @@ def entries(engine, person_id, f=None):
     for o in rows[:limit]:
         email = None
         if o["email_status"]:
-            email = {"state": copy_state({"delivery_status": o["email_status"], "sent_to": o["email_sent_to"], "to_person": o["to_person"]}), "note": o["email_note"] or ""}
+            email = {"state": copy_state({"delivery_status": o["email_status"], "sent_to": o["email_sent_to"], "to_person": o["to_person"], "delivery_note": o["email_note"]}), "note": o["email_note"] or ""}
         t = engine.d.type(o["r_type"]) if o["r_type"] else None
         out.append({"id": o["id"], "kind": o["kind"], "category": KIND_CATEGORY[o["kind"]], "category_title": TITLES[KIND_CATEGORY[o["kind"]]],
                     "subject": o["subject"] or "", "text": o["body"] or "", "created_at": o["created_at"], "read": o["read_at"] is not None,
@@ -243,4 +246,5 @@ def delivery_log(engine, f=None):
                     "created_at": o["created_at"], "can_retry": o["delivery_status"] == "failed"})
     cw, ca = _log_filters(f, status=False, paging=False)  # the totals ignore the status choice and the page, so the status chips show what each would find
     counts = {r["s"]: r["n"] for r in engine.s.all("SELECT o.delivery_status AS s, COUNT(*) n FROM outbox o WHERE 1=1" + "".join(" AND " + w for w in cw) + " GROUP BY o.delivery_status", tuple(ca))}
-    return {"items": out, "counts": {k: counts.get(k, 0) for k in DELIVERY_STATES}, "next_before": out[-1]["id"] if more and out else None}
+    kinds = sorted(r["kind"] for r in engine.s.all("SELECT DISTINCT kind FROM outbox"))
+    return {"items": out, "counts": {k: counts.get(k, 0) for k in DELIVERY_STATES}, "kinds": kinds, "next_before": out[-1]["id"] if more and out else None}

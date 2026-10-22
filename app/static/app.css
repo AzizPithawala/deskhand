@@ -365,3 +365,51 @@ table.people td.pact { white-space: normal; min-width: 210px; }
 #idlg { max-width: min(680px, 94vw); max-height: 90vh; overflow-y: auto; }
 table.roles td { vertical-align: top; }
 table.roles select.field { min-width: 200px; }
+
+/* notifications and the delivery log */
+.nbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.nbar .seg2 { margin-bottom: 0; }
+.nfilters { display: none; grid-template-columns: 1fr; gap: 12px; padding: 12px 0 16px; border-top: 1px solid var(--rule); }
+.nfilters.open { display: grid; }
+@media (min-width: 560px) { .nfilters.open { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 900px) { .nfilters, .nfilters.open { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); align-items: end; } #nfilterbtn, #dfilterbtn { display: none; } }
+.nfilters .nsearch { grid-column: 1 / -1; }
+@media (min-width: 900px) { .nfilters .nsearch { grid-column: span 2; } }
+.nav .short { display: none; }
+@media (max-width: 479px) {  /* six items on a phone: the short word shows, the full one stays for screen readers */
+  .nav .short { display: inline; }
+  .nav .full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+.nlist { border-top: 1px solid var(--rule); }
+.nitem { display: grid; grid-template-columns: 10px 1fr; gap: 12px; padding: 14px 12px 14px 12px; border-bottom: 1px solid var(--rule); text-decoration: none; color: var(--ink); }
+.nitem:hover { background: var(--wash); }
+.nitem .ndot { width: 8px; height: 8px; margin-top: 9px; border-radius: 50%; }
+.nitem.unread { box-shadow: inset 2px 0 0 var(--accent); }
+.nitem.unread .ndot { background: var(--accent); }
+.nitem .nbody { display: grid; gap: 2px; min-width: 0; }
+.nitem .nt { display: flex; gap: 4px 12px; justify-content: space-between; flex-wrap: wrap; align-items: baseline; }
+.nitem .nt b { font-weight: 500; overflow-wrap: anywhere; }
+.nitem.unread .nt b { font-weight: 650; }
+.nitem .nl { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.nitem .nc { display: flex; gap: 4px 16px; flex-wrap: wrap; margin-top: 2px; }
+.nitem .act { color: var(--pending); font-weight: 600; }
+#nmore { margin-top: 16px; }
+table.prefs td, table.prefs th { vertical-align: middle; }
+table.prefs th:nth-child(n+2), table.prefs td:nth-child(n+2) { text-align: center; width: 76px; }
+table.prefs input[type=checkbox] { width: 22px; height: 22px; }
+#pdlg { max-width: min(600px, 94vw); max-height: 92vh; overflow-y: auto; }
+.dstat { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.dstat button { border: 1px solid var(--rule); background: transparent; border-radius: 999px; padding: 6px 14px; min-height: 40px; color: var(--muted); }
+.dstat button[aria-pressed="true"] { background: var(--wash); color: var(--ink); font-weight: 600; }
+.dtop { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+table.cards td { overflow-wrap: normal; }
+table.cards td.meta { overflow-wrap: anywhere; min-width: 160px; }
+table.cards td[data-l="Via"], table.cards td[data-l="Status"], table.cards td[data-l="Tries"] { white-space: nowrap; }
+table.cards td.dact { white-space: normal; }
+@media (max-width: 699px) {
+  table.cards, table.cards tbody, table.cards tr, table.cards td { display: block; }
+  table.cards tr:first-child { display: none; }
+  table.cards tr { border-bottom: 1px solid var(--rule); padding: 12px 0; }
+  table.cards td { border: 0; padding: 2px 0; }
+  table.cards td[data-l]::before { content: attr(data-l) ": "; color: var(--muted); }
+}

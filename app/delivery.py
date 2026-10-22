@@ -151,7 +151,7 @@ class Delivery:
         if not self.ready(channel):
             return "skipped", ("Slack" if channel == "chat" else "Gmail") + " not connected or not configured"
         if to_id is not None and self.mode() == "live" and not notifications.allowed(self.e.s, to_id, kind, channel):  # rehearsal ignores preferences: the admin sees everything
-            return "skipped", "turned off in this person's notification settings"
+            return "skipped", notifications.OFF_NOTE
         if to_id is not None:
             rec = self.recipient(to_id)
             if not rec:

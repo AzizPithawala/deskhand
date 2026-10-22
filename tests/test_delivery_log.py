@@ -115,6 +115,10 @@ def test_each_filter_on_its_own_and_combined(mixed):
     assert ids(owner, status="failed", channel="slack", kind="reminder", person=boss.uid, request_id=leave) == [n["b"]]
 
 
+def test_the_log_lists_the_kinds_that_exist_so_the_filter_offers_only_real_choices(mixed):
+    assert log(mixed[0])["kinds"] == ["approval_request", "approved", "parked", "reminder"]
+
+
 def test_the_totals_ignore_the_status_and_the_page_so_the_chips_show_what_each_would_find(mixed):
     owner, boss, ann, bob, leave, n, t0 = mixed
     assert log(owner)["counts"] == {"pending": 1, "sending": 0, "delivered": 2, "failed": 2, "skipped": 3}
