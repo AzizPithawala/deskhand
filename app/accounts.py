@@ -213,6 +213,8 @@ class Accounts:
         for k in ("department", "slack_id", "phone"):
             if k in fields:
                 v = re.sub(r"\s+", " ", str(fields[k] or "")).strip()[:100]
+                if k == "slack_id" and v and not re.match(r"^[UW][A-Z0-9]{6,}$", v):
+                    raise AccountError("A Slack user id looks like U012AB3CD. Leave it empty to use Match Slack accounts.")
                 sets[k] = v or None
         if "manager_id" in fields:
             mid = fields["manager_id"] or None

@@ -1,4 +1,4 @@
-# Deskhand (agent platform, Phase 2: company setup)
+# Deskhand (agent platform, Phase 3: leave through Slack and Gmail)
 
 An agent that handles employee requests end to end: understands the request, routes it by rule to the right approver,
 tracks approve / reject (reason required) / pending, escalates on time, acts through guarded actions and keeps an audit trail.
@@ -13,7 +13,7 @@ pip install -r requirements-dev.txt
 DESKHAND_SIGNUP_CODES=any-code-you-like make dev        # or: uvicorn app.main:app --reload --port 8000
 ```
 Open http://localhost:8000. Without `DESKHAND_SIGNUP_CODES` registration is closed and only "Try the demo" works. Needs Python 3.11+. Run the tests with
-`make test` (235 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
+`make test` (330 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
 Requests are understood by a deterministic rules classifier. An admin of a real company can switch on viaSocket AI (a Claude model, no model key needed)
 on the Health page; it only proposes the request type and details, waits at most 25 seconds, falls back to the rules on any failure, and never sees salary or
 payroll messages. (`requirements.txt` is the deploy list; `requirements-dev.txt` adds pytest.)
@@ -44,6 +44,12 @@ Admins open **Setup** (and **Integrations**, **People**) from the sidebar; on a 
 - **Checklist.** Six steps that tick themselves from the data: invite people, set managers, choose role holders, review the request types ("Looks right"), connect Slack and Gmail, send a test request.
 - The **demo company** shows its prepared rules read-only. Under the hood: tables `roles`, `type_rules`, `policies` in each company's own database file, merged over the template by `Directory.for_company`; `tests/test_setup_directory.py` runs the old hard-coded router against the new data-driven one for over 50,000 combinations.
 
+## Leave record (Phase 3, step 1)
+A real company keeps leave in its own **append-only ledger** (database triggers forbid editing or deleting a line). Each person gets the yearly allowance (default casual 12, sick 8, editable under Setup, Leave) the first time leave is looked at in a calendar year; leave taken
+and an admin's corrections (Setup, Leave, Adjust: plus or minus days with a reason) are further lines, each with who and why. A balance is the sum of a person's lines for the year; a leave is keyed by its request, so a retry can never deduct twice. Only Monday to Friday count, a half day is 0.5,
+and the reader now knows whether two dates are a range ("2 Nov to 6 Nov") or separate days ("Friday and Monday"). The approver's card shows the working days and the balance before and after, and warns about a shortfall or an overlap; the approver decides and the balance may go negative (shown in red).
+Weekend-only dates ask again instead of reaching an approver. Everyone has a **Leave** page with their balance and history; policy questions answer from the ledger. The demo company keeps its prepared mock HR. Not done yet: cancelling an applied leave, accrual, holidays, carry-forward.
+
 ## What works (and is tested)
 - Lifecycle: submitted, needs info, pending approval (one or two approvers), approved, rejected (reason mandatory),
   fulfilling, fulfilled, closed, parked, cancelled. Invalid transitions are refused.
@@ -63,15 +69,19 @@ one-handed phone use), and for admins **People**, **Health** (dashboard, deliver
 and Sign out. The request journey shows each stage, who holds it, how long it has waited and what happens next; every status has its
 own shape as well as a colour. Light and dark follow the system; reduced motion is respected. `tests/test_ui_contract.py` checks that every API path the script calls exists.
 
-## Connections and delivery (live-only, per company)
-Admin only, on Health, and the only setup. The admin connects Slack and picks the notification channel, then connects Gmail, picks the
-"send from" mailbox and enters ONE notification email. Sign-in happens on each app's own screen; Deskhand stores only connection ids on the server
-(never shown, never logged). There is no switch and no mock: as soon as Slack and its channel are set, every chat notification goes to that channel,
-prefixed "[Deskhand to <name>]"; as soon as Gmail and the notification email are set, every email notification goes to that one address with
-"To <name>:" in the subject, never any other address. If either is missing, an admin sees a red banner on every tab and everything else keeps working.
-Approvals never wait for delivery: a sweep delivers outbox rows, exactly once each (atomic claim, single-flight sweep), and never resends when the
-outcome is unknown (failed rows show with a Retry button). Backstop cap: 150 deliveries per UTC day per company. Message text is escaped for Slack; approver messages
-carry a link to Deskhand. `make preflight` prints yes/no for every company's setup.
+## Messaging: Slack, email and rehearsal (Phase 3, step 2)
+Admins connect Slack and Gmail once on **Integrations** (you sign in on each app's own screen; Deskhand stores only connection ids on the server, never shown or logged). After that every message is addressed to a **person in the directory**:
+- **Slack:** a direct message to that person's Slack account. "Match Slack accounts" finds each person's account from their directory email (a batch of 25 per press); a person with no match gets email only, and an admin can also type a Slack user id on the People page.
+- **Email:** to the person's directory address, with a link to the request. The request email asking an approver comes from the **requester's own Gmail** and decisions and completion come from the **approver's own Gmail** when they connected one on **Your mailbox** (account menu); otherwise the company mailbox sends. A personal mailbox is used only for messages about that person's own requests, with text Deskhand writes, and if it cannot send, the company mailbox does.
+- **What goes where:** chat replies, policy answers and "request received" stay in the Deskhand chat. Approval needed, reminders, escalations, decisions, completion, tasks and failures go to Slack; the important ones are also emailed (`SLACK_KINDS` and `EMAIL_KINDS` in `app/delivery.py`).
+- **Rehearsal first.** Every company starts in rehearsal: all Slack messages and emails go only to one admin, labelled "[Rehearsal] To <person>", so you can see exactly what each person would get. **Go live** (an audited admin action) switches to the real people; nothing written before the switch is sent after it, and **Back to rehearsal** is always available. Admins see a note about the mode and about people with no Slack match.
+- **Approve / Reject buttons in Slack** (live mode only, once an admin switches them on): a live approval DM carries buttons. Deskhand builds one viaSocket automation per company from code; each approval starts one run that DMs the buttons and waits for the click, then calls
+  `POST /api/hooks/slack-decision` (public, open past the shared password). The call needs a one-time token issued for that very message (only its hash is stored) and the Slack user id Slack reports must belong to a directory person who can act on the request now; Approve decides it,
+  Reject sends them to the web page for the mandatory reason, and every repeat, forgery or stale click answers 200 with a status word and changes nothing. If the buttons cannot be started the plain message with the link goes instead; reminders and decisions never have buttons. Verified with a real press on 2026-10-22 (spike S2); an admin checks their own company with "Send me a test approval" on Integrations. Needs `DESKHAND_BASE_URL` to be the public https address.
+**Going live on Embarko, in order:** (1) set `DESKHAND_BASE_URL` to the app's public https address and `DESKHAND_SIGNUP_CODES` in Embarko's App setup (admins see a red banner while the address is missing); (2) register the company and invite people on the People page;
+(3) on Integrations connect Slack and Gmail and press Match Slack accounts; (4) set managers and role holders on Setup; (5) stay in rehearsal, ask for leave as an employee and look at what the rehearsal admin receives in Slack and email; (6) optionally Switch on Slack buttons and Send me a test approval;
+(7) press Go live. Each person may also connect their own Gmail on Your mailbox. A full rehearsal on real accounts (2026-10-22) sent the approval email from the requester's own Gmail and the decision and completion emails from the approver's own Gmail, all labelled "[Rehearsal]" and addressed only to the admin.
+Unchanged: approvals never wait for delivery; each row is delivered exactly once (atomic claim, single-flight sweep); a failed delivery is parked with a Retry button and never resent when the outcome is unknown; 150 deliveries per UTC day per company as a backstop; Slack text is escaped and email is HTML-escaped. The Slack DM was verified with a real call on 2026-10-22 (spike S1). `make preflight` prints yes/no per company.
 
 ## Hosted (Embarko)
 One process, no managed database and no backups, so everything lives in `DATA_DIR` (the root `main.py` points `DESKHAND_DATA_DIR` there). The app has its own sign-in, so the old shared

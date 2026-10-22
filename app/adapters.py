@@ -9,6 +9,10 @@ class ActionError(Exception):
 
 
 class MockHR:
+    label = "the HR system"
+    applied = "applied in the HR system"
+    records_balances = False  # its balances are the demo's prepared figures (Directory.balances), not records
+
     def __init__(self, directory):
         self.d = directory
         self.reset()
@@ -38,7 +42,7 @@ class MockHR:
                 return dict(lv)
         return None
 
-    def create_leave_request(self, emp_id, dates, leave_type, reason, ref, half_day=False):
+    def create_leave_request(self, emp_id, dates, leave_type, reason, ref, half_day=False, date_range=False):
         self.calls += 1
         if self.down:
             raise ActionError("HR system unavailable (503)", retryable=True)

@@ -117,4 +117,7 @@ Per phase: `make test` green including tenant-isolation tests, a browser demo of
 - **Phase 2 (company setup):** built on branch `phase-2-company-setup`. Business roles with one holder each, editable rules for the 8 built-in request types (a primary approver plus up to two conditional extra approvers),
   company policies, a routing test, a computed checklist, and a top-level Integrations page. Deliberate scope choices: no new request types (Phase 5), Keka skipped (no test tenant), and the "workflow editor"
   is this per-type rule editor; ordered free-form steps and AI-drafted workflows stay in Phase 5.
-- **Next:** Phase 3, leave through Slack and Gmail end to end with a Deskhand-owned leave ledger.
+- **Phase 3 (leave through Slack and Gmail):** built on branch `phase-3-leave-slack-gmail`. A Deskhand-owned append-only leave ledger (simple yearly allowance, Monday to Friday, half days, a low balance warns the approver); messages go to people (Slack DM by Slack id, email to the directory address) from the requester's or the approver's own mailbox when connected;
+  every company starts in rehearsal (all messages to one admin) until an admin goes live; Approve and Reject buttons in Slack through a per-company viaSocket automation and a one-time-token callback. Spikes S1 (Slack DM), S2 (a real button press reaches Deskhand) and S3 (interactive DM) passed on the test workspace (docs/VIASOCKET_FACTS.md).
+  Not done: Slack asking (slow, later), cancelling an applied leave, accrual, holidays, carry-forward, a nudge on the Ask page to connect a mailbox. Needs on Embarko: `DESKHAND_BASE_URL` (public https address) and a signup code.
+- **Next:** Phase 4, a Notifications tab (unread badge, filters, preferences, an organisation delivery log for admins).

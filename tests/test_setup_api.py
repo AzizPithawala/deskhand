@@ -210,7 +210,8 @@ def test_reviewed_marks_and_the_checklist_follow_the_data(team):
     owner.post(f"/api/people/{boss.uid}", {"manager_id": owner.uid})
     ann.post("/api/ingest", {"text": "I need Friday and Monday off, family function.", "source_event_id": "c"})
     c = owner.get("/api/setup/checklist").json()
-    assert [s["done"] for s in c["steps"]] == [True, True, True, True, False, True] and c["done"] == 5 and c["total"] == 6 and c["dismissed"] is False
+    assert [s["done"] for s in c["steps"]] == [True, True, True, True, False, True, False] and c["done"] == 5 and c["total"] == 7 and c["dismissed"] is False
+    assert c["steps"][6]["key"] == "live" and c["steps"][6]["detail"].startswith("Rehearsal: everything goes only to Owner of Acme Ltd")
     assert owner.post("/api/setup/checklist/dismiss").status_code == 200 and owner.get("/api/setup/checklist").json()["dismissed"] is True
 
 
@@ -313,15 +314,16 @@ def test_payroll_is_always_blocked_and_the_contact_is_the_one_you_set(team):
     assert owner.post("/api/setup/types/payroll", {"enabled": False}).status_code == 422 and ann.get("/api/requests").json() == []
 
 
-def test_policy_answers_come_from_the_company_and_balances_are_never_invented(team):
+def test_policy_answers_come_from_the_company_and_balances_come_from_its_own_ledger(team):
     owner, it, boss, ann, bob = team
     ask = lambda text, eid: (ann.post("/api/ingest", {"text": text, "source_event_id": eid}), replies(ann)[0])[1]
     assert "don't have that policy" in ask("What is the work from home policy?", "q1")  # Acme's wording never leaks into a new company
-    assert "can't see leave balances yet" in ask("How many leaves do I have left?", "q2") and "6" not in replies(ann)[0]
+    assert "Your leave balance: casual 12, sick 8." in ask("How many leaves do I have left?", "q2")  # the company's own ledger, not Acme's figures
     owner.post("/api/setup/policies", {"title": "Work from home", "text": "Three days a week with manager approval."})
     assert "Three days a week with manager approval." in ask("What is the work from home policy?", "q3")
     rid = ann.post("/api/ingest", {"text": "I need Friday and Monday off, family function.", "source_event_id": "q4"}).json()["request_ids"][0]
-    assert "balance" not in owner.engine.req(rid)["details"]  # the approver is not shown figures nobody recorded
+    chk = owner.engine.req(rid)["details"]["leave_check"]
+    assert chk["days"] == 2 and chk["balance"] == 12 and chk["after"] == 10 and chk["warnings"] == []  # the approver sees what it does to the balance
     demo = Browser(owner.main)
     demo.demo("e01")
     demo.post("/api/ingest", {"text": "How many leaves do I have left?", "source_event_id": "q5"})

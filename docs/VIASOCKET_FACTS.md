@@ -178,3 +178,29 @@ VERIFIED: Gmail sent from each person's own mailbox
   Revoke the old connection when someone reconnects.
 - Connecting an outside Google account can show "ask plugs@viasocket.com for permission": viaSocket's Google app is in testing mode, so only added test users can connect until it is verified by Google.
 UNVERIFIED: Keka (no test account); viaSocket Table (not needed).
+
+
+## PHASE 3 PREPARATION (2026-10-22): documented, NOT yet verified with a real call
+Read from viaSocket's public Slack document (`documentation/rowbu58rc.md` and its event pages, no sign-in, no action run):
+- Send Direct Message: action_id `rowovgwtt9u4`, version V3, action_version_id `rowa5mg9fywy`. inputData `{userId, content, isScheduledMessage:"no"|"yes", post_at?, bot_details?{bot_name, ...}}`;
+  `userId` is "Select or Enter the user's unique ID". The sample result is Slack's own `{ok, ts, channel:"D...", message}` (same shape as Send Message). Our adapter (`slack_dm`) sends `userId`, `content`, `isScheduledMessage`, `bot_details.bot_name`.
+- Send Interactive Message: action_id `rowbevmtsy7h`, version V61. inputData `{messageto:"user"|"channel", userId?, channel_id?, content, operation:"Approval"|"Form", buttons?: Record<string,string>, bot_details?}`:
+  an approval message can be addressed to a user directly (so spike S3 is likely to pass).
+- The Slack "Send Message" action also accepts a user as the destination, but its input shape was not documented in the pages read.
+
+## SPIKE S1 RESULT (2026-10-22, real calls through our adapter on the test workspace; no ids or secrets recorded)
+VERIFIED
+- Get User Information by directory email answers the member's Slack user id in 2.6 s (an id starting with U, 9+ characters).
+- Send Direct Message (`userId` = that id, `content`, `isScheduledMessage:"no"`, `bot_details.bot_name`) answers `{ok:true, ts, channel:"D..."}` in 1.8 s and the message arrived as a DM from "Deskhand". Our adapter keeps only `ts` and `channel`.
+- An unknown user id answers HTTP 200 with the bare string `channel_not_found` as `data` (no `ts`): classified as a PERMANENT failure (never retried) with the message "Slack refused the message: channel_not_found". Nothing was sent to anyone.
+- S3 was already proven in Phase 0: Send Interactive Message with `messageto:"user"` and `userId` delivers a DM with Approve / Reject buttons (a direct run does not capture the click; an automation does).
+STILL UNVERIFIED (spike S2, needs the callback deployed): an automation's HTTP request step calling back to a public Deskhand URL with the click.
+
+## SPIKE S2 RESULT (2026-10-22, real calls: our adapter built the automation on the test identity, Embarko served the callback, one real button press)
+VERIFIED
+- Our adapter built the approval automation from code in 8 s: automation token (`GET /users/register`), create, webhook trigger, steps. All four calls were accepted. Re-saving only the steps of an existing automation is also accepted.
+- Starting one run (`POST <run>/func/<automation id>` with `{slack_user, text, token}`) answers in 0.6 s with "Flow is currently paused, waiting for human intervention": the Slack message with buttons was delivered and the run waits.
+- A real press of Reject resumed the run. The run history shows step `ask` ended with `pausedStepStatus: "INTERVENTION"` and step `report` ran after the click. The `ask` result holds `user.id` (a Slack user id) and `actions[0].value` = "reject", exactly what the `report` step reads.
+- The `report` step's `axios.post` to the public Deskhand URL on Embarko worked: Deskhand answered HTTP 200 `{"status":"invalid"}` (the token was deliberately fake), the step returned `{status:200, answer:{status:"invalid"}}` and Embarko's log recorded "slack decision: invalid". So a viaSocket step can call our own endpoint, and the shared password gate does not block it.
+- Deleting an automation: `PUT /embed/updatestatus/<automation id>?status=0` (same call as removing a runner).
+STILL UNVERIFIED: the full loop with a real one-time token in a real company on the hosted instance (the callback logic is covered by tests against fakes, and each link was proven separately above); how long a run may wait for a click (the 58-second limit does not apply to a paused step; no upper wait was seen).

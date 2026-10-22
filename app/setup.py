@@ -361,7 +361,7 @@ def simulate(d, person_id, code, estimated_cost=None, resource=None):
     else:
         out["outcome"] = "no_approval"
     if t.get("fulfilment_kind") == "auto_action":
-        out["fulfilment"] = "Deskhand applies it in the HR system"
+        out["fulfilment"] = "Deskhand applies it in the HR system" if d.balances else "Deskhand records it in the company's leave record"
     else:
         ful = d.resolve_rule(t.get("fulfiller_rule"), e) or d.role_holder("admin")
         out["fulfiller"], out["fulfilment"] = nm(ful), f"{ful['name'] if ful else 'no one'} does the task and clicks Done"
@@ -371,7 +371,7 @@ def simulate(d, person_id, code, estimated_cost=None, resource=None):
 
 
 # ---------------- checklist ----------------
-def checklist(d, store, people, connected, requests):
+def checklist(d, store, people, connected, requests, mode="rehearsal", rehearsal_name=""):
     """Setup steps, computed from the data. `people`: the company's users; `connected`: {app: bool}; `requests`: how many requests exist."""
     joined = [p for p in people if p["status"] in ("active", "invited")]
     others = [p for p in joined if p["access_role"] != "owner"]
@@ -388,5 +388,7 @@ def checklist(d, store, people, connected, requests):
         {"key": "apps", "title": "Connect Slack and Gmail", "done": bool(connected.get("slack") and connected.get("gmail")),
          "detail": ", ".join(f"{a.capitalize()} {'connected' if connected.get(a) else 'not connected'}" for a in ("slack", "gmail")), "link": "#integrations"},
         {"key": "test", "title": "Send a test request", "done": requests > 0, "detail": f"{requests} request{'s' if requests != 1 else ''} so far", "link": "#ask"},
+        {"key": "live", "title": "Switch to live messaging", "done": mode == "live",
+         "detail": "Live: Slack messages and emails reach the real people" if mode == "live" else f"Rehearsal: everything goes only to {rehearsal_name or 'an admin'}", "link": "#integrations"},
     ]
     return {"steps": steps, "done": sum(1 for s in steps if s["done"]), "total": len(steps), "dismissed": store.get_setting("checklist_dismissed") == "1"}

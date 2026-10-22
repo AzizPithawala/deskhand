@@ -12,6 +12,7 @@ from .db import Store
 from .delivery import Delivery
 from .directory import Directory
 from .engine import Engine
+from .ledger import Ledger, LedgerHR
 
 DEMO_ORG_ID = "acme-demo"
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -38,7 +39,11 @@ class OrgRegistry:
         else:
             setup.seed_roles(store)
             directory = Directory.for_company(self._users(org["id"]), store)
-        engine = Engine(store=store, directory=directory, api_key="")
+        ledger = None if org["is_demo"] else Ledger(store)  # the demo keeps its prepared mock HR and chaos lab
+        engine = Engine(store=store, directory=directory, hr=LedgerHR(ledger) if ledger else None, api_key="")
+        if ledger:
+            ledger.today = engine.today
+            engine.ledger = ledger
         engine.org_id, engine.is_demo = org["id"], bool(org["is_demo"])
         engine.live = Delivery(engine, tenant=org["id"])  # live-only delivery, per company
         ai = vsai.ViaSocketClassifier(engine.s, org["id"])

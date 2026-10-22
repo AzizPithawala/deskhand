@@ -2,6 +2,7 @@
 database file; admin, demo-only and visibility rules are enforced here, in code."""
 import contextlib
 import hmac
+import json
 import logging
 import os
 import re
@@ -15,6 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from . import accounts as ac, chaos, delivery as dl, setup as st, viasocket_adapter as vs, viasocket_ai as vsai
+from . import slack_decisions as sd
+from .ledger import num
 from .engine import InvalidTransition, NotAuthorized, Refused
 from .registry import DEMO_ORG_ID, open_platform
 
@@ -40,6 +43,8 @@ async def password_gate(request, call_next):
     import base64
     import hashlib
     from fastapi.responses import PlainTextResponse
+    if request.url.path == "/api/hooks/slack-decision":  # viaSocket calls this: it is protected by a one-time token and the clicker's Slack identity, not by the shared password
+        return await call_next(request)
     now = time.time()
     _gate_failures[:] = [t for t in _gate_failures if now - t < 60]
     if len(_gate_failures) >= 20:
@@ -351,7 +356,8 @@ def state(ctx: Ctx = Depends(auth)):
     people = list(ctx.engine.d.employees.values())
     if not ctx.is_admin:  # colleagues' contact details are for admins
         people = [{k: p.get(k) for k in ("id", "name", "role", "roles", "department", "manager_id", "active")} for p in people]
-    return {"employees": people, "types": list(ctx.engine.d.types.values()), "now": ctx.engine.now()}
+    hr = ctx.engine.hr
+    return {"employees": people, "types": list(ctx.engine.d.types.values()), "now": ctx.engine.now(), "hr_label": hr.label, "hr_applied": hr.applied}
 
 
 @app.post("/api/ingest")
@@ -437,9 +443,10 @@ def digest(ctx: Ctx = Depends(auth)):
 @app.get("/api/clock")
 def clock(ctx: Ctx = Depends(auth)):
     d = ctx.engine.live.summary()
-    banners = [] if ctx.is_demo else list(d["problems"]) + (
+    banners = [] if (ctx.is_demo or not ctx.is_admin) else list(d["problems"]) + (
         [f"Delivery paused: the daily cap of {d['cap']} messages is reached ({d['used_today']}). Messages stay in the outbox until tomorrow (UTC)."] if d["capped"] else [])
-    return {"now": ctx.engine.now(), "banners": banners, "demo": ctx.is_demo, "delivery": {"used_today": d["used_today"], "cap": d["cap"], "capped": d["capped"]}}
+    return {"now": ctx.engine.now(), "banners": banners, "notes": d["notes"] if (ctx.is_admin and not ctx.is_demo) else [], "demo": ctx.is_demo, "mode": d["mode"],
+            "delivery": {"used_today": d["used_today"], "cap": d["cap"], "capped": d["capped"]}}
 
 
 @app.post("/api/admin/breaker_reset")
@@ -672,13 +679,93 @@ def setup_checklist(ctx: Ctx = Depends(admin)):
     store = vs.ConnectionStore(ctx.engine.s, ctx.org["id"])
     connected = {a: bool((store.get(a) or {}).get("script_id")) for a in ("slack", "gmail")}
     n = ctx.engine.s.one("SELECT COUNT(*) c FROM requests")["c"]
-    return {"demo": False, **st.checklist(ctx.engine.d, ctx.engine.s, accounts.list_users(ctx.org["id"]), connected, n)}
+    live = ctx.engine.live
+    return {"demo": False, **st.checklist(ctx.engine.d, ctx.engine.s, accounts.list_users(ctx.org["id"]), connected, n, live.mode(), (live.rehearsal_person() or {}).get("name", ""))}
 
 
 @app.post("/api/setup/checklist/dismiss")
 def setup_checklist_dismiss(ctx: Ctx = Depends(real_admin)):
     ctx.engine.s.set_setting("checklist_dismissed", 1)
     return {"ok": True}
+
+
+# ---------------- Leave: the company's own ledger. A person sees their own; admins manage allowances and corrections. ----------------
+class LeaveAllowance(BaseModel):
+    yearly_days: float
+
+
+class LeaveAdjust(BaseModel):
+    person_id: str
+    leave_type: str
+    days: float
+    note: str
+
+
+def _entry(e, r):
+    return {"id": r["id"], "type": r["leave_type"], "year": r["year"], "days": num(r["days"]), "kind": r["kind"], "request_id": r["request_id"],
+            "dates": json.loads(r["dates_json"] or "[]"), "note": r["note"] or "", "by": e.name(r["actor"]) if r["actor"] not in (None, "system") else "Deskhand", "at": r["created_at"]}
+
+
+def _ledger(ctx):
+    led = getattr(ctx.engine, "ledger", None)
+    if led is None:
+        raise HTTPException(409, "The demo company uses prepared figures, not a ledger.")
+    return led
+
+
+def _val(fn, *a):
+    try:
+        return fn(*a)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/leave/me")
+def leave_me(ctx: Ctx = Depends(auth)):
+    led = getattr(ctx.engine, "ledger", None)
+    if led is None:  # the demo: its prepared balances, no history
+        return {"demo": True, "year": None, "types": [{"code": k, "name": k.capitalize() + " leave", "yearly_days": None, "balance": v} for k, v in ctx.engine.hr.list_leave_balances(ctx.uid).items()], "entries": []}
+    names = {t["code"]: t["name"] for t in led.types()}
+    return {"demo": False, "year": led.year(), "types": [{"code": t["code"], "name": t["name"], "yearly_days": num(t["yearly_days"]), "balance": num(led.balance(ctx.uid, t["code"]))} for t in led.types()],
+            "entries": [{**_entry(ctx.engine, r), "type_name": names.get(r["leave_type"], r["leave_type"])} for r in led.entries(ctx.uid)]}
+
+
+@app.get("/api/setup/leave")
+def setup_leave(ctx: Ctx = Depends(admin)):
+    led = getattr(ctx.engine, "ledger", None)
+    if led is None:
+        return {"demo": True, "types": [], "people": []}
+    people = [{"id": e["id"], "name": e["name"], "balances": {k: num(v) for k, v in led.balances(e["id"]).items()}} for e in ctx.engine.d.employees.values() if e["active"]]
+    return {"demo": False, "year": led.year(), "types": [{"code": t["code"], "name": t["name"], "yearly_days": num(t["yearly_days"])} for t in led.types()], "people": people}
+
+
+@app.post("/api/setup/leave/{code}")
+def setup_leave_allowance(code: str, b: LeaveAllowance, ctx: Ctx = Depends(real_admin)):
+    old = _val(_ledger(ctx).set_yearly, code, b.yearly_days)
+    ctx.engine.audit(None, ctx.uid, "setup_changed", {"area": "leave", "code": code, "changes": {"yearly_days": [num(old), num(b.yearly_days)]}})
+    return setup_leave(ctx)
+
+
+@app.post("/api/leave/adjust")
+def leave_adjust(b: LeaveAdjust, ctx: Ctx = Depends(real_admin)):
+    led = _ledger(ctx)
+    person = ctx.engine.d.emp(b.person_id)
+    if not person or not person["active"]:
+        raise HTTPException(422, "Choose someone from this company who has joined and is active.")
+    note = re.sub(r"\s+", " ", re.sub(r"[\x00-\x1f\x7f]", " ", b.note or "")).strip()
+    if not 3 <= len(note) <= 200:
+        raise HTTPException(422, "Say why in 3 to 200 characters: the record keeps the reason.")
+    balance = _val(led.adjust, b.person_id, b.leave_type, b.days, note, ctx.uid)
+    ctx.engine.audit(None, ctx.uid, "leave_adjusted", {"person": b.person_id, "type": b.leave_type, "days": num(b.days), "note": note, "balance": num(balance)})
+    return setup_leave(ctx)
+
+
+@app.get("/api/leave/people/{pid}")
+def leave_person(pid: str, ctx: Ctx = Depends(admin)):
+    led = _ledger(ctx)
+    if not ctx.engine.d.emp(pid):
+        raise HTTPException(404, "Not found.")
+    return {"person": ctx.engine.name(pid), "entries": [_entry(ctx.engine, r) for r in led.entries(pid)]}
 
 
 # ---------------- Connections (viaSocket). Admin only. auth_id and script_id never leave the server. ----------------
@@ -809,6 +896,9 @@ def connection_disconnect(key: str, ctx: Ctx = Depends(real_admin)):
     client, store = _real(ctx)
     row = store.get(key)
     if row:
+        if key == "slack" and store.get("slack_flow"):  # the approval automation lives on this connection: remove it first, as viaSocket advises
+            client.api("PUT", f"/embed/updatestatus/{store.get('slack_flow')['script_id']}?status=0")
+            store.delete("slack_flow")
         client.api("PUT", f"/embed/updatestatus/{row['script_id']}?status=0")  # remove the runner first, then the connection
         r = client.revoke(row["auth_id"])
         if not r.ok:
@@ -829,13 +919,13 @@ def connection_test(b: ConnAct, ctx: Ctx = Depends(real_admin)):
         if not EMAIL.match((b.email or "").strip()):
             raise HTTPException(422, "enter one valid email address")
         r = integ.slack_lookup_user(b.email.strip())
-    elif b.action == "slack_send":
-        r = integ.slack_send("Deskhand connection test: this channel will receive request notifications.")
-    elif b.action == "gmail_send":
-        to = ctx.engine.live.notify_email()
-        if not to:
-            raise HTTPException(409, "Set the notification email first.")
-        r = integ.gmail_send(to, "Deskhand connection test", "<p>This is a test email from Deskhand. Nothing else was done.</p>")
+    elif b.action == "slack_send":  # a direct message to the signed-in admin, never to anyone else
+        me = ctx.engine.d.emp(ctx.uid)
+        if not (me or {}).get("slack_id"):
+            raise HTTPException(409, "Your Slack account is not matched yet. Press Match Slack accounts first.")
+        r = integ.slack_dm(me["slack_id"], "Deskhand connection test: Slack direct messages from Deskhand will arrive here.")
+    elif b.action == "gmail_send":  # an email to the signed-in admin's own address
+        r = integ.gmail_send(ctx.user["email"], "Deskhand connection test", "<p>This is a test email from Deskhand. Nothing else was done.</p>")
     else:
         raise HTTPException(404, "unknown test")
     ctx.engine.audit(None, ctx.uid, "integration_test", {"action": b.action, "outcome": r.kind, "code": r.code})
@@ -843,14 +933,11 @@ def connection_test(b: ConnAct, ctx: Ctx = Depends(real_admin)):
 
 
 # ---------------- Delivery status ----------------
-def _mask(addr):
-    return (addr[0] + "***@" + addr.split("@", 1)[1]) if addr else ""
-
-
 @app.get("/api/delivery")
 def delivery_status(ctx: Ctx = Depends(admin)):
     failed = ctx.engine.s.all("SELECT id, request_id, kind, channel, delivery_error FROM outbox WHERE delivery_status='failed' ORDER BY id DESC LIMIT 20")
-    return {**ctx.engine.live.summary(), "email_to": _mask(ctx.engine.live.notify_email()), "base_url": ctx.engine.live.base_url, "failed": failed}
+    people = [{"id": e["id"], "name": e["name"], "slack": bool(e.get("slack_id"))} for e in ctx.engine.d.employees.values() if e["active"]]
+    return {**ctx.engine.live.summary(), "base_url": ctx.engine.live.base_url, "failed": failed, "people_slack": people}
 
 
 @app.post("/api/delivery/sweep")
@@ -886,6 +973,176 @@ def ai_set(b: AISet, ctx: Ctx = Depends(real_admin)):
     vs.ConnectionStore(ctx.engine.s, ctx.org["id"]).set_ai_enabled(b.enabled)
     ctx.engine.audit(None, ctx.uid, "ai_setting_changed", {"enabled": b.enabled})
     return {"ok": True, "enabled": ctx.engine.vs_ai.enabled()}
+
+
+# ---------------- Slack Approve / Reject buttons ----------------
+class SlackClick(BaseModel):
+    token: str = ""
+    slack_user: str | None = None
+    decision: str | None = None
+
+
+@app.post("/api/hooks/slack-decision")
+def slack_decision(b: SlackClick, request: Request):
+    """Called by the company's viaSocket approval automation when someone presses a button. Public, so everything is checked here (see app/slack_decisions.py); every answer is HTTP 200."""
+    _limit("hook:" + _ip(request), 120, 60)
+    org = sd.org_of(b.token)
+    try:
+        eng = registry.engine_for(org) if org else None
+    except KeyError:
+        eng = None
+    if not eng or eng.is_demo:
+        log.warning("slack decision: invalid")
+        return {"status": "invalid"}
+    out = sd.decide(eng, b.token, (b.slack_user or "")[:40], (b.decision or "")[:12])
+    log.info("slack decision: %s", out["status"])  # the status word only: never the token or the user
+    return out
+
+
+def _callback_url(ctx):
+    return ctx.engine.live.base_url + "/api/hooks/slack-decision"
+
+
+@app.post("/api/integrations/slack/buttons")
+def slack_buttons_enable(ctx: Ctx = Depends(real_admin)):
+    r = vs.get_integration(ctx.engine.s, ctx.org["id"]).create_approval_flow(_callback_url(ctx))
+    if not r.ok:
+        raise HTTPException(409 if r.code in ("not_connected", "no_public_url") else 422, vs.redact(r.error))
+    ctx.engine.audit(None, ctx.uid, "slack_buttons_enabled", {})
+    return ctx.engine.live.summary()
+
+
+@app.post("/api/integrations/slack/test-approval")
+def slack_test_approval(ctx: Ctx = Depends(real_admin)):
+    """A test message with Approve and Reject buttons to the signed-in admin. Pressing them changes nothing: it only proves the click comes back."""
+    me = ctx.engine.d.emp(ctx.uid)
+    if not (me or {}).get("slack_id"):
+        raise HTTPException(409, "Your Slack account is not matched yet. Press Match Slack accounts first.")
+    token = sd.issue(ctx.engine, ctx.org["id"], "test", None, ctx.uid)
+    r = vs.get_integration(ctx.engine.s, ctx.org["id"]).slack_approval(me["slack_id"], "*Deskhand test*\nPress Approve or Reject. Nothing will change: this only checks that the buttons work.", token)
+    if not r.ok:
+        raise HTTPException(409 if r.code in ("no_flow", "not_connected") else 422, vs.redact(r.error))
+    return sd.latest_test(ctx.engine, ctx.uid)
+
+
+@app.get("/api/integrations/slack/test-approval")
+def slack_test_approval_state(ctx: Ctx = Depends(real_admin)):
+    return sd.latest_test(ctx.engine, ctx.uid)
+
+
+# ---------------- Delivery mode, Slack matching, and each person's own mailbox ----------------
+class DeliveryMode(BaseModel):
+    mode: str
+    rehearsal_person: str | None = None
+    confirm: bool = False
+
+
+SLACK_ID = re.compile(r"^[UW][A-Z0-9]{6,}$")
+
+
+@app.post("/api/delivery/mode")
+def delivery_mode(b: DeliveryMode, ctx: Ctx = Depends(real_admin)):
+    live = ctx.engine.live
+    if b.mode == "live" and not b.confirm:
+        raise HTTPException(422, "Confirm that real people should now receive Slack messages and emails.")
+    if b.mode == "live" and not (live.ready("chat") or live.ready("email")):
+        raise HTTPException(409, "Connect Slack or Gmail first: there is nothing to send with yet.")
+    _val(live.set_mode, b.mode, ctx.uid, b.rehearsal_person)
+    return live.summary()
+
+
+@app.post("/api/integrations/slack/match")
+def slack_match(ctx: Ctx = Depends(real_admin)):
+    """Find each person's Slack account from their directory email (Get User Information, verified). A batch at a time: each lookup is a call."""
+    integ = vs.get_integration(ctx.engine.s, ctx.org["id"])
+    todo = [e for e in ctx.engine.d.employees.values() if e["active"] and not e.get("slack_id")]
+    matched, missing, problems = [], [], []
+    for e in todo[:25]:
+        r = integ.slack_lookup_user(e["email"])
+        if not r.ok:
+            problems.append(vs.redact(r.error)[:120])
+            if r.kind == vs.PERMANENT:
+                break  # not connected or refused: the rest would fail the same way
+            continue
+        sid = (r.data or {}).get("id")
+        if (r.data or {}).get("found") and SLACK_ID.match(str(sid or "")):
+            accounts.update_user(ctx.org["id"], e["id"], ctx.uid, slack_id=sid)
+            matched.append(e["name"])
+        else:
+            missing.append(e["name"])
+    registry.refresh_directory(ctx.org["id"])
+    left = len([e for e in ctx.engine.d.employees.values() if e["active"] and not e.get("slack_id")])
+    ctx.engine.audit(None, ctx.uid, "slack_matched", {"matched": len(matched), "not_found": len(missing), "problems": len(problems)})
+    return {"matched": matched, "not_found": missing, "problems": problems[:3], "unmatched_left": left, "batch_limit": 25}
+
+
+def _mine(ctx):
+    if ctx.is_demo:
+        raise HTTPException(403, "This is switched off in the demo company.")
+    tenant = vs.personal_tenant(ctx.org["id"], ctx.uid)  # a person's own connections live under their own viaSocket identity
+    client = vs.VsClient(tenant)
+    if not client.configured():
+        raise HTTPException(409, "viaSocket is not configured on the server. See the README.")
+    return client, vs.ConnectionStore(ctx.engine.s, tenant)
+
+
+@app.get("/api/me/connections")
+def me_connections(ctx: Ctx = Depends(auth)):
+    if ctx.is_demo:
+        return {"demo": True, "configured": False, "app": None}
+    tenant = vs.personal_tenant(ctx.org["id"], ctx.uid)
+    row = vs.ConnectionStore(ctx.engine.s, tenant).get("gmail")
+    a = vs.APPS["gmail"]
+    return {"demo": False, "configured": vs.VsClient(tenant).configured(), "connect_js": vs.CONNECT_JS,
+            "app": {"key": "gmail", "name": a["name"], "icon": a["icon"], "connected": bool(row and row["script_id"])}, "email": ctx.user["email"]}
+
+
+@app.get("/api/me/connections/token")
+def me_token(ctx: Ctx = Depends(auth)):
+    client, _ = _mine(ctx)
+    return {"token": client.token(), "service_id": vs.APPS["gmail"]["service_id"], "action_ids": [v[1] for v in vs.APPS["gmail"]["actions"].values()]}
+
+
+@app.post("/api/me/connections/connected")
+def me_connected(b: ConnAct, ctx: Ctx = Depends(auth)):
+    client, store = _mine(ctx)
+    if not b.auth_id:
+        raise HTTPException(422, "no connection id was returned")
+    r = client.connections()
+    if not r.ok:
+        _vfail(r)
+    if str(b.auth_id) not in {str(c.get("id")) for c in r.data if isinstance(c, dict)}:
+        raise HTTPException(422, "that connection does not belong to you")  # a forged or stale id
+    en = client.enable(vs.APPS["gmail"]["service_id"], b.auth_id)
+    if not en.ok:
+        _vfail(en)
+    store.save("gmail", b.auth_id, en.data)
+    ctx.engine.audit(None, ctx.uid, "personal_mailbox_connected", {})
+    return {"ok": True}
+
+
+@app.post("/api/me/connections/gmail/disconnect")
+def me_disconnect(ctx: Ctx = Depends(auth)):
+    client, store = _mine(ctx)
+    row = store.get("gmail")
+    if row:
+        client.api("PUT", f"/embed/updatestatus/{row['script_id']}?status=0")
+        r = client.revoke(row["auth_id"])
+        if not r.ok:
+            raise HTTPException(422, vs.redact(r.error, store.secrets()))
+        store.delete("gmail")
+        ctx.engine.audit(None, ctx.uid, "personal_mailbox_disconnected", {})
+    return {"ok": True}
+
+
+@app.post("/api/me/connections/test")
+def me_test(ctx: Ctx = Depends(auth)):
+    """An email to your own address from your own mailbox, nothing else."""
+    _, store = _mine(ctx)
+    if not (store.get("gmail") or {}).get("script_id"):
+        raise HTTPException(409, "Connect your mailbox first.")
+    r = vs.get_integration(ctx.engine.s, vs.personal_tenant(ctx.org["id"], ctx.uid)).gmail_send(ctx.user["email"], "Deskhand mailbox test", "<p>Deskhand can send from this mailbox. Nothing else was done.</p>")
+    return {"outcome": r.kind, "error": vs.redact(r.error)}
 
 
 # ---------------- Background worker: delivery for every company, reminders and escalations for real ones ----------------

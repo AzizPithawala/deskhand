@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import datetime
 
-from . import classifier
+from . import classifier, delivery as dl
 from .adapters import ActionError, MockHR
 from .db import Store, dumps
 from .directory import Directory
@@ -49,11 +49,11 @@ def details_view(d):
     """Readable (label, value) pairs for people. No Python reprs, no empty values."""
     rows = []
     for k, v in d.items():
-        if v in (None, "", [], False):
+        if k in ("date_range", "leave_check") or v in (None, "", [], False) or (k == "balance" and d.get("leave_check")):
             continue
         label = LABELS.get(k, k.replace("_", " ").capitalize())
         if k == "dates":
-            val = ", ".join(_day(x) for x in v)
+            val = (" to " if d.get("date_range") and len(v) == 2 else ", ").join(_day(x) for x in v)
         elif k == "balance":
             label, val = "Leave balance", ", ".join(f"{a} {b}" for a, b in v.items())
         elif v is True:
@@ -61,6 +61,11 @@ def details_view(d):
         else:
             val = ", ".join(map(str, v)) if isinstance(v, list) else str(v)
         rows.append((label, val))
+    chk = d.get("leave_check")
+    if chk:  # what the leave would do to the balance, for the approver
+        rows.append(("Working days", str(chk["days"])))
+        rows.append(("Balance", f"{chk['type']} {chk['balance']} → {chk['after']}"))
+        rows += [("Check", w) for w in chk.get("warnings", [])]
     return rows
 
 
@@ -116,20 +121,43 @@ class Engine:
         self.s.q("INSERT INTO events(request_id,ts,actor,type,data_json) VALUES(?,?,?,?,?)",
                  (request_id, self.now(), actor, type_, dumps(data or {})))
 
-    def _notify(self, rid, to_id, body, kind, n=0, subject=None, channel=None):
+    SUBJECTS = {"approved": "Request #{rid} approved", "rejected": "Request #{rid} rejected", "fulfilled": "Request #{rid} is done", "stage_approved": "Request #{rid} moves on",
+                "reminder": "Reminder: request #{rid} is waiting", "escalation_1": "Escalated: request #{rid}", "escalation_2": "Escalated again: request #{rid}",
+                "escalated": "Request #{rid} was escalated", "task": "Task: request #{rid}", "parked": "Needs attention: request #{rid}", "pending_update": "Request #{rid} is still pending",
+                "assigned": "Request #{rid} has someone on it", "delay": "Request #{rid} hit a delay"}
+
+    def _decider(self, rid):
+        """Who last approved this request: whose mailbox a decision or completion email comes from."""
+        row = self.s.one("SELECT actor FROM events WHERE request_id=? AND type='approved_stage' ORDER BY id DESC LIMIT 1", (rid,)) if rid else None
+        return row["actor"] if row else None
+
+    def _notify(self, rid, to_id, body, kind, n=0, subject=None, channel=None, by=None):
+        """Write a message to the outbox. In a company one message is also written as an email row for the kinds that are emailed; each row is delivered exactly once on its own."""
         if not to_id:
             return
         req = self.req(rid) if rid else None
         ch = channel or (req["channel"] if req else "chat")
+        from_id = None
+        if req and kind in dl.FROM_REQUESTER_KINDS:
+            from_id = req["employee_id"]
+        elif req and kind in dl.FROM_DECIDER_KINDS:
+            from_id = by or self._decider(rid)
+        self._write_row(rid, req, to_id, body, kind, n, subject, ch, from_id)
+        if self.live and self.live.fanout and not self._mock_depth and ch == "chat" and kind in dl.EMAIL_KINDS:
+            self._write_row(rid, req, to_id, body, kind, n, subject, "email", from_id, suffix=":email")
+
+    def _write_row(self, rid, req, to_id, body, kind, n, subject, ch, from_id, suffix=""):
+        if not subject and rid and kind in self.SUBJECTS:
+            subject = self.SUBJECTS[kind].format(rid=rid)
         if ch == "email":
             first = (self.name(to_id) or "there").split()[0]
             body = f"Hi {first},\n\n{body}\n\n— Deskhand"
-            if req and to_id == req["employee_id"]:
+            if req and to_id == req["employee_id"] and req["channel"] == "email":  # a reply to an email the requester sent
                 subject = "Re: " + (req["email_subject"] or f"Request #{rid}")
-        key = f"{rid}:{kind}:{to_id}:{n}"
-        dstatus, dnote = self.live.status_for(kind, ch) if self.live and not self._mock_depth else ("skipped", "no delivery for this run")
-        self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at,delivery_status,delivery_note) "
-                 "VALUES(?,?,?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now(), dstatus, dnote))
+        key = f"{rid}:{kind}:{to_id}:{n}{suffix}"
+        dstatus, dnote = self.live.status_for(kind, ch, to_id) if self.live and not self._mock_depth else ("skipped", "no delivery for this run")
+        self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at,delivery_status,delivery_note,from_person) "
+                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now(), dstatus, dnote, from_id))
 
     # ---------- request helpers ----------
     def req(self, rid):
@@ -304,7 +332,7 @@ class Engine:
         have = "; ".join(f"{a}: {b}" for a, b in r["details_view"])
         aliases = {"justification": ["justification", "project", "reason"], "dates": ["dates"], "item": ["item", "tool", "resource"], "issue": ["issue"]}
         missing = [k for k in t.get("details_needed", []) if not any(d.get(a) not in (None, "", []) for a in aliases.get(k, [k]))]
-        lines = [f"New request #{r['id']} from {emp['name']} ({emp['department']})", f"Request: {r['summary']}", f"Type: {t['name']}"]
+        lines = [f"New request #{r['id']} from {emp['name']}" + (f" ({emp['department']})" if emp.get("department") else ""), f"Request: {r['summary']}", f"Type: {t['name']}"]
         if have:
             lines.append(f"Details: {have}")
         if missing:
@@ -326,7 +354,15 @@ class Engine:
             self._notify(rid, emp["id"], self._answer_policy(emp, r["raw_text"]), "answer")
             self._set_status(rid, "CLOSED", "system")
             return
-        if r["type_code"] == "leave" and self.d.balances:
+        if r["type_code"] == "leave" and getattr(self.hr, "records_balances", False):  # a company: the balance comes from its own ledger
+            chk = self.hr.check(emp["id"], r["details"])
+            r["details"]["balance"], r["details"]["leave_check"] = self.hr.list_leave_balances(emp["id"]), chk
+            self.s.q("UPDATE requests SET details_json=? WHERE id=?", (dumps(r["details"]), rid))
+            if chk["days"] == 0:  # only weekend days: there is nothing to take off
+                self._set_status(rid, "NEEDS_INFO", "system", "no working days in the dates")
+                self._reply(emp, r["channel"], "Those dates fall on a weekend, so there is no working day to take off. Which working days do you need off?", rid)
+                return
+        elif r["type_code"] == "leave" and self.d.balances:
             bal = self.hr.list_leave_balances(emp["id"])
             r["details"]["balance"] = bal
             self.s.q("UPDATE requests SET details_json=? WHERE id=?", (dumps(r["details"]), rid))
@@ -352,7 +388,7 @@ class Engine:
         t = text.lower()
         hr = self._hr_contact(emp)
         if re.search(r"how many|balance|left", t):
-            if not self.d.balances:  # a company has no leave ledger yet (Phase 3): say so rather than invent figures
+            if not (self.d.balances or getattr(self.hr, "records_balances", False)):  # no records and no prepared figures: say so rather than invent them
                 return f"I can't see leave balances yet. Please ask {hr['name'] if hr else 'HR'}."
             b = self.hr.list_leave_balances(emp["id"])
             return "Your leave balance: " + ", ".join(f"{k} {v}" for k, v in b.items()) + "."
@@ -362,7 +398,7 @@ class Engine:
         return f"I don't have that policy to hand. Please ask {hr['name'] if hr else 'HR'}."
 
     # ---------- decisions ----------
-    def approve(self, rid, actor_id):
+    def approve(self, rid, actor_id, via=None):
         r = self.req(rid)
         if r["status"] != "PENDING_APPROVAL":
             self.audit(rid, actor_id, "duplicate_action_ignored", {"action": "approve", "status": r["status"]})
@@ -370,7 +406,7 @@ class Engine:
         if not self.can_act(r, actor_id):
             self.audit(rid, actor_id, "unauthorized_action_refused", {"action": "approve"})
             raise NotAuthorized("only the assigned approver, an escalation contact or an admin can approve")
-        self.audit(rid, actor_id, "approved_stage", {"stage": r["chain_index"] + 1, "of": len(r["chain"])})
+        self.audit(rid, actor_id, "approved_stage", {"stage": r["chain_index"] + 1, "of": len(r["chain"]), **({"via": via} if via else {})})
         if r["chain_index"] + 1 < len(r["chain"]):
             nxt = r["chain"][r["chain_index"] + 1]
             self.s.q("UPDATE requests SET chain_index=chain_index+1, assigned_at=?, last_reminder_at=NULL, escalated_to=NULL, escalation_level=0 WHERE id=?",
@@ -379,12 +415,12 @@ class Engine:
             emp = self.d.emp(r["employee_id"])
             self._notify(rid, nxt, self._rewrite(r2, emp, self.d.type(r["type_code"])), "approval_request", n=r["chain_index"] + 1,
                          subject=f"Approval needed: {self.d.type(r['type_code'])['name']} #{rid}")
-            self._notify(rid, r["employee_id"], f"{self.name(actor_id)} approved your request #{rid}. It now needs {self.name(nxt)}.", "stage_approved", n=r["chain_index"])
+            self._notify(rid, r["employee_id"], f"{self.name(actor_id)} approved your request #{rid}. It now needs {self.name(nxt)}.", "stage_approved", n=r["chain_index"], by=actor_id)
             return self.req(rid)
         self.s.q("UPDATE requests SET decided_at=? WHERE id=?", (self.now(), rid))
         self._set_status(rid, "APPROVED", actor_id, "all approvals given")
         if self.d.type(r["type_code"])["fulfilment_kind"] == "auto_action":
-            self._notify(rid, r["employee_id"], f"Your request #{rid} was approved by {self.name(actor_id)}.", "approved")
+            self._notify(rid, r["employee_id"], f"Your request #{rid} was approved by {self.name(actor_id)}.", "approved", by=actor_id)
         self._start_fulfilment(rid, approved_by=actor_id)
         return self.req(rid)
 
@@ -400,7 +436,7 @@ class Engine:
         clean, _ = classifier.redact(reason.strip())
         self.s.q("UPDATE requests SET rejection_reason=?, decided_at=? WHERE id=?", (clean, self.now(), rid))
         self._set_status(rid, "REJECTED", actor_id, clean)
-        self._notify(rid, r["employee_id"], f"Your request #{rid} was rejected by {self.name(actor_id)}. Reason: {clean}", "rejected")
+        self._notify(rid, r["employee_id"], f"Your request #{rid} was rejected by {self.name(actor_id)}. Reason: {clean}", "rejected", by=actor_id)
         return self.req(rid)
 
     def mark_pending(self, rid, actor_id, note=""):
@@ -429,7 +465,7 @@ class Engine:
             self.audit(rid, actor_id, "unauthorized_action_refused", {"action": "done"})
             raise NotAuthorized("only the assigned fulfiller or an admin can mark this done")
         self._set_status(rid, "FULFILLED", actor_id, "marked done")
-        self._notify(rid, r["employee_id"], f"Your request #{rid} is ready: {self.name(actor_id)} has completed it.", "fulfilled")
+        self._notify(rid, r["employee_id"], f"Your request #{rid} is ready: {self.name(actor_id)} has completed it.", "fulfilled", by=actor_id)
         self._set_status(rid, "CLOSED", "system")
         return self.req(rid)
 
@@ -447,7 +483,7 @@ class Engine:
         note = " Do not send credentials in chat or email; grant access in the tool, then click Done." if r["type_code"] in ("software_seat", "access") else ""
         self._notify(rid, ful["id"], f"Task for request #{rid}: {t['name']} for {emp['name']}.{note}\nClick Done when finished.", "task", subject=f"Task: {t['name']} #{rid}")
         lead = f"Your request #{rid} was approved by {self.name(approved_by)}. " if approved_by else ""
-        self._notify(rid, emp["id"], f"{lead}{ful['name']} will take care of it. I'll tell you when it's done.", "approved" if lead else "assigned")
+        self._notify(rid, emp["id"], f"{lead}{ful['name']} will take care of it. I'll tell you when it's done.", "approved" if lead else "assigned", by=approved_by)
 
     def _run_leave(self, rid):
         r = self.req(rid)
@@ -458,12 +494,16 @@ class Engine:
             existing = self.hr.find_leave_by_ref(ref)  # read before write: a lost response must not apply the leave twice
             if existing:
                 return existing
-            return self.hr.create_leave_request(r["employee_id"], d.get("dates"), d.get("leave_type"), d.get("reason"), ref, d.get("half_day", False))
+            return self.hr.create_leave_request(r["employee_id"], d.get("dates"), d.get("leave_type"), d.get("reason"), ref, d.get("half_day", False), date_range=d.get("date_range", False))
 
         res = self.run_action(rid, "apply_leave", fn)
         if res is not None:
-            self._set_status(rid, "FULFILLED", "system", "leave applied in HR system")
-            self._notify(rid, r["employee_id"], f"Done: your leave ({', '.join(d.get('dates', []))}) has been applied in the HR system.", "fulfilled")
+            self._set_status(rid, "FULFILLED", "system", f"leave {self.hr.applied}")
+            left = ""
+            if getattr(self.hr, "records_balances", False):
+                left = f" {d.get('leave_type', 'casual').capitalize()} leave left: {self.hr.list_leave_balances(r['employee_id']).get(d.get('leave_type', 'casual'), 0)}."
+            shown = (" to " if d.get("date_range") and len(d.get("dates", [])) == 2 else ", ").join(_day(x) for x in d.get("dates", []))
+            self._notify(rid, r["employee_id"], f"Done: your leave ({shown}) has been {self.hr.applied}.{left}", "fulfilled")
             self._set_status(rid, "CLOSED", "system")
 
     def run_action(self, rid, step, fn, max_attempts=3):
@@ -495,7 +535,7 @@ class Engine:
                 admin = self.d.role_holder("admin")
                 self._notify(rid, admin["id"] if admin else None, f"Request #{rid} is parked: {step} failed after {attempts} attempt(s): {ex}. Use Replay once the system is back.",
                              "parked", subject=f"Needs attention: request #{rid}")
-                self._notify(rid, self.req(rid)["employee_id"], f"Your request #{rid} hit a delay in the HR system. It's with the admin and nothing is lost.", "delay")
+                self._notify(rid, self.req(rid)["employee_id"], f"Your request #{rid} hit a delay in {self.hr.label}. It's with the admin and nothing is lost.", "delay")
                 return None
         return None
 

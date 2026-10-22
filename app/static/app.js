@@ -131,11 +131,11 @@ function stagesFor(r, tl) {
     if (r.status === 'FULFILLING') state = 'current';
     else if (r.status === 'PARKED') state = 'parked';
     else if (['FULFILLED', 'CLOSED'].includes(r.status)) state = 'done';
-    const st = { k: 'ful', state, title: auto ? 'Applied in the HR system' : `Done by ${ful ? nm(ful) : 'the fulfiller'}` };
+    const st = { k: 'ful', state, title: auto ? cap(hrApplied()) : `Done by ${ful ? nm(ful) : 'the fulfiller'}` };
     if (state === 'current') st.note = auto ? 'Deskhand is applying it now.' : `${nm(ful)} grants access, then clicks Done.`;
     if (state === 'parked') {
       const f = ev('action_failed').slice(-1)[0];
-      st.note = `The HR system did not answer after three tries${f && f.data && f.data.error ? ` (${f.data.error})` : ''}. Nothing was lost. An admin can replay it.`;
+      st.note = `${isHRDemo() ? 'The HR system did not answer after three tries' : 'It could not be recorded'}${f && f.data && f.data.error ? ` (${f.data.error})` : ''}. Nothing was lost. An admin can replay it.`;
     }
     if (state === 'done') { const f = ev('status_change').find(e => e.data && e.data.to === 'FULFILLED'); if (f) st.time = f.ts; }
     out.push(st);
@@ -173,11 +173,11 @@ function sentence(r) {
       const holder = r.escalated_to || (r.chain || [])[r.chain_index];
       return `With ${nm(holder)}, waiting ${dur(NOW - ((r.escalated_to && r.escalated_at) || r.assigned_at || r.created_at))}.`;
     }
-    case 'FULFILLING': return TYPE[r.type_code] && TYPE[r.type_code].fulfilment_kind === 'auto_action' ? 'Applying it in the HR system.' : 'Approved. Waiting for the fulfiller to finish.';
+    case 'FULFILLING': return TYPE[r.type_code] && TYPE[r.type_code].fulfilment_kind === 'auto_action' ? (isHRDemo() ? 'Applying it in the HR system.' : 'Recording it in the leave record.') : 'Approved. Waiting for the fulfiller to finish.';
     case 'APPROVED': return 'Approved.';
     case 'CLOSED': case 'FULFILLED': return 'Completed.';
     case 'REJECTED': return r.rejection_reason ? `Rejected: ${r.rejection_reason}` : 'Rejected.';
-    case 'PARKED': return 'Parked: the HR system is not answering. An admin can replay it.';
+    case 'PARKED': return isHRDemo() ? 'Parked: the HR system is not answering. An admin can replay it.' : 'Parked: it could not be recorded. An admin can replay it.';
     case 'CANCELLED': return 'Cancelled.';
     default: return 'Needs one more detail from the requester.';
   }
@@ -256,7 +256,7 @@ function dialogPrompt({ title, body = '', label = '', confirm = 'OK', match = nu
 
 /* ---------- routing ---------- */
 const AUTH_PAGES = ['login', 'register', 'join'];
-const APP_PAGES = ['ask', 'mine', 'needs', 'admin', 'setup', 'people', 'integrations', 'health', 'audit'];
+const APP_PAGES = ['ask', 'mine', 'needs', 'leave', 'mailbox', 'admin', 'setup', 'people', 'integrations', 'health', 'audit'];
 const ADMIN_PAGES = ['admin', 'setup', 'people', 'integrations', 'health', 'audit'];
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
@@ -286,12 +286,13 @@ function applyClock(cl) {
   CLOCKDATA = cl; NOW = cl.now;
   const showStatus = isAdmin() && !isDemo();  // delivery health is for the people who can fix it; the demo sends nothing
   const b = showStatus ? (cl.banners || []) : [];
-  $('#banner').innerHTML = b.map(t => `<div class="b">${icon('s-alert')}<span>${esc(t)}</span></div>`).join('');
+  const notes = showStatus ? (cl.notes || []) : [];
+  $('#banner').innerHTML = b.map(t => `<div class="b">${icon('s-alert')}<span>${esc(t)}</span></div>`).join('') + notes.map(t => `<div class="b info">${icon('s-pending')}<span>${esc(t)}</span></div>`).join('');
   const slackOk = !b.some(t => /^(Slack|viaSocket)/.test(t));
   const mailOk = !b.some(t => /^(Gmail|Notification email|viaSocket)/.test(t));
   const d = cl.delivery || { used_today: 0, cap: 150 };
   const dot = ok => `<span class="dot${ok ? '' : ' bad'}"></span>`;
-  const inner = `<span class="it">${dot(slackOk)}Slack ${slackOk ? 'connected' : 'not ready'}</span><span class="it">${dot(mailOk)}Gmail ${mailOk ? 'connected' : 'not ready'}</span><span class="it num">Sent today ${d.used_today} / ${d.cap}</span>`;
+  const inner = `<span class="it">${dot(slackOk)}Slack ${slackOk ? 'connected' : 'not ready'}</span><span class="it">${dot(mailOk)}Gmail ${mailOk ? 'connected' : 'not ready'}</span><span class="it">${cl.mode === 'live' ? 'Live' : 'Rehearsal'}</span><span class="it num">Sent today ${d.used_today} / ${d.cap}</span>`;
   $('#status').innerHTML = inner;
   $('#statuspanel').innerHTML = inner;
   $('#status').hidden = !showStatus; $('#statusbtn').hidden = !showStatus;
@@ -547,7 +548,7 @@ function paintDelivery(dv) {
   if (!dv) { el.innerHTML = `<h2>Delivery</h2>${emptyState('Delivery details are for admins', 'Only company admins can see them.')}`; return; }
   const cnt = Object.entries(dv.counts).map(([k, v]) => `${k} ${v}`).join(', ') || 'none yet';
   el.innerHTML = `<h2>Delivery</h2><p class="meta">Messages go out by themselves once Slack and Gmail are connected on the <a href="#integrations">Integrations</a> page. Approvals never wait for delivery.</p>
-    <dl class="kv" style="margin-top:8px"><dt>Slack</dt><dd>${dv.ready.slack ? 'Ready' : 'Not ready'}</dd><dt>Email</dt><dd>${dv.ready.email ? `Ready, goes only to ${esc(dv.email_to)}` : 'Not ready'}</dd><dt>Delivered today</dt><dd class="num">${dv.used_today} of ${dv.cap}${dv.capped ? ' (cap reached)' : ''}</dd><dt>Outbox</dt><dd>${esc(cnt)}</dd><dt>Links point to</dt><dd>${esc(dv.base_url)}</dd></dl>
+    <dl class="kv" style="margin-top:8px"><dt>Slack</dt><dd>${dv.ready.slack ? 'Ready' : 'Not ready'}</dd><dt>Email</dt><dd>${dv.ready.email ? 'Ready' : 'Not ready'}</dd><dt>Mode</dt><dd>${dv.mode === 'live' ? 'Live: to the real people' : `Rehearsal: only to ${esc((dv.rehearsal_person || {}).name || 'an admin')}`}</dd><dt>Delivered today</dt><dd class="num">${dv.used_today} of ${dv.cap}${dv.capped ? ' (cap reached)' : ''}</dd><dt>Outbox</dt><dd>${esc(cnt)}</dd><dt>Links point to</dt><dd>${esc(dv.base_url)}</dd></dl>
     ${dv.failed.length ? `<h3 style="margin-top:16px">Failed deliveries</h3>${dv.failed.map(f => `<div class="approw"><span style="flex:1">#${f.id} · ${esc(nice(f.kind))} (${esc(f.channel)}) · ${esc(f.delivery_error || '')}</span><button class="btn small" data-retry="${f.id}">Retry</button></div>`).join('')}<p class="meta">Check the channel before retrying: a failed send may already have arrived.</p>` : ''}`;
   $$('[data-retry]', el).forEach(b => b.onclick = async () => { try { await api('/delivery/retry/' + b.dataset.retry, {}); toast('Retried.'); } catch (e) { toast(e.message, 6000); } pageHealth(); });
 }
@@ -572,7 +573,7 @@ async function paintConnections() {
     el.innerHTML = `<h2>Connections</h2>${e.status === 403 ? emptyState('Connections are for admins', 'Only company admins can set up Slack and Gmail.') : errorState('connections', e, paintConnections)}`; return;
   }
   if (c.configured) await prepConnect(c);
-  el.innerHTML = `<h2>Connections</h2><p class="meta">The only setup. You sign in on each app's own screen; Deskhand never sees a password or token. Once Slack and its channel are set, chat notifications are delivered there. Once Gmail and the notification email are set, email notifications go to that one address.</p>
+  el.innerHTML = `<h2>Connections</h2><p class="meta">You sign in on each app's own screen; Deskhand never sees a password or token. Slack messages each person by their own Slack account. Gmail sends email from the company mailbox; anyone can connect their own on Your mailbox so emails about their requests come from them.</p>
     ${!c.configured ? emptyState('viaSocket is not configured on the server', 'Connecting is switched off until the server has its viaSocket values. See the README.') : ''}
     ${c.note ? `<p role="alert" style="color:var(--rejected)">Could not read connection status: ${esc(c.note)}</p>` : ''}
     ${c.apps.map(a => appRow(a, c)).join('')}<div id="aiblock"></div>`;
@@ -601,8 +602,8 @@ function appRow(a, c) {
     <span class="chip ${a.status === 'connected' ? 'approved' : (a.status === 'not_connected' ? 'neutral' : 'pending')}">${icon(a.status === 'connected' ? 's-done' : (a.status === 'not_connected' ? 's-upcoming' : 's-pending'))}${esc(STATUSLBL[a.status] || a.status)}</span>
     <button class="btn small primary" data-connect="${a.key}" ${c.configured ? '' : 'disabled'}>${a.status === 'not_connected' ? 'Connect ' + esc(a.name) : 'Reconnect'}</button>${a.can_run ? `<button class="btn small danger" data-disc="${a.key}">Disconnect</button>` : ''}</div>
     ${a.can_run ? a.settings.map(setting).join('') + `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">${a.key === 'slack'
-      ? `<button class="btn small" data-test="slack_send">Send a test message</button><input class="field" id="lk" placeholder="email to look up" style="width:220px"><button class="btn small" data-test="slack_lookup">Look up a user</button>`
-      : `<button class="btn small" data-test="gmail_send">Send a test email to the notification address</button>`}</div><div id="tres_${a.key}" aria-live="polite"></div>` : ''}</div>`;
+      ? `<button class="btn small" data-test="slack_send">Send me a test Slack message</button><input class="field" id="lk" placeholder="email to look up" style="width:220px"><button class="btn small" data-test="slack_lookup">Look up a user</button>`
+      : `<button class="btn small" data-test="gmail_send">Send a test email to me</button>`}</div><div id="tres_${a.key}" aria-live="polite"></div>` : ''}</div>`;
 }
 function wireConnections(el) {
   $$('[data-connect]', el).forEach(b => b.onclick = () => connectApp(b.dataset.connect));
@@ -615,9 +616,7 @@ async function prepConnect(c) {
   try {
     CONN.token = (await api('/connections/token')).token;
     for (const a of c.apps) CONN.info[a.key] = await api(`/connections/service/${a.key}`);
-    if (!document.getElementById('viasocket-connect-script')) {
-      await new Promise((ok, no) => { const sc = document.createElement('script'); sc.id = 'viasocket-connect-script'; sc.src = c.connect_js; sc.onload = ok; sc.onerror = () => no(new Error('Could not load the viaSocket connect script. Check the network and reload.')); document.head.appendChild(sc); });
-    }
+    await loadConnectScript(c.connect_js);
   } catch (e) { toast(e.message, 6000); }
 }
 function connectApp(key) {
@@ -630,8 +629,8 @@ window.addEventListener('message', async ev => {
   const d = ev.data; if (!d || typeof d !== 'object') return;
   if (d.type === 'viasocket_connection_success') {
     const key = CONN.pending || Object.keys(CONN.info).find(k => CONN.info[k].service_id === d.serviceId);
-    try { await api('/connections/connected', { app: key, auth_id: d.data && d.data.id }); toast('Connected.'); } catch (e) { toast(e.message, 6000); }
-    if (current.page === 'integrations') pageIntegrations();
+    try { await api(key === 'mine' ? '/me/connections/connected' : '/connections/connected', key === 'mine' ? { auth_id: d.data && d.data.id } : { app: key, auth_id: d.data && d.data.id }); toast('Connected.'); } catch (e) { toast(e.message, 6000); }
+    if (current.page === 'integrations') pageIntegrations(); else if (current.page === 'mailbox') pageMailbox();
   } else if (d.type === 'viasocket_connection_error') toast((d.error && d.error.message) || 'The connection did not complete.', 6000);
 });
 async function loadPicker(a, x) {
@@ -694,6 +693,7 @@ function paintShell() {
   $('#shell').classList.toggle('solo', !inn);
   $('#nav').hidden = !inn;
   $$('#nav [data-admin]').forEach(a => { a.hidden = !isAdmin(); });
+  $$('#nav [data-real]').forEach(a => { a.hidden = isDemo(); });
   $('#demobtn').hidden = !(inn && isDemo());
   const ab = $('#acctbtn'); ab.hidden = !inn;
   if (inn) {
@@ -768,7 +768,7 @@ function openAccount() {
   const u = ME.user;
   $('#acct-id').innerHTML = `<dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd><dt>Company</dt><dd>${esc(ME.org.name)}</dd><dt>Access</dt><dd>${esc(ACCESS[u.access_role] || u.access_role)}</dd>`;
   $('#theme').value = store.get('dh_theme') || 'system';
-  $('#pwbox').hidden = isDemo(); $('#pwbox').open = false; $('#pwform').reset(); $('#pwerr').textContent = '';
+  $('#pwbox').hidden = isDemo(); $('#mbline').hidden = isDemo(); $('#pwbox').open = false; $('#pwform').reset(); $('#pwerr').textContent = '';
   $('#acct').showModal();
 }
 async function changePassword(e) {
@@ -830,8 +830,8 @@ async function pagePeople() {
   try { rows = await api('/people'); } catch (e) { $('#plist').innerHTML = errorState('people', e, pagePeople); return; }
   PEOPLE = rows;
   const act = p => isDemo() ? '' : `<button class="btn small" data-edit="${esc(p.id)}">Edit</button>${['active', 'invited'].includes(p.status) ? `<button class="btn small" data-link="${esc(p.id)}">${p.status === 'invited' ? 'New invite link' : 'Password reset link'}</button>` : ''}`;
-  $('#plist').innerHTML = `<div class="scroll"><table class="t people"><tr><th>Person</th><th>Access</th><th>Reports to</th><th>Department</th><th>Business roles</th><th>Status</th><th></th></tr>${rows.map(p =>
-    `<tr><td class="pname"><b>${esc(p.name)}${p.id === meId() ? ' (you)' : ''}</b><span class="meta">${esc(p.email)}</span></td><td data-l="Access">${esc(ACCESS[p.access_role] || p.access_role)}</td><td data-l="Reports to">${esc(pname(p.manager_id))}</td><td data-l="Department">${esc(p.department || '–')}</td><td data-l="Business roles">${esc((p.roles || []).join(', ') || '–')}</td><td>${pchip(p.status)}</td><td class="pact">${act(p)}</td></tr>`).join('')}</table></div>`;
+  $('#plist').innerHTML = `<div class="scroll"><table class="t people"><tr><th>Person</th><th>Access</th><th>Reports to</th><th>Department</th><th>Business roles</th><th>Slack</th><th>Status</th><th></th></tr>${rows.map(p =>
+    `<tr><td class="pname"><b>${esc(p.name)}${p.id === meId() ? ' (you)' : ''}</b><span class="meta">${esc(p.email)}</span></td><td data-l="Access">${esc(ACCESS[p.access_role] || p.access_role)}</td><td data-l="Reports to">${esc(pname(p.manager_id))}</td><td data-l="Department">${esc(p.department || '–')}</td><td data-l="Business roles">${esc((p.roles || []).join(', ') || '–')}</td><td data-l="Slack">${p.slack_id ? 'Matched' : 'Not matched'}</td><td>${pchip(p.status)}</td><td class="pact">${act(p)}</td></tr>`).join('')}</table></div>`;
   const inv = $('#invitebtn'); if (inv) inv.onclick = invitePerson;
   $$('[data-edit]').forEach(b => b.onclick = () => editPerson(b.dataset.edit));
   $$('[data-link]').forEach(b => b.onclick = () => personLink(b.dataset.link));
@@ -853,13 +853,13 @@ function editPerson(id) {
   const owner = p.access_role === 'owner', pending = p.status === 'invited';
   formDialog({
     title: `Edit ${p.name}`, intro: owner ? 'The owner cannot be demoted or deactivated. Keep a second admin in case the owner is locked out.' : (pending ? 'This person has not joined yet.' : ''),
-    fields: [{ key: 'name', label: 'Name', value: p.name }, { key: 'department', label: 'Department', value: p.department || '' },
+    fields: [{ key: 'name', label: 'Name', value: p.name }, { key: 'department', label: 'Department', value: p.department || '' }, { key: 'slack_id', label: 'Slack user id (optional)', value: p.slack_id || '', hint: 'Starts with U. "Match Slack accounts" on Integrations fills this from email.' },
       { key: 'manager_id', label: 'Reports to', options: managerOptions(p.id), value: p.manager_id || '' },
       { key: 'access_role', label: 'Access', options: owner ? [['owner', 'Owner']] : [['member', 'Member'], ['admin', 'Admin']], value: p.access_role, disabled: owner },
       { key: 'status', label: 'Account', options: pending ? [['invited', 'Invited, not joined yet']] : [['active', 'Active'], ['disabled', 'Deactivated: signed out and cannot sign in']], value: pending ? 'invited' : p.status, disabled: owner || pending }],
     submit: async v => {
       const changed = {};
-      ['name', 'department', 'manager_id', 'access_role', 'status'].forEach(k => { if ((v[k] || '') !== (p[k] || '')) changed[k] = v[k] || null; });
+      ['name', 'department', 'slack_id', 'manager_id', 'access_role', 'status'].forEach(k => { if ((v[k] || '') !== (p[k] || '')) changed[k] = v[k] || null; });
       if (!Object.keys(changed).length) return;
       await api('/people/' + encodeURIComponent(id), changed);
       toast('Saved.'); await loadCore(); await pagePeople();
@@ -890,17 +890,18 @@ async function pageAdmin() {
 }
 
 async function pageIntegrations() {
-  $('#main').innerHTML = `<div class="page-head"><h1>Integrations</h1><span class="meta">Slack and Gmail, connected once for the whole company.</span></div><div class="block" id="hconn" style="border-top:0;margin-top:0;padding-top:0"></div>`;
+  $('#main').innerHTML = `<div class="page-head"><h1>Integrations</h1><span class="meta">Slack and Gmail, connected once for the whole company.</span></div><div class="block" id="hmsg" style="border-top:0;margin-top:0;padding-top:0"></div><div class="block" id="hconn"></div>`;
+  await paintMessaging();
   await paintConnections();
 }
 
-const SETUP_TABS = [['', 'Overview'], ['roles', 'Roles'], ['types', 'Request types'], ['policies', 'Policies'], ['test', 'Routing test']];
+const SETUP_TABS = [['', 'Overview'], ['roles', 'Roles'], ['types', 'Request types'], ['policies', 'Policies'], ['leave', 'Leave'], ['test', 'Routing test']];
 let TD = { types: [], people: [], role_options: [] };  // the last request-type listing, also used by the editor's pickers
 async function pageSetup(section) {
   const sec = SETUP_TABS.some(t => t[0] === (section || '')) ? (section || '') : '';
   $('#main').innerHTML = `<div class="page-head"><h1>Setup</h1><span class="meta">${isDemo() ? 'The demo company\'s rules are prepared and read-only.' : 'How requests are routed in your company.'}</span></div>
     <nav class="tabs" aria-label="Setup sections">${SETUP_TABS.map(([k, l]) => `<a href="#setup${k ? '/' + k : ''}" ${k === sec ? 'aria-current="page"' : ''}>${esc(l)}</a>`).join('')}</nav><div id="sbody">${loading('setup')}</div>`;
-  const fn = { '': setupOverview, roles: setupRoles, types: setupTypes, policies: setupPolicies, test: setupTest }[sec];
+  const fn = { '': setupOverview, roles: setupRoles, types: setupTypes, policies: setupPolicies, leave: setupLeave, test: setupTest }[sec];
   try { await fn(); } catch (e) { $('#sbody').innerHTML = errorState('setup', e, () => pageSetup(section)); }
 }
 
@@ -959,7 +960,7 @@ function typeLines(t) {
   if (!t.requires_approval && t.auto_allow_up_to != null) out[0] = `No approval up to ${esc(amount(t.auto_allow_up_to))}; above that ${L(t.approver_rule || 'manager')} approves.`;
   (t.extra_approvers || []).forEach(x => out.push(`Also ${L(x.rule)} when ${esc(whenText(t, x.when))}.`));
   out.push(`Reminder after ${t.reminder_hours} h. If nobody acts, it escalates after ${t.escalate_hours} h to ${L(t.backup_rule)}${t.backup_rule ? '' : ' (an admin)'}.`);
-  out.push(t.fulfilment_kind === 'auto_action' ? 'Applied by Deskhand in the HR system.' : `Task done by ${L(t.fulfiller_rule)}.`);
+  out.push(t.fulfilment_kind === 'auto_action' ? `Applied by Deskhand in ${isHRDemo() ? 'the HR system' : 'your leave record'}.` : `Task done by ${L(t.fulfiller_rule)}.`);
   return out;
 }
 const typeWarnings = t => Object.values(t.labels || {}).filter(l => !l.ok && l.rule !== 'manager').map(l => `${l.label}: ${l.note || 'cannot be found'}. Requests that need it use the backup, then an admin.`);
@@ -1097,15 +1098,155 @@ async function setupTest() {
   };
 }
 
+/* ---------- leave: balances, history, allowances and corrections ---------- */
+const cap = s => String(s).charAt(0).toUpperCase() + String(s).slice(1);
+const hrLabel = () => S.hr_label || 'the HR system';
+const hrApplied = () => S.hr_applied || 'applied in the HR system';
+const isHRDemo = () => hrLabel() === 'the HR system';
+const dayName = iso => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+const daysText = n => `${n} day${Math.abs(n) === 1 ? '' : 's'}`;
+const signed = n => (n > 0 ? '+' : '') + n;
+function infoDialog(title, html) { $('#idlg-title').textContent = title; $('#idlg-body').innerHTML = html; $('#idlg-close').onclick = () => $('#idlg').close(); $('#idlg').showModal(); }
+function entryText(e) {
+  if (e.kind === 'grant') return 'Yearly allowance';
+  if (e.kind === 'use') return `Leave taken: ${esc(e.dates.map(dayName).join(', '))}${e.request_id ? ` (<a href="#request/${e.request_id}">request ${e.request_id}</a>)` : ''}`;
+  return `Adjusted by ${esc(e.by)}: ${esc(e.note)}`;
+}
+const entryRows = rows => rows.length ? `<div class="scroll"><table class="t"><tr><th>When</th><th>What</th><th class="num">Days</th></tr>${rows.map(e =>
+  `<tr><td class="num">${stamp(e.at)}</td><td>${e.type_name ? esc(e.type_name) + ': ' : esc(cap(e.type)) + ': '}${entryText(e)}</td><td class="num ${e.days < 0 ? 'neg' : ''}">${signed(e.days)}</td></tr>`).join('')}</table></div>` : emptyState('Nothing yet', 'Leave you take and any corrections appear here.');
+
+async function pageLeave() {
+  const d = await api('/leave/me');
+  $('#main').innerHTML = `<div class="page-head"><h1>My leave</h1><span class="meta">${d.year || ''}</span></div>
+    <div class="grid">${d.types.map(t => `<div><div class="v ${t.balance < 0 ? 'neg' : ''}">${t.balance}</div><div class="meta">${esc(t.name)} left${t.yearly_days != null ? `, of ${t.yearly_days} a year` : ''}</div></div>`).join('')}</div>
+    <p style="margin:16px 0"><a href="#ask">Ask for leave</a> in plain words, for example "I need Friday and Monday off". Only Monday to Friday count; a half day counts 0.5.</p>
+    <h2 style="margin-top:24px">History</h2><div id="lhist">${entryRows(d.entries)}</div>`;
+}
+
+async function setupLeave() {
+  const d = await api('/setup/leave');
+  if (d.demo) { $('#sbody').innerHTML = '<div class="state"><b>The demo company uses prepared figures</b>Real companies keep leave in their own record. Create your own company to try allowances and corrections.</div>'; return; }
+  $('#sbody').innerHTML = `<p class="meta" style="max-width:640px">Each person gets the yearly allowance the first time leave is looked at in a calendar year. A new allowance applies to people who have not had this year's yet; for anyone else use Adjust. Every change is a line in the leave record with your name and the reason, and cannot be edited later.</p>
+    <h2>Yearly allowance</h2><div class="scroll"><table class="t"><tr><th>Leave type</th><th>Days a year</th><th></th></tr>${d.types.map(t =>
+      `<tr><td><b>${esc(t.name)}</b></td><td><input class="field" id="al_${esc(t.code)}" type="number" min="0" max="366" step="0.5" value="${t.yearly_days}" style="max-width:140px" aria-label="Days a year for ${esc(t.name)}"></td><td><button class="btn small" data-allow="${esc(t.code)}">Save</button></td></tr>`).join('')}</table></div>
+    <h2 style="margin-top:28px">Balances, ${d.year}</h2><div class="scroll"><table class="t"><tr><th>Person</th>${d.types.map(t => `<th class="num">${esc(t.name)}</th>`).join('')}<th></th></tr>${d.people.map(p =>
+      `<tr><td><b>${esc(p.name)}</b></td>${d.types.map(t => `<td class="num ${p.balances[t.code] < 0 ? 'neg' : ''}">${p.balances[t.code]}</td>`).join('')}<td><button class="btn small" data-adjust="${esc(p.id)}">Adjust</button> <button class="btn small" data-hist="${esc(p.id)}">History</button></td></tr>`).join('')}</table></div>`;
+  $$('[data-allow]').forEach(b => b.onclick = async () => {
+    try { await api(`/setup/leave/${encodeURIComponent(b.dataset.allow)}`, { yearly_days: Number($('#al_' + b.dataset.allow).value) }); toast('Saved.'); } catch (e) { toast(e.message, 6000); }
+    setupLeave();
+  });
+  $$('[data-adjust]').forEach(b => b.onclick = () => {
+    const p = d.people.find(x => x.id === b.dataset.adjust);
+    formDialog({ title: `Adjust ${p.name}'s leave`, intro: 'Add or take away days in the current year. The reason is kept in the leave record with your name.', confirm: 'Record adjustment',
+      fields: [{ key: 'leave_type', label: 'Leave type', options: d.types.map(t => [t.code, `${t.name} (now ${p.balances[t.code]})`]), value: d.types[0].code },
+        { key: 'days', label: 'Days (use a minus sign to take days away)', type: 'number', hint: 'Whole or half days, for example 3 or -0.5.' }, { key: 'note', label: 'Reason', hint: 'For example: joined mid-year, extra days agreed.' }],
+      submit: async v => { await api('/leave/adjust', { person_id: p.id, leave_type: v.leave_type, days: Number(v.days), note: v.note }); toast('Recorded.'); setupLeave(); } });
+  });
+  $$('[data-hist]').forEach(b => b.onclick = async () => {
+    try { const h = await api('/leave/people/' + encodeURIComponent(b.dataset.hist)); infoDialog(`Leave record: ${h.person}`, entryRows(h.entries.map(e => ({ ...e, type_name: '' })))); } catch (e) { toast(e.message, 6000); }
+  });
+}
+
+/* ---------- messaging mode, Slack matching and your own mailbox ---------- */
+async function paintMessaging() {
+  const el = $('#hmsg'); if (!el) return;
+  let d;
+  try { d = await api('/delivery'); } catch (e) { el.innerHTML = errorState('messaging', e, paintMessaging); return; }
+  const live = d.mode === 'live', admins = S.employees.filter(e => e.role === 'admin' && e.active !== false);
+  const unmatched = d.people_slack.filter(p => !p.slack);
+  el.innerHTML = `<h2>Messaging <span class="chip ${live ? 'approved' : 'pending'}" style="margin-left:8px">${icon(live ? 's-done' : 's-pending')}${live ? 'Live' : 'Rehearsal'}</span></h2>
+    <p class="meta" style="max-width:680px">${live
+      ? 'Slack messages and emails go to the real people. Approvers get a Slack message and an email; requesters hear back the same way.'
+      : 'Nothing reaches your colleagues yet. Every Slack message and email goes only to the admin below, labelled with the person it is for, so you can see exactly what each person would get.'}</p>
+    ${live ? '' : `<div style="max-width:360px;margin-top:8px"><label class="l" for="rehearsal_person">Rehearsal messages go to</label><select class="field" id="rehearsal_person">${admins.map(a => `<option value="${esc(a.id)}" ${a.id === (d.rehearsal_person || {}).id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>`}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">${live ? '<button class="btn" id="torehearsal">Back to rehearsal</button>' : '<button class="btn primary" id="golive">Go live</button>'}
+      <button class="btn" id="matchslack" ${d.ready.slack ? '' : 'disabled'}>Match Slack accounts</button></div>
+    <p class="meta">Slack accounts matched by email: <b>${d.slack_matched} of ${d.people}</b>${unmatched.length ? `. Not matched yet: ${esc(unmatched.slice(0, 8).map(p => p.name).join(', '))}${unmatched.length > 8 ? '…' : ''}. They get email only until matched.` : '.'}</p>
+    <div id="matchres" aria-live="polite"></div>
+    <h3 style="margin-top:20px">Approve and Reject buttons in Slack <span class="chip ${d.buttons.enabled ? 'approved' : 'neutral'}" style="margin-left:6px">${icon(d.buttons.enabled ? 's-done' : 's-upcoming')}${d.buttons.enabled ? 'On' : 'Off'}</span></h3>
+    <p class="meta" style="max-width:680px">When on, a live approval message in Slack has Approve and Reject buttons. Approve decides it right there; Reject opens Deskhand for the reason, because the person who asked is told why. Only the approver (or an admin) can press them, once, and the web page always works too.
+      ${d.buttons.public_url ? '' : 'This needs Deskhand to be reachable from the internet: set DESKHAND_BASE_URL to its public https address.'}</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">${d.buttons.enabled ? '<button class="btn" id="testapproval">Send me a test approval</button>' : `<button class="btn" id="enablebuttons" ${d.ready.slack && d.buttons.public_url ? '' : 'disabled'}>Switch on Slack buttons</button>`}</div>
+    <div id="btnres" aria-live="polite"></div>`;
+  const post = async body => { try { await api('/delivery/mode', body); toast(body.mode === 'live' ? 'Live: real people now get Slack messages and emails.' : 'Back in rehearsal.'); await pollCore(); } catch (e) { toast(e.message, 6000); } paintMessaging(); };
+  const g = $('#golive'); if (g) g.onclick = async () => {
+    if (!await dialogPrompt({ title: 'Go live?', body: 'Your colleagues will start receiving Slack messages and emails from Deskhand. Messages written before now are not sent. You can go back to rehearsal at any time.', confirm: 'Go live' })) return;
+    post({ mode: 'live', confirm: true, rehearsal_person: $('#rehearsal_person') ? $('#rehearsal_person').value : null });
+  };
+  const r = $('#torehearsal'); if (r) r.onclick = () => post({ mode: 'rehearsal', confirm: false });
+  const rp = $('#rehearsal_person'); if (rp) rp.onchange = () => post({ mode: 'rehearsal', rehearsal_person: rp.value });
+  const eb = $('#enablebuttons'); if (eb) eb.onclick = async () => {
+    eb.disabled = true;
+    try { await api('/integrations/slack/buttons', {}); toast('Slack buttons are on.'); } catch (e) { toast(e.message, 7000); }
+    paintMessaging();
+  };
+  const ta = $('#testapproval'); if (ta) ta.onclick = async () => {
+    ta.disabled = true; $('#btnres').innerHTML = '<p class="meta">Sending a test to your Slack…</p>';
+    try {
+      await api('/integrations/slack/test-approval', {});
+      $('#btnres').innerHTML = '<p class="meta">Sent. Press Approve or Reject on the Slack message. Nothing will change.</p>';
+      for (let i = 0; i < 45; i++) {
+        await sleep(2000);
+        const s = await api('/integrations/slack/test-approval');
+        if (s.state !== 'waiting') { $('#btnres').innerHTML = s.state === 'received' ? '<p class="meta" style="color:var(--approved)">The click came back: the buttons work.</p>' : `<p class="err">It came back as: ${esc(nice(s.state))}.</p>`; ta.disabled = false; return; }
+      }
+      $('#btnres').innerHTML = '<p class="err">No click yet. If you pressed a button and nothing arrived, the callback cannot reach Deskhand.</p>';
+    } catch (e) { $('#btnres').innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+    ta.disabled = false;
+  };
+  $('#matchslack').onclick = async e => {
+    e.target.disabled = true;
+    try {
+      const m = await api('/integrations/slack/match', {});
+      await afterSetup();
+      $('#matchres').innerHTML = `<p class="meta">Matched ${m.matched.length}${m.not_found.length ? `; no Slack account for ${esc(m.not_found.join(', '))}` : ''}${m.problems.length ? `; problem: ${esc(m.problems[0])}` : ''}${m.unmatched_left && !m.problems.length ? `; ${m.unmatched_left} left, press again for the next batch of ${m.batch_limit}` : ''}.</p>`;
+      const mm = await api('/delivery'); $('#hmsg .meta b').textContent = `${mm.slack_matched} of ${mm.people}`;
+    } catch (err) { toast(err.message, 6000); }
+    e.target.disabled = false;
+  };
+}
+
+function loadConnectScript(src) {
+  if (document.getElementById('viasocket-connect-script')) return Promise.resolve();
+  return new Promise((ok, no) => { const sc = document.createElement('script'); sc.id = 'viasocket-connect-script'; sc.src = src; sc.onload = ok; sc.onerror = () => no(new Error('Could not load the viaSocket connect script. Check the network and reload.')); document.head.appendChild(sc); });
+}
+async function pageMailbox() {
+  const d = await api('/me/connections');
+  const m = $('#main');
+  if (d.demo) { m.innerHTML = '<div class="page-head"><h1>Your mailbox</h1></div><div class="state"><b>Not in the demo company</b>Create your own company to connect a mailbox.</div>'; return; }
+  m.innerHTML = `<div class="page-head"><h1>Your mailbox</h1><span class="meta">${esc(d.email)}</span></div>
+    <p class="meta" style="max-width:680px">When you connect your Gmail, the emails about <b>your own requests</b> come from your address: the email asking your approver to decide, and, when you approve or reject someone's request, the email telling them. Deskhand writes those emails; it never reads your mail and never sends anything else from it. Only people in your company are emailed. If you do not connect, the company mailbox sends them instead and nothing is lost.</p>
+    <div class="approw" style="display:block;max-width:680px"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><img src="${esc(d.app.icon)}" alt="" width="28" height="28"><b style="flex:1">Gmail</b>
+      <span class="chip ${d.app.connected ? 'approved' : 'neutral'}">${icon(d.app.connected ? 's-done' : 's-upcoming')}${d.app.connected ? 'Connected' : 'Not connected'}</span>
+      <button class="btn small primary" id="mbconnect" ${d.configured ? '' : 'disabled'}>${d.app.connected ? 'Reconnect' : 'Connect Gmail'}</button>${d.app.connected ? '<button class="btn small" id="mbtest">Send a test email to me</button><button class="btn small danger" id="mbdisc">Disconnect</button>' : ''}</div>
+      ${d.configured ? '' : '<p class="meta" style="margin-top:8px">Connecting is switched off until the server has its viaSocket values.</p>'}<div id="mbres" aria-live="polite"></div></div>`;
+  $('#mbconnect').onclick = async () => {
+    try {
+      const t = await api('/me/connections/token'); await loadConnectScript(d.connect_js);
+      CONN.token = t.token; CONN.info.mine = { service_id: t.service_id, action_ids: t.action_ids }; CONN.pending = 'mine';
+      window.openViasocketConnection(CONN.token, t.service_id, { filteredActions: t.action_ids, skipActionSelection: true });
+    } catch (e) { toast(e.message, 6000); }
+  };
+  const tst = $('#mbtest'); if (tst) tst.onclick = async () => {
+    try { const r = await api('/me/connections/test', {}); $('#mbres').innerHTML = `<p class="${r.outcome === 'success' ? 'meta' : 'err'}">${r.outcome === 'success' ? 'Sent. Check your inbox.' : esc(r.error || nice(r.outcome))}</p>`; } catch (e) { toast(e.message, 6000); }
+  };
+  const dis = $('#mbdisc'); if (dis) dis.onclick = async () => {
+    if (!await dialogPrompt({ title: 'Disconnect your mailbox?', body: 'Emails about your requests will come from the company mailbox instead.', confirm: 'Disconnect', danger: true })) return;
+    try { await api('/me/connections/gmail/disconnect', {}); toast('Disconnected.'); } catch (e) { toast(e.message, 6000); }
+    pageMailbox();
+  };
+}
+
 /* ---------- render loop ---------- */
-const TITLES = { login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', admin: 'Admin', setup: 'Setup', people: 'People', integrations: 'Integrations', health: 'Health', audit: 'Audit' };
-const LOADING = { health: 'health', people: 'people', setup: 'setup', integrations: 'integrations', admin: 'the admin page', audit: 'the audit record' };
+const TITLES = { login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', leave: 'My leave', mailbox: 'Your mailbox', admin: 'Admin', setup: 'Setup', people: 'People', integrations: 'Integrations', health: 'Health', audit: 'Audit' };
+const LOADING = { leave: 'your leave', health: 'health', people: 'people', setup: 'setup', integrations: 'integrations', admin: 'the admin page', audit: 'the audit record' };
 async function render(userNav) {
   const my = ++seq;
   const route = parseHash();
   const authPage = AUTH_PAGES.includes(route.page);
   if (!ME && !authPage) { NEXT = location.hash; return go('#login'); }
   if (ME && (route.page === 'login' || route.page === 'register')) return go('#ask');
+  if (ME && isDemo() && ['leave', 'mailbox'].includes(route.page)) return go('#ask');  // the demo's figures are prepared, not a record
   if (ME && ADMIN_PAGES.includes(route.page) && !isAdmin()) return go('#ask');
   const changedPage = route.page !== current.page || route.id !== current.id;
   current = route;
@@ -1126,6 +1267,8 @@ async function render(userNav) {
     if (route.page === 'ask') await pageAsk();
     else if (route.page === 'mine') await pageMine(route.id);
     else if (route.page === 'needs') await pageNeeds(route.id);
+    else if (route.page === 'leave') await pageLeave();
+    else if (route.page === 'mailbox') await pageMailbox();
     else if (route.page === 'admin') await pageAdmin();
     else if (route.page === 'setup') await pageSetup(route.id);
     else if (route.page === 'integrations') await pageIntegrations();
@@ -1178,6 +1321,7 @@ function wireShell() {
   $('#theme').onchange = e => { store.set('dh_theme', e.target.value); applyTheme(e.target.value); };
   $('#acctbtn').onclick = openAccount;
   $('#acct-close').onclick = () => $('#acct').close();
+  $('#mblink').onclick = () => $('#acct').close();
   $('#signout').onclick = signOut;
   $('#pwform').onsubmit = changePassword;
   $$('[data-adv]').forEach(b => b.onclick = async () => {
