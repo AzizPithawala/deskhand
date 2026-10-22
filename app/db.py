@@ -1,5 +1,6 @@
 """SQLite store. Prototype: one connection guarded by a lock."""
 import json
+import os
 import sqlite3
 import threading
 
@@ -42,13 +43,18 @@ TABLES = ["settings", "inbound_events", "requests", "events", "action_runs", "ou
 
 
 class Store:
-    def __init__(self, path=":memory:"):
+    def __init__(self, path=":memory:", schema=None):
+        """`schema` defaults to a company database. The platform database passes its own and has no company migrations."""
         self.path = path
+        self.custom_schema = schema
+        if path != ":memory:":
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.lock = threading.RLock()
-        self.conn.executescript(SCHEMA)
-        self._migrate()
+        self.conn.executescript(schema or SCHEMA)
+        if not schema:
+            self._migrate()
         self.conn.commit()
 
     def _migrate(self):
