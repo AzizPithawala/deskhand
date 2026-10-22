@@ -79,7 +79,9 @@ def test_sign_in_throttle_and_generic_errors(a, clock):
     with pytest.raises(ac.AccountError) as e:
         a.authenticate("owner@acme.test", "a-long-password", "1.2.3.4")  # even the right password waits
     assert e.value.status == 429
-    assert a.authenticate("owner@acme.test", "a-long-password", "9.9.9.9")  # another address is not locked
+    with pytest.raises(ac.AccountError) as e2:
+        a.authenticate("owner@acme.test", "a-long-password", "9.9.9.9")  # changing the reported address does not dodge the lockout
+    assert e2.value.status == 429
     clock.t += 16 * 60
     assert a.authenticate("owner@acme.test", "a-long-password", "1.2.3.4")
     with pytest.raises(ac.AccountError) as e:

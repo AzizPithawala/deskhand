@@ -50,24 +50,26 @@ def test_all_chaos_scenarios_hold(e):
 
 
 def test_api_end_to_end(tmp_path, monkeypatch):
-    monkeypatch.setenv("DESKHAND_DB", str(tmp_path / "t.db"))
-    import importlib
-    from app import main
-    importlib.reload(main)
-    c = TestClient(main.app)
-    assert "Deskhand" in c.get("/").text
-    assert len(c.get("/api/state").json()["employees"]) == 10
-    r = c.post("/api/ingest", json={"channel": "chat", "sender": "e01", "text": "Need a Claude seat for my work on the research project."}).json()
+    from tests import apiutil
+    main = apiutil.load_app(monkeypatch, tmp_path)
+    anon = apiutil.Browser(main)
+    assert "Deskhand" in anon.get("/").text and anon.get("/api/state").status_code == 401  # the shell is public, the data is not
+    priya, imran = apiutil.Browser(main), apiutil.Browser(main)
+    assert priya.demo("e01").status_code == 200 and imran.demo("e06").status_code == 200
+    assert len(priya.get("/api/state").json()["employees"]) == 10
+    r = priya.post("/api/ingest", {"text": "Need a Claude seat for my work on the research project."}).json()
     rid = r["request_ids"][0]
-    assert c.post(f"/api/requests/{rid}/approve", json={"actor_id": "e01"}).status_code == 403
-    assert c.post(f"/api/requests/{rid}/reject", json={"actor_id": "e06", "reason": ""}).status_code == 422
-    assert c.get("/api/inbox/e06").json()[0]["inbox_kind"] == "approval"
-    assert c.post(f"/api/requests/{rid}/approve", json={"actor_id": "e06"}).status_code == 200
-    assert c.post(f"/api/requests/{rid}/approve", json={"actor_id": "e06"}).status_code == 409
-    assert c.post(f"/api/requests/{rid}/done", json={"actor_id": "e06"}).json()["status"] == "CLOSED"
-    d = c.get("/api/dashboard").json()
+    assert priya.post(f"/api/requests/{rid}/approve").status_code == 403  # the requester is not the approver
+    assert imran.post(f"/api/requests/{rid}/reject", {"reason": ""}).status_code == 422
+    assert imran.get("/api/inbox").json()[0]["inbox_kind"] == "approval"
+    assert imran.post(f"/api/requests/{rid}/approve").status_code == 200
+    assert imran.post(f"/api/requests/{rid}/approve").status_code == 409
+    assert imran.post(f"/api/requests/{rid}/done").json()["status"] == "CLOSED"
+    admin = apiutil.Browser(main)
+    admin.demo("e10")
+    d = admin.get("/api/dashboard").json()
     assert d["by_status"]["CLOSED"] == 1 and d["guard"]["unauthorized_action_refused"] == 1
-    assert c.post("/api/chaos/duplicate_x4").json()["passed"]
-    assert c.post("/api/clock/advance", json={"hours": 30}).status_code == 200
-    assert c.get("/api/digest/e06").json()["person"] == "Imran Khan"
-    assert c.post("/api/reset").json()["ok"] and c.get("/api/dashboard").json()["total"] == 0
+    assert admin.post("/api/chaos/duplicate_x4").json()["passed"]
+    assert admin.post("/api/clock/advance", {"hours": 30}).status_code == 200
+    assert imran.get("/api/digest").json()["person"] == "Imran Khan"
+    assert admin.post("/api/reset").json()["ok"] and admin.get("/api/dashboard").json()["total"] == 0

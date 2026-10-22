@@ -177,29 +177,40 @@ def test_switched_on_but_viasocket_not_configured_means_no_call(monkeypatch):
 
 
 # ---- the admin switch ----
+from tests import apiutil  # noqa: E402
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    import importlib
-    monkeypatch.setenv("DESKHAND_DB", str(tmp_path / "t.db"))
-    from app import main
-    importlib.reload(main)
-    return TestClient(main.app), main
+    main = apiutil.load_app(monkeypatch, tmp_path)
+    return apiutil.company(main), main
 
 
 def test_the_switch_is_admin_only_off_by_default_audited_and_survives_reset(client):
-    c, main = client
-    assert c.get("/api/ai", params={"actor_id": "e01"}).status_code == 403
-    assert c.post("/api/ai", json={"actor_id": "e01", "enabled": True}).status_code == 403
-    d = c.get("/api/ai", params={"actor_id": "e10"}).json()
+    owner, main = client
+    mia = apiutil.add_person(owner, "mia@acme.test", "Mia")
+    assert mia.get("/api/ai").status_code == 403
+    assert mia.post("/api/ai", {"enabled": True}).status_code == 403
+    d = owner.get("/api/ai").json()
     assert d["enabled"] is False and d["switch"] is False and d["timeout_s"] == vsai.TIMEOUT_S
-    assert c.post("/api/ai", json={"actor_id": "e10", "enabled": True}).json()["enabled"] is True
-    assert "ai_setting_changed" in [x["type"] for x in main.engine.s.all("SELECT type FROM events")]
-    main.engine.reset()
-    assert c.get("/api/ai", params={"actor_id": "e10"}).json()["switch"] is True  # Reset demo keeps the setting
-    assert c.post("/api/ai", json={"actor_id": "e10", "enabled": False}).json()["enabled"] is False
+    assert owner.post("/api/ai", {"enabled": True}).json()["enabled"] is True
+    assert "ai_setting_changed" in [x["type"] for x in owner.engine.s.all("SELECT type FROM events")]
+    owner.engine.reset()
+    assert owner.get("/api/ai").json()["switch"] is True  # Reset keeps the setting
+    assert owner.post("/api/ai", {"enabled": False}).json()["enabled"] is False
 
 
 def test_the_switch_cannot_be_turned_on_without_viasocket_values(client, monkeypatch):
-    c, _ = client
+    owner, _ = client
     monkeypatch.delenv("VIASOCKET_EMBED_SECRET")
-    assert c.post("/api/ai", json={"actor_id": "e10", "enabled": True}).status_code == 409
+    assert owner.post("/api/ai", {"enabled": True}).status_code == 409
+
+
+def test_the_switch_is_per_company_and_off_inside_the_demo(client, tmp_path):
+    owner, main = client
+    other = apiutil.company(main, "o@other.test", "code-2", "Other Co")
+    assert owner.post("/api/ai", {"enabled": True}).status_code == 200
+    assert other.get("/api/ai").json()["switch"] is False
+    demo = apiutil.Browser(main)
+    demo.demo("e10")
+    assert demo.post("/api/ai", {"enabled": True}).status_code == 403 and demo.get("/api/ai").json()["configured"] is False

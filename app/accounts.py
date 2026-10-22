@@ -261,14 +261,15 @@ class Accounts:
 
     # ---------- signing in ----------
     def _throttle_key(self, email, ip):
-        return _h(f"{(email or '').lower()}|{ip or ''}")
+        # keyed on the email alone: the address a client reports is spoofable, so keying on it would let an attacker dodge the lockout
+        return _h((email or "").strip().lower())
 
     def authenticate(self, email, password, ip=None):
         key = self._throttle_key(email, ip)
         since = self.now() - LOCKOUT_WINDOW_S
         fails = self.s.one("SELECT COUNT(*) c FROM login_attempts WHERE key=? AND at>=?", (key, since))["c"]
         if fails >= LOCKOUT_MAX:
-            raise AccountError("Too many sign-in attempts. Wait 15 minutes and try again.", 429)
+            raise AccountError("Too many sign-in attempts for this account. Wait 15 minutes and try again.", 429)
         u = self.get_by_email(email)
         ok = verify_password(password or "", u["password_hash"] if u and u["password_hash"] else _DUMMY)
         if not (u and ok and u["status"] == "active"):

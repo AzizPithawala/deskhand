@@ -78,7 +78,7 @@ class Refused(Exception):
 
 class Engine:
     def __init__(self, store=None, directory=None, hr=None, api_key=None, ai_classify=None, ai_enabled=None):
-        self.s = store or Store(os.environ.get("DESKHAND_DB", ":memory:"))
+        self.s = store or Store(":memory:")  # real companies pass their own database file (app/registry.py)
         self.d = directory or Directory.load()
         self.hr = hr or MockHR(self.d)
         self.api_key = os.environ.get("ANTHROPIC_API_KEY", "") if api_key is None else api_key

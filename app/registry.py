@@ -99,5 +99,5 @@ def open_platform(data_dir, signup_codes=()):
     acc.sync_codes(list(signup_codes))
     reg = OrgRegistry(acc, data_dir)
     reg.seed_demo()
-    reg.migrate_legacy(os.environ.get("DESKHAND_DB"), os.path.join(data_dir, "deskhand.db"), "deskhand.db")
+    reg.migrate_legacy(os.environ.get("DESKHAND_DB"), os.path.join(data_dir, "deskhand.db"))
     return acc, reg
