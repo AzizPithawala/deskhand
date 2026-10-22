@@ -896,6 +896,9 @@ def connection_disconnect(key: str, ctx: Ctx = Depends(real_admin)):
     client, store = _real(ctx)
     row = store.get(key)
     if row:
+        if key == "slack" and store.get("slack_flow"):  # the approval automation lives on this connection: remove it first, as viaSocket advises
+            client.api("PUT", f"/embed/updatestatus/{store.get('slack_flow')['script_id']}?status=0")
+            store.delete("slack_flow")
         client.api("PUT", f"/embed/updatestatus/{row['script_id']}?status=0")  # remove the runner first, then the connection
         r = client.revoke(row["auth_id"])
         if not r.ok:

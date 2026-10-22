@@ -192,3 +192,30 @@ def test_the_test_approval_goes_only_to_the_admin_and_changes_nothing(team, main
     assert hook(s, token=sent["token"], slack_user="U0OWNER01", decision="approve").json() == {"status": "test_ok", "decision": "approve"}
     assert owner.get("/api/integrations/slack/test-approval").json()["state"] == "received" and boss.get("/api/integrations/slack/test-approval").status_code == 403
     assert owner.engine.s.all("SELECT * FROM requests") == []
+
+
+def test_switching_the_buttons_on_again_updates_the_same_automation_instead_of_making_another():
+    integ, t, st = integ_with(*good_sequence())
+    assert integ.create_approval_flow(CALLBACK).data == {"created": True}
+    t.answers, t.calls = [ok({"data": {"token": TOKEN}}), ok({"success": True, "data": {}})], []
+    r = integ.create_approval_flow("https://new-address.example.test/api/hooks/slack-decision")
+    assert r.ok and r.data == {"created": False} and [c[1].rsplit("/", 1)[1] for c in t.calls] == ["register", vs.FLOW_FUNCTIONS["steps"]]
+    assert t.calls[1][3]["scriptId"] == FLOW and "new-address.example.test" in json.dumps(t.calls[1][3]["steps"]) and CALLBACK not in json.dumps(t.calls[1][3]["steps"])
+    assert st.one("SELECT COUNT(*) c FROM connections WHERE app='slack_flow'")["c"] == 1
+    t.answers, t.calls = [ok({"data": {"token": TOKEN}}), ok({"status": 400, "data": {"message": "flow has been deleted"}})] + good_sequence()[1:], []
+    r = integ.create_approval_flow(CALLBACK)  # the automation was deleted in viaSocket: a new one is built
+    assert r.ok and r.data == {"created": True} and len(t.calls) == 5
+
+
+def test_disconnecting_slack_also_removes_the_approval_automation(team, main, monkeypatch):
+    owner, boss, ann = team
+    cs = vs.ConnectionStore(owner.engine.s, owner.org_id)
+    cs.save("slack", AUTH, SCRIPT)
+    owner.engine.s.q("INSERT INTO connections(tenant,app,auth_id,script_id,settings_json,updated_at) VALUES(?,?,NULL,?,'{}',0)", (owner.org_id, "slack_flow", FLOW))
+    t = FakeTransport(ok({"success": True, "data": {}}))
+    real = vs.VsClient
+    monkeypatch.setattr(vs, "VsClient", lambda tenant, transport=None: real(tenant, t))
+    assert owner.post("/api/connections/slack/disconnect").json() == {"ok": True}
+    deleted = [c[1] for c in t.calls if "updatestatus" in c[1]]
+    assert len(deleted) == 2 and deleted[0].endswith(f"{FLOW}?status=0") and deleted[1].endswith(f"{SCRIPT}?status=0")  # the automation first, then the runner
+    assert cs.get("slack") is None and cs.get("slack_flow") is None

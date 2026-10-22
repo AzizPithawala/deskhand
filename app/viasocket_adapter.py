@@ -430,6 +430,11 @@ class ViaSocketIntegration(Integration):
             return tok
         proj = os.environ.get("VIASOCKET_PROJECT_ID")
         extra = self.conns.secrets()
+        old = self.approval_flow()
+        if old:  # already built: switching the buttons on again only rewrites its steps (a new callback address, say), so there is never a second automation
+            again = self.client.flow_call("steps", {"scriptId": old, "steps": _approval_steps(c["auth_id"], callback_url)}, tok.data, (old, *extra))
+            if again.ok:
+                return Result(SUCCESS, data={"created": False})
         made = self.client.flow_call("create", {"title": "Deskhand approvals", "description": "Sends an approval request to a person on Slack with Approve and Reject buttons and tells Deskhand which they pressed.", "projectId": proj}, tok.data, extra)
         flow = ((made.data or {}).get("script_id") if isinstance(made.data, dict) else None) if made.ok else None
         if not flow:
@@ -464,7 +469,8 @@ def _approval_steps(slack_auth_id, callback_url):
     report = ('const b = context?.req?.body || {};\nconst a = context?.res?.ask || {};\nconst act = (a.actions && a.actions[0]) || {};\n'
               'const body = { token: b.token, slack_user: a.error ? "" : ((a.user && a.user.id) || ""), decision: a.error ? "error" : (act.value || "") };\n'
               f'const r = await axios.post("{callback_url}", body, {{ headers: {{ "Content-Type": "application/json" }}, timeout: 20000 }});\n'
-              'return { status: r && r.status };')
+              "console.log('### Deskhand answered HTTP ' + (r && r.status) + ' to the ' + (body.decision || 'empty') + ' click');\n"
+              'return { status: r && r.status, answer: r && r.data };')
     return [{"stepname": "ask", "code": ask, "service_action_functions": [{"name": "sendInteractive", "auth_id": slack_auth_id, "action_id": INTERACTIVE_ACTION_ID}]},
             {"stepname": "report", "code": report, "service_action_functions": []}]
 
