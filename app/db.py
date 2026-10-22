@@ -77,11 +77,19 @@ class Store:
             return cur
 
     def all(self, sql, args=()):
-        return [dict(r) for r in self.q(sql, args).fetchall()]
+        with self.lock:  # run and read under ONE lock: no other thread may execute or commit on this shared connection while a cursor is half-read
+            cur = self.conn.execute(sql, args)
+            rows = cur.fetchall()
+            self.conn.commit()
+            return [dict(r) for r in rows]
 
     def one(self, sql, args=()):
-        row = self.q(sql, args).fetchone()
-        return dict(row) if row else None
+        with self.lock:
+            cur = self.conn.execute(sql, args)
+            row = cur.fetchone()
+            cur.close()
+            self.conn.commit()
+            return dict(row) if row else None
 
     def get_setting(self, key, default=None):
         row = self.one("SELECT value FROM settings WHERE key=?", (key,))

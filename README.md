@@ -79,6 +79,9 @@ password is no longer needed; set `DESKHAND_DEMO_PASSWORD` only if you want an e
 Environment variable names: DESKHAND_SIGNUP_CODES, DESKHAND_BASE_URL, VIASOCKET_ORG_ID, VIASOCKET_PROJECT_ID, VIASOCKET_EMBED_SECRET, VIASOCKET_API_URL, VIASOCKET_RUN_URL
 (optional: DESKHAND_DEMO_PASSWORD). No ANTHROPIC_API_KEY. Set the values yourself in Embarko's App setup; never put them in a file in the repository. An old
 single-company `deskhand.db` found in the data directory becomes the demo company's database the first time the new version starts.
+If people report being signed out, the hosted log says why (Embarko: `GET https://ship.embarko.ai/apps/<app>/logs`, with the deploy token): `session refused: <reason> on <method> <path>` where the reason is one of
+`no_cookie`, `unknown_session`, `expired`, `idle`, `user_<status>`, `no_user`, `no_org`, `org_inactive`, `org_mismatch` or `company_unavailable`, and `gate refused <method> <path>: no_authorization_header | wrong_password`
+when the shared password (not the session) turned a signed-in browser away. Cookies, passwords and tokens are never logged. The browser re-checks `/api/auth/me` and retries once before it signs anyone out on a single 401.
 
 ## What is NOT done or NOT verified
 - No emails from Deskhand itself: invite and reset links are copied by an admin. A locked-out owner needs another admin to make a reset link. No email verification, no SSO or MFA (Phase 6).

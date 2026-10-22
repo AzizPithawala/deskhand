@@ -168,3 +168,38 @@ def test_security_headers_and_no_api_caching(main):
     r = b.get("/api/auth/options")
     assert r.headers["x-content-type-options"] == "nosniff" and r.headers["x-frame-options"] == "DENY" and r.headers["cache-control"] == "no-store"
     assert b.get("/docs").status_code == 404 and b.get("/openapi.json").status_code == 404
+
+
+
+def test_a_refused_session_is_logged_with_the_reason_and_never_the_cookie(main, caplog):
+    import logging
+    b = apiutil.company(main)
+    token = b.c.cookies.get("dh_session")
+    assert b.get("/api/state").status_code == 200
+    b.post("/api/auth/logout")
+    ghost = Browser(main)
+    ghost.c.cookies.set("dh_session", token)  # the cookie of a session that no longer exists
+    with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
+        assert ghost.get("/api/state").status_code == 401
+        assert Browser(main).get("/api/state").status_code == 401  # no cookie at all: still recorded, so a browser that stops sending it shows up
+    lines = [r.getMessage() for r in caplog.records if "session refused" in r.getMessage()]
+    assert lines == ["session refused: unknown_session on GET /api/state", "session refused: no_cookie on GET /api/state"] and token not in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
+        assert Browser(main).get("/api/auth/me").status_code == 401  # a signed-out visitor's normal first call is not news
+    assert "session refused" not in caplog.text
+
+
+def test_parallel_requests_after_sign_in_and_act_as_all_succeed(main):
+    """What the browser does: several GETs at once right after entering the demo and after switching person."""
+    from concurrent.futures import ThreadPoolExecutor
+    demo = Browser(main)
+    assert demo.demo("e01").status_code == 200
+    urls = ["/api/state", "/api/clock", "/api/inbox", "/api/outbox?limit=200", "/api/requests?employee=e01"]
+    for round_ in range(15):
+        with ThreadPoolExecutor(5) as ex:
+            codes = list(ex.map(lambda u: demo.get(u).status_code, urls))
+        assert codes == [200] * 5, (round_, codes)
+        who = ["e10", "e04", "e01"][round_ % 3]
+        assert demo.act_as(who).status_code == 200
+        urls[4] = f"/api/requests?employee={who}"

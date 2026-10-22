@@ -76,3 +76,18 @@ def test_static_files_are_behind_the_gate_and_served_with_it(make):
     for r in ("/static/app.css", "/static/app.js", "/static/fonts/Geist-Variable.woff2", "/static/fonts/OFL.txt"):
         assert c.get(r).status_code == 401
         assert c.get(r, headers=basic(PW)).status_code == 200
+
+
+def test_a_gate_refusal_of_a_signed_in_browser_is_logged_without_the_password(monkeypatch, tmp_path, caplog):
+    import logging
+    from tests import apiutil
+    main = apiutil.load_app(monkeypatch, tmp_path)
+    b = apiutil.company(main)
+    monkeypatch.setenv("DESKHAND_DEMO_PASSWORD", "gate-secret-for-tests")
+    with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
+        assert b.get("/api/state").status_code == 401  # has the session cookie but no password
+        assert b.c.get("/api/state", headers={"authorization": "Basic " + __import__("base64").b64encode(b"x:wrong-one").decode()}).status_code == 401
+        assert apiutil.Browser(main).get("/api/state").status_code == 401  # a stranger with no cookie and no header: not logged
+    lines = [r.getMessage() for r in caplog.records if "gate refused" in r.getMessage()]
+    assert lines == ["gate refused GET /api/state: no_authorization_header", "gate refused GET /api/state: wrong_password"]
+    assert "gate-secret-for-tests" not in caplog.text and "wrong-one" not in caplog.text

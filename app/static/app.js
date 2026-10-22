@@ -23,7 +23,7 @@ const isAdmin = () => !!(ME && ME.is_admin);
 const isDemo = () => !!(ME && ME.org.is_demo);
 
 /* ---------- api ---------- */
-async function api(path, body) {
+async function api(path, body, retried) {
   // body undefined = GET; null = POST without a body; anything else = POST as JSON. Every POST carries the CSRF token.
   const opt = body === undefined ? undefined
     : { method: 'POST', headers: { 'X-CSRF-Token': ME ? ME.csrf : '', ...(body === null ? {} : { 'Content-Type': 'application/json' }) }, body: body === null ? undefined : JSON.stringify(body) };
@@ -31,7 +31,13 @@ async function api(path, body) {
   try { r = await fetch('/api' + path, opt); } catch { const e = new Error('The server could not be reached.'); e.network = true; throw e; }
   let j = {};
   try { j = await r.json(); } catch { /* not json */ }
-  if (r.status === 401 && ME && !path.startsWith('/auth/')) signedOut('Your session ended. Sign in again.');
+  if (r.status === 401 && ME && !path.startsWith('/auth/')) {
+    if (!retried) {  // one 401 is not proof the session is gone: ask the server, and only if it agrees sign out. A refused request was never processed, so repeating it is safe.
+      const alive = await fetch('/api/auth/me').then(x => (x.ok ? x.json() : null)).catch(() => null);
+      if (alive) { ME = alive; return api(path, body, true); }
+    }
+    signedOut('Your session ended. Sign in again.');
+  }
   if (!r.ok) { const e = new Error(typeof j.detail === 'string' ? j.detail : (Array.isArray(j.detail) ? 'Please check what you entered.' : (r.statusText || 'The request failed'))); e.status = r.status; throw e; }
   return j;
 }

@@ -2,6 +2,7 @@
 database file; admin, demo-only and visibility rules are enforced here, in code."""
 import contextlib
 import hmac
+import logging
 import os
 import re
 import threading
@@ -22,6 +23,7 @@ DATA_DIR = os.environ.get("DESKHAND_DATA_DIR", ".deskhand")
 SIGNUP_CODES = [c.strip() for c in os.environ.get("DESKHAND_SIGNUP_CODES", "").split(",") if c.strip()]
 accounts, registry = open_platform(DATA_DIR, SIGNUP_CODES)
 COOKIE = "dh_session"
+log = logging.getLogger("uvicorn.error")  # shows in the hosted log next to the access lines
 
 app = FastAPI(title="Deskhand", docs_url=None, redoc_url=None, openapi_url=None)
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -52,6 +54,8 @@ async def password_gate(request, call_next):
     if not hmac.compare_digest(hashlib.sha256(given.encode()).digest(), hashlib.sha256(pw.encode()).digest()):
         if h:
             _gate_failures.append(now)
+        if h or request.cookies.get(COOKIE):  # a browser that had signed in was refused by the shared password, which is not a session problem
+            log.warning("gate refused %s %s: %s", request.method, request.url.path, "wrong_password" if h else "no_authorization_header")
         return PlainTextResponse("Password required.", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Deskhand"'})
     return await call_next(request)
 
@@ -104,14 +108,17 @@ def _ip(request):
 
 def auth(request: Request) -> Ctx:
     token = request.cookies.get(COOKIE)
-    sess = accounts.get_session(token)
+    sess, why = accounts.session_state(token)
     if not sess:
+        if request.url.path != "/api/auth/me":  # that one is how a signed-out visitor finds out; anything else refused is a signed-in browser losing its session
+            log.warning("session refused: %s on %s %s", why, request.method, request.url.path)  # a fixed word and the path, never the cookie
         raise HTTPException(401, "Sign in to continue.")
     if request.method not in ("GET", "HEAD", "OPTIONS") and not hmac.compare_digest(request.headers.get("x-csrf-token", ""), sess["csrf"]):
         raise HTTPException(403, "This request did not come from the Deskhand page. Reload and try again.")
     try:
         eng = registry.engine_for(sess["org"]["id"])
     except KeyError:
+        log.warning("session refused: company_unavailable on %s %s", request.method, request.url.path)
         raise HTTPException(401, "Sign in to continue.")
     if not eng.d.emp(sess["user"]["id"]) and not sess["org"]["is_demo"]:
         registry.refresh_directory(sess["org"]["id"])
