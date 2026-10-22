@@ -150,70 +150,75 @@ def test_gmail_200_without_message_id_is_a_failure():
 
 
 # ---- Connections API ----
+from tests import apiutil  # noqa: E402
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("DESKHAND_DB", str(tmp_path / "t.db"))
-    import importlib
-    from app import main
-    importlib.reload(main)
-    return TestClient(main.app), main
+    main = apiutil.load_app(monkeypatch, tmp_path)
+    owner = apiutil.company(main)
+    return owner, main
 
 
 def test_connections_are_admin_only_and_list_every_setting(client):
-    c, _ = client
-    assert c.get("/api/connections", params={"actor_id": "e01"}).status_code == 403
-    r = c.get("/api/connections", params={"actor_id": "e10"}).json()
+    owner, main = client
+    mia = apiutil.add_person(owner, "mia@acme.test", "Mia")
+    assert mia.get("/api/connections").status_code == 403
+    r = owner.get("/api/connections").json()
     assert [a["key"] for a in r["apps"]] == ["slack", "gmail"] and "mode" not in r
     assert [x["key"] for x in r["apps"][1]["settings"]] == ["from", "notify_email"] and r["problems"]
-    tok = c.get("/api/connections/token", params={"actor_id": "e10"}).json()["token"]
+    tok = owner.get("/api/connections/token").json()["token"]
     assert tok.count(".") == 2 and SECRET not in tok
+    assert mia.get("/api/connections/token").status_code == 403
 
 
 def test_server_without_viasocket_values_says_so_instead_of_connecting(client, monkeypatch):
-    c, _ = client
+    owner, _ = client
     monkeypatch.delenv("VIASOCKET_EMBED_SECRET")
-    assert c.get("/api/connections/token", params={"actor_id": "e10"}).status_code == 409
-    assert c.get("/api/connections", params={"actor_id": "e10"}).json()["configured"] is False
+    assert owner.get("/api/connections/token").status_code == 409
+    assert owner.get("/api/connections").json()["configured"] is False
 
 
 def test_connect_flow_never_returns_ids_and_rejects_foreign_connections(client, monkeypatch):
-    c, main = client
+    owner, main = client
     t = FakeTransport(ok({"success": True, "data": [{"id": AUTH, "isExpired": False}]}))
     real = vs.VsClient
     monkeypatch.setattr(vs, "VsClient", lambda tenant: real(tenant, t))
-    bad = c.post("/api/connections/connected", json={"actor_id": "e10", "app": "slack", "auth_id": "someone-elses"})
+    bad = owner.post("/api/connections/connected", {"app": "slack", "auth_id": "someone-elses"})
     assert bad.status_code == 422
     t.answers = [ok({"success": True, "data": [{"id": AUTH}]}), ok({"success": True, "data": {"flows": []}}), ok({"success": True, "data": {"script_id": SCRIPT}})]
     t.calls.clear()
-    assert c.post("/api/connections/connected", json={"actor_id": "e10", "app": "slack", "auth_id": AUTH}).json() == {"ok": True}
+    assert owner.post("/api/connections/connected", {"app": "slack", "auth_id": AUTH}).json() == {"ok": True}
     assert any(u.endswith(f"/embed/enable/rowbu58rc/{AUTH}") for _, u, _, _ in t.calls)
+    assert t.calls[0][2]["authorization"].count(".") == 2  # the company's own identity signs the call
     t.answers = [ok({"success": True, "data": [{"id": AUTH}]})]
-    body = c.get("/api/connections", params={"actor_id": "e10"}).text
+    body = owner.get("/api/connections").text
     assert AUTH not in body and SCRIPT not in body and SECRET not in body
     assert '"status":"connected"' in body.replace(" ", "")
-    audit = json.dumps(main.engine.s.all("SELECT data_json FROM events"))
-    assert AUTH not in audit and SCRIPT not in audit and "connection_added" in json.dumps(main.engine.s.all("SELECT type FROM events"))
+    audit = json.dumps(owner.engine.s.all("SELECT data_json FROM events"))
+    assert AUTH not in audit and SCRIPT not in audit and "connection_added" in json.dumps(owner.engine.s.all("SELECT type FROM events"))
 
 
-def test_reset_demo_data_keeps_connections(client):
-    _, main = client
-    vs.ConnectionStore(main.engine.s, main.TENANT).save("slack", AUTH, SCRIPT)
-    main.engine.reset()
-    assert vs.ConnectionStore(main.engine.s, main.TENANT).get("slack")["script_id"] == SCRIPT
+def test_reset_keeps_connections(client):
+    owner, main = client
+    vs.ConnectionStore(owner.engine.s, owner.org_id).save("slack", AUTH, SCRIPT)
+    owner.engine.reset()
+    assert vs.ConnectionStore(owner.engine.s, owner.org_id).get("slack")["script_id"] == SCRIPT
 
 
 def test_test_calls_validate_input_and_email_only_the_stored_address(client, monkeypatch):
-    c, main = client
-    assert c.post("/api/connections/test", json={"actor_id": "e01", "action": "slack_send"}).status_code == 403
-    assert c.post("/api/connections/test", json={"actor_id": "e10", "action": "slack_lookup", "email": "a@b.co, c@d.co"}).status_code == 422
-    assert c.post("/api/connections/test", json={"actor_id": "e10", "action": "gmail_send"}).status_code == 409  # no notification email yet
-    cs = vs.ConnectionStore(main.engine.s, main.TENANT)
+    owner, main = client
+    mia = apiutil.add_person(owner, "mia@acme.test", "Mia")
+    assert mia.post("/api/connections/test", {"action": "slack_send"}).status_code == 403
+    assert owner.post("/api/connections/test", {"action": "slack_lookup", "email": "a@b.co, c@d.co"}).status_code == 422
+    assert owner.post("/api/connections/test", {"action": "gmail_send"}).status_code == 409  # no notification email yet
+    cs = vs.ConnectionStore(owner.engine.s, owner.org_id)
     cs.save("gmail", "gmailauth000001", "scriGMAILSCRIPT01")
     cs.set_setting("gmail", "notify_email", "stored@example.test")
     t = FakeTransport(ok({"success": True, "data": {"id": "m1", "threadId": "t1"}}))
     real = vs.VsClient
     monkeypatch.setattr(vs, "VsClient", lambda tenant, transport=None: real(tenant, t))
-    r = c.post("/api/connections/test", json={"actor_id": "e10", "action": "gmail_send", "email": "someone-else@example.test"}).json()
+    r = owner.post("/api/connections/test", {"action": "gmail_send", "email": "someone-else@example.test"}).json()
     assert r["outcome"] == "success" and t.calls[0][3]["inputData"]["to"] == "stored@example.test"  # a typed address is ignored
 
 

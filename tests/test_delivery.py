@@ -38,7 +38,7 @@ def env(monkeypatch):
 
 
 def setup_apps(e, channel="C123", email=OVERRIDE):
-    cs = vs.ConnectionStore(e.s, "acme-demo")
+    cs = vs.ConnectionStore(e.s, getattr(e, "org_id", "acme-demo"))
     cs.save("slack", "auth-slack-000001", SCRIPT_S)
     if channel:
         cs.set_setting("slack", "channel_id", channel)
@@ -292,27 +292,25 @@ def test_nothing_secret_leaks_into_outbox_audit_or_dashboard(live):
 
 
 def test_web_api_has_no_switch_validates_the_email_and_shows_banners(env, tmp_path, monkeypatch):
-    from fastapi.testclient import TestClient
-    import importlib
-    monkeypatch.setenv("DESKHAND_DB", str(tmp_path / "t.db"))
-    from app import main
-    importlib.reload(main)
-    c = TestClient(main.app)
-    assert c.get("/api/delivery", params={"actor_id": "e01"}).status_code == 403
-    assert c.post("/api/delivery/toggle", json={"actor_id": "e10", "on": True}).status_code in (404, 405)
-    clock = c.get("/api/clock").json()
+    from tests import apiutil
+    main = apiutil.load_app(monkeypatch, tmp_path)
+    owner = apiutil.company(main)
+    mia = apiutil.add_person(owner, "mia@acme.test", "Mia")
+    assert mia.get("/api/delivery").status_code == 403
+    assert owner.post("/api/delivery/toggle", {"on": True}).status_code in (404, 405)
+    clock = owner.get("/api/clock").json()
     assert clock["banners"][0] == "Slack not connected: notifications are not being delivered" and clock["delivery"]["cap"] == 150
-    setup_apps(main.engine, email="")
-    assert c.post("/api/connections/gmail/setting", json={"actor_id": "e10", "setting": "notify_email", "value": "a@b.co, c@d.co"}).status_code == 422
-    assert c.post("/api/connections/gmail/setting", json={"actor_id": "e10", "setting": "notify_email", "value": "nobody"}).status_code == 422
-    assert c.post("/api/connections/gmail/setting", json={"actor_id": "e01", "setting": "notify_email", "value": "a@b.co"}).status_code == 403
-    assert c.post("/api/connections/gmail/setting", json={"actor_id": "e10", "setting": "notify_email", "value": "one@example.test"}).status_code == 200
-    d = c.get("/api/delivery", params={"actor_id": "e10"}).json()
+    setup_apps(owner.engine, email="")
+    assert owner.post("/api/connections/gmail/setting", {"setting": "notify_email", "value": "a@b.co, c@d.co"}).status_code == 422
+    assert owner.post("/api/connections/gmail/setting", {"setting": "notify_email", "value": "nobody"}).status_code == 422
+    assert mia.post("/api/connections/gmail/setting", {"setting": "notify_email", "value": "a@b.co"}).status_code == 403
+    assert owner.post("/api/connections/gmail/setting", {"setting": "notify_email", "value": "one@example.test"}).status_code == 200
+    d = owner.get("/api/delivery").json()
     assert d["ready"] == {"slack": True, "email": True} and d["email_to"] == "o***@example.test" and "one@example.test" not in json.dumps(d)
-    assert c.get("/api/clock").json()["banners"] == []
-    assert "one@example.test" not in json.dumps(main.engine.s.all("SELECT data_json FROM events"))
-    c.post("/api/reset")
-    assert main.engine.live.ready("email")  # Reset demo keeps connections and configuration
+    assert owner.get("/api/clock").json()["banners"] == []
+    assert "one@example.test" not in json.dumps(owner.engine.s.all("SELECT data_json FROM events"))
+    owner.engine.reset()
+    assert owner.engine.live.ready("email")  # a reset keeps connections and configuration
 
 
 class SlowFake(Fake):
@@ -410,3 +408,13 @@ def test_preflight_reports_yes_no_and_leaks_nothing(live, tmp_path, monkeypatch)
         assert secret not in blob
     cs.set_setting("gmail", "notify_email", "a@b.co, c@d.co")
     assert dict(preflight.report(path))["Notification email set (one valid address)"] == "NO"
+
+
+def test_the_demo_company_never_delivers_even_with_real_connections_stored(live):
+    e, d, fake = live
+    assert d.ready("chat") and d.ready("email")
+    e.is_demo = True  # a demo company that inherited Slack and Gmail rows from an older single-company database
+    assert not d.ready("chat") and not d.ready("email")
+    e.ingest("chat", "e01", "Need a Claude seat for my research project")
+    assert {r["delivery_status"] for r in rows(e)} == {"skipped"}
+    assert d.deliver_pending()["delivered"] == 0 and not fake.calls

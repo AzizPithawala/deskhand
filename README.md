@@ -1,66 +1,84 @@
-# Deskhand prototype (v0)
+# Deskhand (agent platform, Phase 1: companies and sign-in)
 
 An agent that handles employee requests end to end: understands the request, routes it by rule to the right approver,
 tracks approve / reject (reason required) / pending, escalates on time, acts through guarded actions and keeps an audit trail.
-Everything runs on simulated channels (chat and email) and a mock HR system. No real Slack, Gmail or Keka yet.
+Many companies can use one Deskhand, each strictly separate. People sign in; the server, not the browser, decides who is acting.
+Requests are raised in the Ask chat inside Deskhand. Slack and Gmail notifications are delivered through viaSocket (see below). HR actions still run
+against a mock HR system until the Phase 3 leave ledger. The plan for all phases is in `docs/AGENT_PLATFORM_PLAN.md`.
 
 ## Run it
 ```
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-make dev                                                # or: uvicorn app.main:app --reload --port 8000
+pip install -r requirements-dev.txt
+DESKHAND_SIGNUP_CODES=any-code-you-like make dev        # or: uvicorn app.main:app --reload --port 8000
 ```
-Open http://localhost:8000. Needs Python 3.11+. Run the tests with `make test` (39 tests, including the 7-minute demo script as one test). Optional: copy `.env.example` to `.env` and set
-`ANTHROPIC_API_KEY` to use Claude for understanding requests. Without a key a deterministic rules classifier is used.
+Open http://localhost:8000. Without `DESKHAND_SIGNUP_CODES` registration is closed and only "Try the demo" works. Needs Python 3.11+. Run the tests with
+`make test` (174 tests, including the 7-minute demo script and two-company isolation). `make reset` deletes the local data directory (`.deskhand/`).
+Requests are understood by a deterministic rules classifier. An admin of a real company can switch on viaSocket AI (a Claude model, no model key needed)
+on the Health page; it only proposes the request type and details, waits at most 25 seconds, falls back to the rules on any failure, and never sees salary or
+payroll messages. (`requirements.txt` is the deploy list; `requirements-dev.txt` adds pytest.)
+
+## Companies, accounts and sign-in
+- **Register a company** at `#register` with an invite code that the operator hands out (`DESKHAND_SIGNUP_CODES`, comma separated, values secret, each code works
+  once). You become the **owner**. One email address belongs to one company only.
+- **Invite people** on the People page (admins). Nothing is emailed yet: you copy the invite link (`/#join/<token>`) and send it yourself. The link works once,
+  expires in 7 days and is shown only at that moment (only its hash is stored). The same screen sets each person's manager, department and access
+  (Owner, Admin, Member), deactivates people (signed out at once) and makes password-reset links. Keep two admins in case the owner is locked out.
+- **Who sees what.** Employees see their own requests and those assigned to them (as approver, backup or fulfiller). Admins see everything and get People, Health
+  and Audit. Inbox, outbox and digest are always "mine". Routing uses the reporting lines set on the People page; a request with no manager goes to an admin.
+- **Sessions.** Cookie `dh_session` (HttpOnly, SameSite=Lax, Secure on HTTPS), idle 12 hours, absolute 14 days; only a hash of the token is stored. Every change needs
+  the `X-CSRF-Token` header. Passwords: at least 10 characters, hashed with scrypt (standard library). Five wrong passwords for an email in 15 minutes locks that
+  email for the window. The browser never says who is acting: the API has no `actor_id` or `sender`.
+- **Separate data.** Each company has its own database file, `DATA_DIR/orgs/<id>.db`; people, sessions, invites and codes live in `DATA_DIR/platform.db`. One company's engine
+  cannot open another's file. Connections (Slack, Gmail), the AI switch and the delivery cap are per company.
+- **The demo company** ("Acme Demo", id `acme-demo`) is a separate company with ten fictional people, entered with **Try the demo** (no password). Its **Demo controls** drawer has
+  Act as, the demo clock and Reset; the Reliability lab on Health runs only there. In the demo, connecting apps, the AI switch, inviting people and changing passwords are
+  switched off and nothing is ever sent. A real company never has Act as, chaos, reset or the clock.
 
 ## What works (and is tested)
 - Lifecycle: submitted, needs info, pending approval (one or two approvers), approved, rejected (reason mandatory),
   fulfilling, fulfilled, closed, parked, cancelled. Invalid transitions are refused.
-- Routing from data/request_types.demo.json and data/employees.demo.json. The approver never comes from message text.
-- Notifications to the employee at every state change; "pending with X since Y"; reminder and two escalations (use the
-  +1h / +9h / +25h clock buttons).
+- Routing from the company's people and the request types in data/request_types.demo.json (editable per company in Phase 2). The approver never comes from message text.
+- Notifications to the employee at every state change; "pending with X since Y"; reminder and two escalations. For real companies a background sweep sends them on
+  time; the demo moves only with its +1h / +9h / +25h clock buttons.
 - Guard: dedupe, own-message ignore, circuit breaker, idempotent actions with retry, parking and replay, read-before-write
   so a lost response cannot double-apply a leave, AI-budget fallback.
-- Security: unknown senders refused, payroll blocked, leave only for the requester, secrets redacted, prompt injection
+- Security: sign-in, CSRF, per-company isolation, admin-only routes, payroll blocked, leave only for the requester, secrets redacted, prompt injection
   never approves anything, append-only audit log (enforced by database triggers).
-- Chaos tab: seven live failure buttons. Dashboard with guard counters. Weekly digest preview (JSON).
+- Reliability lab (demo only): seven live failure buttons. Dashboard with guard counters. Weekly digest preview (JSON).
 
 ## The interface ("Dusk")
-Static HTML, CSS and JS in `app/static` (no build step, no dependencies; the Geist font is self-hosted under its OFL licence). Five places: **Ask**
-(message or email; every request appears inline with its journey), **My requests**, **Needs you** (the approver queue, with a decision bar made for
-one-handed phone use), **Health** (dashboard, delivery, Connections and the Reliability lab) and **Audit**. "Act as", the demo clock, theme and Reset demo
-are in the **Demo controls** drawer. The request journey shows each stage, who holds it, how long it has waited and what happens next; every status has its
-own shape as well as a colour. Light and dark follow the system; reduced motion is respected. The look follows the "Deskhand UI: premium" design canvas (deeper ground, light-weight display type, tinted banners, raised phone decision bar).
+Static HTML, CSS and JS in `app/static` (no build step, no dependencies; the Geist font is self-hosted under its OFL licence). Signed out: **Sign in**, **Create a company**
+and the join link. Signed in: **Ask** (a chat; every request appears inline with its journey), **My requests**, **Needs you** (the approver queue, with a decision bar made for
+one-handed phone use), and for admins **People**, **Health** (dashboard, delivery, Connections) and **Audit**. The account button (top right) has your details, the theme, change password
+and Sign out. The request journey shows each stage, who holds it, how long it has waited and what happens next; every status has its
+own shape as well as a colour. Light and dark follow the system; reduced motion is respected. `tests/test_ui_contract.py` checks that every API path the script calls exists.
 
-## Connections tab and delivery (live-only)
-Admin only (act as Arjun Patel), and the only setup. The admin connects Slack and picks the notification channel, then connects Gmail, picks the
+## Connections and delivery (live-only, per company)
+Admin only, on Health, and the only setup. The admin connects Slack and picks the notification channel, then connects Gmail, picks the
 "send from" mailbox and enters ONE notification email. Sign-in happens on each app's own screen; Deskhand stores only connection ids on the server
 (never shown, never logged). There is no switch and no mock: as soon as Slack and its channel are set, every chat notification goes to that channel,
 prefixed "[Deskhand to <name>]"; as soon as Gmail and the notification email are set, every email notification goes to that one address with
-"To <name>:" in the subject, never any other address. If either is missing, a red banner shows on every tab and everything else keeps working.
+"To <name>:" in the subject, never any other address. If either is missing, an admin sees a red banner on every tab and everything else keeps working.
 Approvals never wait for delivery: a sweep delivers outbox rows, exactly once each (atomic claim, single-flight sweep), and never resends when the
-outcome is unknown (failed rows show on the Connections tab with a Retry button). Backstop cap: 150 deliveries per UTC day, shown as used / 150 on
-the dashboard, with a banner at the cap. Chaos runs and Reset demo never send (their rows are marked skipped); Reset keeps connections and settings.
-Message text is escaped for Slack; approver messages carry a link to their Deskhand inbox. `make preflight` prints yes/no for the setup.
+outcome is unknown (failed rows show with a Retry button). Backstop cap: 150 deliveries per UTC day per company. Message text is escaped for Slack; approver messages
+carry a link to Deskhand. `make preflight` prints yes/no for every company's setup.
 
-## Hosted demo (Embarko)
-Embarko has no login, so the app has its own password gate (HTTP Basic, any user name, password in `DESKHAND_DEMO_PASSWORD`) on every route. When
-hosted and no password is set, nothing is served. Data lives in `DATA_DIR` (main.py points the database there). One process only.
-Environment variable names: DESKHAND_BASE_URL, DESKHAND_TENANT_ID, DESKHAND_DEMO_PASSWORD, VIASOCKET_ORG_ID, VIASOCKET_PROJECT_ID, VIASOCKET_EMBED_SECRET,
-VIASOCKET_API_URL, VIASOCKET_RUN_URL. No ANTHROPIC_API_KEY. The notification email is entered on the Connections tab, not as a variable.
+## Hosted (Embarko)
+One process, no managed database and no backups, so everything lives in `DATA_DIR` (the root `main.py` points `DESKHAND_DATA_DIR` there). The app has its own sign-in, so the old shared
+password is no longer needed; set `DESKHAND_DEMO_PASSWORD` only if you want an extra HTTP Basic gate in front of everything.
+Environment variable names: DESKHAND_SIGNUP_CODES, DESKHAND_BASE_URL, VIASOCKET_ORG_ID, VIASOCKET_PROJECT_ID, VIASOCKET_EMBED_SECRET, VIASOCKET_API_URL, VIASOCKET_RUN_URL
+(optional: DESKHAND_DEMO_PASSWORD). No ANTHROPIC_API_KEY. Set the values yourself in Embarko's App setup; never put them in a file in the repository. An old
+single-company `deskhand.db` found in the data directory becomes the demo company's database the first time the new version starts.
 
 ## What is NOT done or NOT verified
-- Real viaSocket integration (Slack, Gmail, Keka). See docs/VIASOCKET_INTEGRATION.md and milestones M1.5 and M8.
-- The Claude classification path (app/classifier.py: classify_anthropic) has never been run against the live API. It is
-  validated and falls back to the rules on any error, but check it against the current SDK docs before relying on it.
-- The rules classifier scores 100% on data/sample_requests.json because it was tuned while looking at that file. That number
-  is optimistic. Measure on real past requests.
-- The UI was clicked through in a browser against the demo script (docs/BUILD_PLAN.md) and polished: inline reason dialogs instead of browser pop-ups, UTC times that match the demo clock, readable details, email-style replies. Chaos runs use Neha Gupta's requests so the other demo people stay clean. The burst test floods a separate channel so it leaves no junk requests, and the AI-budget test restores the budget.
-- No login (a header switcher lets you act as anyone), no real email, digest is a preview only, single company.
+- No emails from Deskhand itself: invite and reset links are copied by an admin. A locked-out owner needs another admin to make a reset link. No email verification, no SSO or MFA (Phase 6).
+- Leave still runs against the in-memory mock HR; the persisted leave ledger, Slack and Gmail request flow come in Phase 3. Request types and approval rules are the demo template for every company until Phase 2.
+- A request is understood while the sender waits (about 25 seconds at worst with AI on). Slack inbound is slow (viaSocket polls every 15 minutes), so asking happens in Deskhand chat.
+- SQLite on one process with no backups: fine for a pilot, not for real customers (Phase 6 moves to Postgres with backups).
+- The rules classifier scores 100% on data/sample_requests.json because it was tuned while looking at that file. That number is optimistic. Measure on real past requests.
+- The direct-Anthropic path (app/classifier.py: classify_anthropic) has never been run against the live API and is unused.
 
-## Next steps (in order)
-1. Click through the demo script in docs/BUILD_PLAN.md and fix whatever looks off.
-2. Replace the synthetic samples with 30 to 50 real past requests and re-measure.
-3. Run the viaSocket spike (M1.5) with docs/VIASOCKET_PROMPT.md.
-4. Build the real adapters (M8) behind the existing interfaces (MockHR in app/adapters.py, outbox in app/engine.py).
-5. Add the Anthropic key and verify the AI path.
+## Next steps
+Phase 2: company setup (roles such as HR and IT, request types and approval rules edited by the admin, routing simulator, onboarding checklist). Phase 3: leave through Slack and
+Gmail end to end with a Deskhand-owned leave ledger. See `docs/AGENT_PLATFORM_PLAN.md`.

@@ -19,6 +19,22 @@ class Directory:
         typ = json.load(open(os.path.join(data_dir, "request_types.demo.json")))
         return cls(emp["employees"], typ["request_types"], typ.get("policies"), emp.get("leave_balances"))
 
+    @staticmethod
+    def employee_from_user(u):
+        """A signed-in person as a directory entry. Access role maps to the business role the router knows until Phase 2 adds real roles."""
+        return {"id": u["id"], "name": u["name"], "role": "admin" if u["access_role"] in ("owner", "admin") else "employee",
+                "manager_id": u.get("manager_id"), "email": u["email"], "slack_id": u.get("slack_id") or "", "phone": u.get("phone") or "",
+                "active": u["status"] == "active", "department": u.get("department") or ""}
+
+    @classmethod
+    def from_users(cls, users, data_dir=DATA):
+        typ = json.load(open(os.path.join(data_dir, "request_types.demo.json")))
+        return cls([cls.employee_from_user(u) for u in users], typ["request_types"], typ.get("policies"), {})
+
+    def replace_employees(self, users):
+        """Refresh the people in place (the engine keeps this object) after an admin changes the company's people."""
+        self.employees = {u["id"]: self.employee_from_user(u) for u in users}
+
     def emp(self, eid):
         return self.employees.get(eid)
 

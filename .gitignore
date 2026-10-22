@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 viasocket-check.mjs
 node_modules/
+.deskhand/
+.claude/launch.json

@@ -55,6 +55,13 @@ interfaces; the simulator stays the default until the spike (M1.5) proves each c
 10. A viaSocket HTTP 200 does not mean success. Always inspect the response body (see
     docs/VIASOCKET_INTEGRATION.md) and normalise every result to success, retryable failure or permanent failure.
 
+11. Identity comes only from the server-side session. No request body, query string or header from the browser says who is acting or who sent a message
+    (no `actor_id`, no `sender`). Every state-changing request needs the CSRF token.
+12. Companies are isolated by construction: one database file per company, one engine per company. No route reads another company's data. Admin-only routes refuse members.
+13. Demo-only tools (chaos, reset, demo clock, act-as) exist only in the demo company and are refused everywhere else. The demo never sends real messages or connects apps.
+14. Invite, reset and signup secrets are random, single-use, stored only as hashes, and shown once. Passwords are hashed (scrypt) and never logged. Recipients of messages are
+    people from the company's directory, never an address found in message text.
+
 ## Commands
 `make dev` (run the app on :8000), `make test` (pytest), `make reset` (delete the demo database).
 

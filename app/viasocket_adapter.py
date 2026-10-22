@@ -203,9 +203,9 @@ class VsClient:
     def token(self):
         return sign_embed_token(self.tenant)
 
-    def _send(self, method, url, headers=None, body=None, expect=None, extra=()):
+    def _send(self, method, url, headers=None, body=None, expect=None, extra=(), timeout=None):
         try:
-            status, text = self.t.request(method, url, headers, body)
+            status, text = self.t.request(method, url, headers, body, **({'timeout': timeout} if timeout else {}))
         except TransportError as ex:
             # only "could not even connect" proves nothing was sent; a read timeout may have been delivered already
             return Result(RETRYABLE, error=f"network error: {ex}", code="transport", safe_retry=str(ex) in ("ConnectError", "ConnectTimeout", "PoolTimeout"))
@@ -213,8 +213,8 @@ class VsClient:
         r.error = redact(r.error, extra)
         return r
 
-    def api(self, method, path, body=None, expect=None):
-        return self._send(method, api_base() + path, {"authorization": self.token()}, body, expect)
+    def api(self, method, path, body=None, expect=None, timeout=None):
+        return self._send(method, api_base() + path, {"authorization": self.token()}, body, expect, timeout=timeout)
 
     def connections(self):
         r = self.api("GET", "/embed/authentications")
@@ -277,6 +277,16 @@ class ConnectionStore:
         st = row["settings"] if row else {}
         st[key] = value
         self.s.q("UPDATE connections SET settings_json=?, updated_at=? WHERE tenant=? AND app=?", (json.dumps(st), time.time(), self.tenant, app))
+
+    def ai_enabled(self):
+        """Whether viaSocket AI may be used to understand requests. Off unless an admin switched it on; kept in the connections table so Reset demo keeps it."""
+        row = self.get("ai")
+        return bool(row and row["settings"].get("enabled") == "on")
+
+    def set_ai_enabled(self, on):
+        self.s.q("INSERT INTO connections(tenant,app,auth_id,script_id,settings_json,updated_at) VALUES(?,?,?,?,?,?) "
+                 "ON CONFLICT(tenant,app) DO UPDATE SET settings_json=excluded.settings_json, updated_at=excluded.updated_at",
+                 (self.tenant, "ai", None, None, json.dumps({"enabled": "on" if on else "off"}), time.time()))
 
     def delete(self, app):
         self.s.q("DELETE FROM connections WHERE tenant=? AND app=?", (self.tenant, app))

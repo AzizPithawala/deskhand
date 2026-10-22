@@ -10,21 +10,29 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch { return 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'e' + Date.now() + Math.random().toString(16).slice(2));
 
 let S = { employees: [], types: [] }, EMP = {}, TYPE = {};
-let who = store.get('dh_who') || 'e01';
+let ME = null;  // the signed-in person, their company and the CSRF token. The server decides who they are; nothing here can change it.
+let AUTHOPT = { registration_open: false, demo_available: false };
+let NEXT = '', NOTICE = '';  // the page they wanted before sign-in; a line to show on the sign-in page
 let NOW = Date.now() / 1000;
 let seq = 0, current = { page: '', id: null };
 let REQS = [], INBOX = [];
-const SEEN = {}, PREV = {}, LOG = { chat: {}, email: {} }, SEENMSG = {};
+const SEEN = {}, PREV = {}, LOG = { chat: [] }, SEENMSG = new Set();
 let CLOCKDATA = { banners: [], delivery: { used_today: 0, cap: 150, capped: false } };
+const meId = () => ME.user.id;
+const isAdmin = () => !!(ME && ME.is_admin);
+const isDemo = () => !!(ME && ME.org.is_demo);
 
 /* ---------- api ---------- */
 async function api(path, body) {
-  const opt = body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  // body undefined = GET; null = POST without a body; anything else = POST as JSON. Every POST carries the CSRF token.
+  const opt = body === undefined ? undefined
+    : { method: 'POST', headers: { 'X-CSRF-Token': ME ? ME.csrf : '', ...(body === null ? {} : { 'Content-Type': 'application/json' }) }, body: body === null ? undefined : JSON.stringify(body) };
   let r;
   try { r = await fetch('/api' + path, opt); } catch { const e = new Error('The server could not be reached.'); e.network = true; throw e; }
   let j = {};
   try { j = await r.json(); } catch { /* not json */ }
-  if (!r.ok) { const e = new Error(typeof j.detail === 'string' ? j.detail : (r.statusText || 'The request failed')); e.status = r.status; throw e; }
+  if (r.status === 401 && ME && !path.startsWith('/auth/')) signedOut('Your session ended. Sign in again.');
+  if (!r.ok) { const e = new Error(typeof j.detail === 'string' ? j.detail : (Array.isArray(j.detail) ? 'Please check what you entered.' : (r.statusText || 'The request failed'))); e.status = r.status; throw e; }
   return j;
 }
 
@@ -240,18 +248,18 @@ function dialogPrompt({ title, body = '', label = '', confirm = 'OK', match = nu
 }
 
 /* ---------- routing ---------- */
+const AUTH_PAGES = ['login', 'register', 'join'];
+const APP_PAGES = ['ask', 'mine', 'needs', 'people', 'health', 'audit'];
+const ADMIN_PAGES = ['people', 'health', 'audit'];
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
   const [p, a] = h.split('/');
-  if (p === 'inbox' && a && EMP[a]) { setWho(a, true); history.replaceState(null, '', '#needs'); return { page: 'needs', id: null }; }
+  if (p === 'join') return { page: 'join', id: a || null };
+  if (AUTH_PAGES.includes(p)) return { page: p, id: null };
+  if (p === 'inbox') { history.replaceState(null, '', '#needs'); return { page: 'needs', id: null }; }  // links in notifications: who "you" are comes from the session
   if (p === 'request' && a) return { page: 'mine', id: +a || null };
-  if (['ask', 'mine', 'needs', 'health', 'audit'].includes(p)) return { page: p, id: a ? (+a || null) : null };
+  if (APP_PAGES.includes(p)) return { page: p, id: a ? (+a || null) : null };
   return { page: 'ask', id: null };
-}
-function setWho(id, silent) {
-  who = id; store.set('dh_who', id);
-  const sel = $('#who'); if (sel) sel.value = id;
-  if (!silent) refreshAll(true);
 }
 
 /* ---------- data ---------- */
@@ -261,13 +269,15 @@ async function loadCore() {
   S.employees.forEach(e => { EMP[e.id] = e; });
   S.types.forEach(t => { TYPE[t.code] = t; });
   applyClock(cl);
-  if (!EMP[who]) who = S.employees[0].id;
-  $('#who').innerHTML = S.employees.map(e => `<option value="${esc(e.id)}">${esc(e.name)} (${esc(e.role.replace(/_/g, ' '))})</option>`).join('');
-  $('#who').value = who;
+  if (isDemo()) {
+    $('#who').innerHTML = S.employees.map(e => `<option value="${esc(e.id)}">${esc(e.name)} (${esc(e.role.replace(/_/g, ' '))})</option>`).join('');
+    $('#who').value = meId();
+  }
 }
 function applyClock(cl) {
   CLOCKDATA = cl; NOW = cl.now;
-  const b = cl.banners || [];
+  const showStatus = isAdmin() && !isDemo();  // delivery health is for the people who can fix it; the demo sends nothing
+  const b = showStatus ? (cl.banners || []) : [];
   $('#banner').innerHTML = b.map(t => `<div class="b">${icon('s-alert')}<span>${esc(t)}</span></div>`).join('');
   const slackOk = !b.some(t => /^(Slack|viaSocket)/.test(t));
   const mailOk = !b.some(t => /^(Gmail|Notification email|viaSocket)/.test(t));
@@ -276,6 +286,8 @@ function applyClock(cl) {
   const inner = `<span class="it">${dot(slackOk)}Slack ${slackOk ? 'connected' : 'not ready'}</span><span class="it">${dot(mailOk)}Gmail ${mailOk ? 'connected' : 'not ready'}</span><span class="it num">Sent today ${d.used_today} / ${d.cap}</span>`;
   $('#status').innerHTML = inner;
   $('#statuspanel').innerHTML = inner;
+  $('#status').hidden = !showStatus; $('#statusbtn').hidden = !showStatus;
+  if (!showStatus) $('#statuspanel').hidden = true;
   $('#statusdot').className = 'dot' + (slackOk && mailOk && !d.capped ? '' : ' bad');
   const c = $('#clock'); if (c) c.textContent = stamp(cl.now);
 }
@@ -283,7 +295,7 @@ async function pollCore() {
   try { applyClock(await api('/clock')); } catch { /* shown by page-level states */ }
 }
 async function loadLists() {
-  [REQS, INBOX] = await Promise.all([api('/requests?employee=' + who), api('/inbox/' + who)]);
+  [REQS, INBOX] = await Promise.all([api('/requests?employee=' + encodeURIComponent(meId())), api('/inbox')]);
   const b = $('#badge');
   b.hidden = !INBOX.length; b.textContent = INBOX.length;
   b.setAttribute('aria-label', plural(INBOX.length, 'item') + ' waiting for you');
@@ -311,71 +323,51 @@ function flash(changed) {
 const SAMPLES = ['I need Friday and Monday off, family function.', 'Need a Claude seat for my work on the research project.', 'I need a second monitor for my desk.',
   'VPN is not connecting since morning.', 'Why is my salary lower this month?', 'New joiner Rohan starts Monday. Needs a laptop and a Slack account.'];
 
-function mailCard(x, person) {
-  const mine = x.who === 'me';
-  return `<div class="mailitem"><div class="meta">From: ${mine ? esc(nm(person)) : 'Deskhand &lt;desk@acme-demo.example&gt;'}<br>To: ${mine ? 'Deskhand &lt;desk@acme-demo.example&gt;' : esc(nm(person))}${x.ts ? '<br>' + stamp(x.ts) : ''}</div><b>${esc(x.subject)}</b><pre>${esc(x.text)}</pre></div>`;
-}
 function reqCard(r) {
   return `<div class="reqcard" data-req="${r.id}"><div class="h"><b>${esc(r.summary)}</b>${chip(r)}</div>${miniHTML(r)}<div class="meta">${esc(sentence(r))}</div><div style="margin-top:6px"><a href="#request/${r.id}">Open request ${r.id}</a></div></div>`;
 }
 
 async function pageAsk() {
-  const mode = store.get('dh_mode') === 'email' ? 'email' : 'chat';
   const m = $('#main');
   m.innerHTML = `<div class="ask"><h1 class="display">What do you need?</h1><p class="lede">Say it in one sentence. Deskhand finds the right person and keeps you posted.</p>
-    <div class="seg2" role="group" aria-label="Channel"><button data-mode="chat" aria-pressed="${mode === 'chat'}">Message</button><button data-mode="email" aria-pressed="${mode === 'email'}">Email</button></div>
-    ${mode === 'chat'
-      ? `<form class="composer" id="cform"><label class="sr" for="q">Ask Deskhand</label><input class="field" id="q" placeholder="Ask for something in one sentence" autocomplete="off"><button class="btn primary" type="submit">Send</button></form>
-         <div class="chips" aria-label="Examples">${SAMPLES.map(s => `<button type="button" data-s="${esc(s)}">${esc(s)}</button>`).join('')}</div>`
-      : `<form class="composer mailc" id="cform"><label class="l" for="subj">Subject</label><input class="field" id="subj" autocomplete="off"><label class="l" for="body">Message</label><textarea class="field" id="body" rows="4" placeholder="Write to desk@acme-demo.example"></textarea><button class="btn primary" type="submit">Send email</button></form><div style="height:24px"></div>`}
+    <form class="composer" id="cform"><label class="sr" for="q">Ask Deskhand</label><input class="field" id="q" placeholder="Ask for something in one sentence" autocomplete="off"><button class="btn primary" type="submit">Send</button></form>
+    <div class="chips" aria-label="Examples">${SAMPLES.map(s => `<button type="button" data-s="${esc(s)}">${esc(s)}</button>`).join('')}</div>
     <div class="convo" id="convo" aria-live="polite"></div></div>`;
-  $$('.seg2 button', m).forEach(b => b.onclick = () => { store.set('dh_mode', b.dataset.mode); pageAsk(); });
   $$('.chips button', m).forEach(b => b.onclick = () => { const q = $('#q'); q.value = b.dataset.s; q.focus(); });
-  $('#cform').onsubmit = async e => { e.preventDefault(); await sendMsg(mode); };
+  $('#cform').onsubmit = async e => { e.preventDefault(); await sendMsg(); };
   await updateAsk();
 }
 async function updateAsk() {
   if (current.page !== 'ask') return;
-  const mode = store.get('dh_mode') === 'email' ? 'email' : 'chat';
-  const rows = (await api('/outbox?to=' + who + '&limit=200')).reverse();
-  const L = (LOG[mode][who] ??= []);
-  const k = mode + who;
-  const seen = (SEENMSG[k] ??= new Set());
-  rows.filter(r => r.channel === mode && !seen.has(r.id)).forEach(r => { seen.add(r.id); L.push({ who: 'bot', id: r.id, subject: r.subject, text: r.body, ts: r.created_at }); });
+  const rows = (await api('/outbox?limit=200')).reverse();
+  rows.filter(r => r.channel === 'chat' && !SEENMSG.has(r.id)).forEach(r => { SEENMSG.add(r.id); LOG.chat.push({ who: 'bot', id: r.id, text: r.body, ts: r.created_at }); });
   const byId = {}; REQS.forEach(r => { byId[r.id] = r; });
   // group each exchange (what you sent, the replies, the request cards) and show the newest exchange first, right under the composer
   const groups = [];
-  L.forEach(x => { if (x.who === 'me' || !groups.length) groups.push([]); groups[groups.length - 1].push(x); });
+  LOG.chat.forEach(x => { if (x.who === 'me' || !groups.length) groups.push([]); groups[groups.length - 1].push(x); });
   const piece = x => {
     if (x.who === 'cards') return x.ids.map(id => byId[id] ? reqCard(byId[id]) : '').join('');
-    if (mode === 'email') return mailCard(x, who);
     return `<div class="msg ${x.who === 'me' ? 'me' : ''}"><div class="who">${x.who === 'me' ? 'You' : 'Deskhand'}</div><div class="tx">${esc(x.text)}</div></div>`;
   };
   const html = groups.length ? groups.reverse().map(g => `<div class="xchg">${g.map(piece).join('')}</div>`).join('')
-    : emptyState('Nothing asked yet', mode === 'chat' ? 'Type a request above, or pick an example. You will see where it goes and who has it.' : 'Write an email to the desk. Replies from Deskhand appear here.');
+    : emptyState('Nothing asked yet', 'Type a request above, or pick an example. You will see where it goes and who has it.');
   const convo = $('#convo');
   if (convo && convo.dataset.h !== html) { convo.dataset.h = html; convo.innerHTML = html; }
 }
-async function sendMsg(mode) {
-  let text;
-  if (mode === 'chat') {
-    text = $('#q').value.trim();
-    if (!text) { toast('Write a sentence first.'); return; }
-    (LOG.chat[who] ??= []).push({ who: 'me', text });
-    $('#q').value = '';
-  } else {
-    const s = $('#subj').value.trim(), b = $('#body').value.trim();
-    if (!b) { toast('Write a message first.'); return; }
-    text = (s ? 'Subject: ' + s + '\n' : '') + b;
-    (LOG.email[who] ??= []).push({ who: 'me', subject: s || '(no subject)', text: b, ts: NOW });
-    $('#subj').value = ''; $('#body').value = '';
-  }
+async function sendMsg() {
+  const text = $('#q').value.trim();
+  if (!text) { toast('Write a sentence first.'); return; }
+  LOG.chat.push({ who: 'me', text });
+  $('#q').value = '';
+  const pending = { who: 'bot', text: 'Reading your request…' };
+  LOG.chat.push(pending); updateAsk();
   try {
-    const res = await api('/ingest', { channel: mode, sender: who, text, source_event_id: uuid() });
+    const res = await api('/ingest', { text, source_event_id: uuid() });  // the sender is the signed-in person; the server ignores anything else
     await loadLists();
-    if (res.request_ids && res.request_ids.length) (LOG[mode][who] ??= []).push({ who: 'cards', ids: res.request_ids });
+    if (res.request_ids && res.request_ids.length) LOG.chat.push({ who: 'cards', ids: res.request_ids });
     if (res.outcome === 'paused_breaker') toast('Intake is paused after a burst of messages. An admin resets it on Health.', 6000);
   } catch (e) { toast(e.network ? e.message : `Could not send (${e.status || 'error'}): ${e.message}`, 6000); }
+  const i = LOG.chat.indexOf(pending); if (i >= 0) LOG.chat.splice(i, 1);
   await updateAsk();
 }
 
@@ -387,7 +379,7 @@ function listRow(r, hrefBase, selected, extra = '') {
 
 async function pageMine(id) {
   const m = $('#main');
-  m.innerHTML = `<div class="page-head"><h1>My requests</h1><span class="meta">${esc(nm(who))}</span></div><div class="split ${id ? 'has-detail' : ''}" id="split"><div class="list" id="lst"></div><div class="detail" id="det" aria-live="polite"></div></div>`;
+  m.innerHTML = `<div class="page-head"><h1>My requests</h1><span class="meta">${esc(nm(meId()))}</span></div><div class="split ${id ? 'has-detail' : ''}" id="split"><div class="list" id="lst"></div><div class="detail" id="det" aria-live="polite"></div></div>`;
   paintMine(id, new Set());
   if (id) await paintDetail(id, 'mine'); else if (REQS.length && window.matchMedia('(min-width: 1000px)').matches) { await paintDetail(REQS[0].id, 'mine'); }
 }
@@ -399,7 +391,7 @@ function paintMine(id, changed) {
 
 async function pageNeeds(id) {
   const m = $('#main');
-  m.innerHTML = `<div class="page-head"><h1>Needs you</h1><span class="meta">${esc(nm(who))}</span></div><div class="split ${id ? 'has-detail' : ''}" id="split"><div class="list" id="lst"></div><div class="detail" id="det" aria-live="polite"></div></div>`;
+  m.innerHTML = `<div class="page-head"><h1>Needs you</h1><span class="meta">${esc(nm(meId()))}</span></div><div class="split ${id ? 'has-detail' : ''}" id="split"><div class="list" id="lst"></div><div class="detail" id="det" aria-live="polite"></div></div>`;
   paintNeeds(id, new Set());
   const pick = id || (INBOX[0] && window.matchMedia('(min-width: 1000px)').matches ? INBOX[0].id : null);
   if (pick) await paintDetail(pick, 'needs');
@@ -494,7 +486,7 @@ function wireDecision(r) {
 async function decide(id, action, extra) {
   $$('.decide button').forEach(b => { b.disabled = true; });
   try {
-    await api(`/requests/${id}/${action}`, { actor_id: who, ...(extra || {}) });
+    await api(`/requests/${id}/${action}`, { ...(extra || {}) });
     toast({ approve: 'Approved. The requester is told.', reject: 'Rejected. The reason is sent to the requester.', pending: 'Marked pending. The requester is told.', done: 'Marked done. The requester is told.', replay: 'Replayed.' }[action] || 'Done.');
   } catch (e) { toast(`${e.message}`, 6000); }
   await refreshAll(false, true);
@@ -520,12 +512,12 @@ async function pageHealth() {
     <div class="block" id="hdelivery"></div><div class="block" id="hconn"></div><div class="block" id="hguard"></div><div class="block" id="hlab"></div>`;
   let dash;
   try { dash = await api('/dashboard'); } catch (e) { $('#hstrip').innerHTML = errorState('health', e, pageHealth); return; }
-  const g = await api('/digest/' + who).catch(() => null);
-  let dv = null; try { dv = await api('/delivery?actor_id=' + who); } catch { /* admin only */ }
+  const g = await api('/digest').catch(() => null);
+  let dv = null; try { dv = await api('/delivery'); } catch { /* admin only */ }
   const dd = dash.delivery || { used_today: 0, cap: 150, ready: {} };
   const working = dd.ready && dd.ready.slack && dd.ready.email;
   const cell = (v, l, dim, cls = '') => `<div class="${dim ? 'dim' : ''}"><div class="v ${cls}">${v}</div><div class="meta">${esc(l)}</div></div>`;
-  $('#hstrip').innerHTML = `<div class="grid">${cell(working ? icon('s-done') + 'Working' : icon('s-pending') + 'Not ready', 'delivery to Slack and email', false, working ? 'ok' : 'warn')}${cell(`${dd.used_today} / ${dd.cap}`, 'delivered today (daily cap)')}${cell(dash.total, 'requests')}${cell(dash.avg_decision_minutes == null ? '–' : (dash.avg_decision_minutes < 1 ? 'under 1' : dash.avg_decision_minutes), 'average minutes to a decision')}${cell(dash.hr_effects, 'leaves applied in HR')}</div>`;
+  $('#hstrip').innerHTML = `<div class="grid">${isDemo() ? cell(icon('s-upcoming') + 'Off', 'the demo never sends messages', true) : cell(working ? icon('s-done') + 'Working' : icon('s-pending') + 'Not ready', 'delivery to Slack and email', false, working ? 'ok' : 'warn')}${cell(`${dd.used_today} / ${dd.cap}`, 'delivered today (daily cap)')}${cell(dash.total, 'requests')}${cell(dash.avg_decision_minutes == null ? '–' : (dash.avg_decision_minutes < 1 ? 'under 1' : dash.avg_decision_minutes), 'average minutes to a decision')}${cell(dash.hr_effects, 'leaves applied in HR')}</div>`;
   paintDelivery(dv);
   const HEAD = ['duplicate_suppressed', 'own_message_ignored', 'breaker_opened', 'action_retry', 'action_failed', 'blocked_sensitive'];
   const rest = Object.keys(dash.guard).filter(k => !HEAD.includes(k));
@@ -536,19 +528,21 @@ async function pageHealth() {
     ${g ? `<h3 style="margin-top:20px">Weekly digest preview for ${esc(g.person)}</h3><dl class="kv" style="margin-top:8px"><dt>Approved</dt><dd>${g.as_approver.approved}</dd><dt>Rejected</dt><dd>${g.as_approver.rejected}</dd><dt>Pending</dt><dd>${g.as_approver.pending}</dd><dt>Oldest pending</dt><dd>${g.as_approver.oldest_pending_hours} h</dd></dl>
     ${g.as_employee.length ? `<div class="scroll"><table class="t" style="margin-top:8px"><tr><th>Request</th><th>Type</th><th>Status</th></tr>${g.as_employee.map(x => `<tr><td class="num">${x.id}</td><td>${esc(nice(x.type))}</td><td>${esc(x.status)}</td></tr>`).join('')}</table></div>` : '<p class="meta" style="margin-top:8px">No open requests of their own.</p>'}` : ''}`;
   const brk = $('#brk'); if (brk) brk.onclick = async () => { try { await api('/admin/breaker_reset', {}); toast('Breaker reset.'); } catch (e) { toast(e.message, 6000); } pageHealth(); };
-  $('#hlab').innerHTML = `<h2>Reliability lab</h2><p class="meta">Each button breaks something on purpose and shows whether the guard held. Runs use Neha Gupta's requests and never send to Slack or email.</p>
+  if (!isDemo()) $('#hlab').hidden = true;
+  else $('#hlab').innerHTML = `<h2>Reliability lab</h2><p class="meta">Each button breaks something on purpose and shows whether the guard held. Runs use Neha Gupta's requests and never send to Slack or email.</p>
     ${LAB.map(([k, t, p]) => `<div class="labrow"><div><b>${esc(t)}</b></div><div><p class="meta">${esc(p)}</p><button class="btn small" data-lab="${k}">Run</button><div class="verdict-box" id="v_${k}" aria-live="polite"></div></div></div>`).join('')}`;
   $$('[data-lab]').forEach(b => b.onclick = () => runLab(b.dataset.lab));
   await paintConnections();
 }
 function paintDelivery(dv) {
   const el = $('#hdelivery'); if (!el) return;
-  if (!dv) { el.innerHTML = `<h2>Delivery</h2>${emptyState('Delivery details are for admins', 'Open Demo controls and act as Arjun Patel to see them.')}`; return; }
+  if (isDemo()) { el.innerHTML = '<h2>Delivery</h2><p class="meta">The demo company never sends real messages. Create your own company to connect Slack and Gmail.</p>'; return; }
+  if (!dv) { el.innerHTML = `<h2>Delivery</h2>${emptyState('Delivery details are for admins', 'Only company admins can see them.')}`; return; }
   const cnt = Object.entries(dv.counts).map(([k, v]) => `${k} ${v}`).join(', ') || 'none yet';
   el.innerHTML = `<h2>Delivery</h2><p class="meta">Messages go out by themselves once Slack and Gmail are set up below. Approvals never wait for delivery.</p>
     <dl class="kv" style="margin-top:8px"><dt>Slack</dt><dd>${dv.ready.slack ? 'Ready' : 'Not ready'}</dd><dt>Email</dt><dd>${dv.ready.email ? `Ready, goes only to ${esc(dv.email_to)}` : 'Not ready'}</dd><dt>Delivered today</dt><dd class="num">${dv.used_today} of ${dv.cap}${dv.capped ? ' (cap reached)' : ''}</dd><dt>Outbox</dt><dd>${esc(cnt)}</dd><dt>Links point to</dt><dd>${esc(dv.base_url)}</dd></dl>
     ${dv.failed.length ? `<h3 style="margin-top:16px">Failed deliveries</h3>${dv.failed.map(f => `<div class="approw"><span style="flex:1">#${f.id} · ${esc(nice(f.kind))} (${esc(f.channel)}) · ${esc(f.delivery_error || '')}</span><button class="btn small" data-retry="${f.id}">Retry</button></div>`).join('')}<p class="meta">Check the channel before retrying: a failed send may already have arrived.</p>` : ''}`;
-  $$('[data-retry]', el).forEach(b => b.onclick = async () => { try { await api('/delivery/retry/' + b.dataset.retry, { actor_id: who }); toast('Retried.'); } catch (e) { toast(e.message, 6000); } pageHealth(); });
+  $$('[data-retry]', el).forEach(b => b.onclick = async () => { try { await api('/delivery/retry/' + b.dataset.retry, {}); toast('Retried.'); } catch (e) { toast(e.message, 6000); } pageHealth(); });
 }
 function verdictHTML(r) {
   return `<ul class="verdict"><li class="${r.passed ? 'ok' : 'no'}">${icon(r.passed ? 's-check' : 's-cross')}<b>${r.passed ? 'The guard held' : 'The guard failed'}</b></li>${r.steps.map(s => `<li class="meta" style="margin-left:24px">${esc(s)}</li>`).join('')}${Object.entries(r.checks).map(([c, v]) => `<li class="${v ? 'ok' : 'no'}">${icon(v ? 's-check' : 's-cross')}<span style="color:var(--ink)">${esc(c)}${v ? '' : ' (failed)'}</span></li>`).join('')}</ul>${r.replay_id ? `<p style="margin-top:8px"><button class="btn primary small" data-replay="${r.replay_id}">Bring HR back and replay #${r.replay_id}</button></p>` : ''}`;
@@ -565,17 +559,32 @@ function wireReplay(box) {
 /* connections (admin) */
 async function paintConnections() {
   const el = $('#hconn'); if (!el) return;
+  if (isDemo()) { el.innerHTML = `<h2>Connections</h2>${emptyState('Connections are switched off in the demo company', 'Create your own company to connect Slack and Gmail and receive real notifications.')}`; return; }
   let c;
-  try { c = await api('/connections?actor_id=' + who); } catch (e) {
-    el.innerHTML = `<h2>Connections</h2>${e.status === 403 ? emptyState('Connections are for admins', 'Open Demo controls and act as Arjun Patel to set up Slack and Gmail.') : errorState('connections', e, paintConnections)}`; return;
+  try { c = await api('/connections'); } catch (e) {
+    el.innerHTML = `<h2>Connections</h2>${e.status === 403 ? emptyState('Connections are for admins', 'Only company admins can set up Slack and Gmail.') : errorState('connections', e, paintConnections)}`; return;
   }
   if (c.configured) await prepConnect(c);
   el.innerHTML = `<h2>Connections</h2><p class="meta">The only setup. You sign in on each app's own screen; Deskhand never sees a password or token. Once Slack and its channel are set, chat notifications are delivered there. Once Gmail and the notification email are set, email notifications go to that one address.</p>
     ${!c.configured ? emptyState('viaSocket is not configured on the server', 'Connecting is switched off until the server has its viaSocket values. See the README.') : ''}
     ${c.note ? `<p role="alert" style="color:var(--rejected)">Could not read connection status: ${esc(c.note)}</p>` : ''}
-    ${c.apps.map(a => appRow(a, c)).join('')}`;
+    ${c.apps.map(a => appRow(a, c)).join('')}<div id="aiblock"></div>`;
+  paintAI(c.configured);
   for (const a of c.apps) if (a.can_run) for (const st of a.settings) if (st.kind === 'picker') loadPicker(a, st);
   wireConnections(el);
+}
+async function paintAI(configured) {
+  const el = $('#aiblock'); if (!el) return;
+  let ai; try { ai = await api('/ai'); } catch { return; }
+  el.innerHTML = `<div class="approw" style="display:block"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><b style="flex:1">Understanding requests</b>
+    <span class="chip ${ai.enabled ? 'approved' : 'neutral'}">${icon(ai.enabled ? 's-done' : 's-upcoming')}${ai.enabled ? 'viaSocket AI is on' : 'Built-in rules'}</span></div>
+    <p class="meta" style="margin:6px 0 8px;max-width:640px">By default Deskhand reads each message with its built-in rules. Switch viaSocket AI on and each message is sent to a Claude model to work out the request type and details. It waits at most ${ai.timeout_s} seconds and uses the rules if the AI is slow, fails or runs out of credits. Salary and payroll messages are never sent. The AI only proposes: approvers and approvals always come from your routing map.</p>
+    <label style="display:flex;gap:10px;align-items:center;min-height:44px;cursor:pointer"><input type="checkbox" id="aiswitch" ${ai.switch ? 'checked' : ''} ${configured ? '' : 'disabled'} style="width:20px;height:20px"> Use viaSocket AI to understand requests</label></div>`;
+  $('#aiswitch').onchange = async e => {
+    try { await api('/ai', { enabled: e.target.checked }); toast(e.target.checked ? 'viaSocket AI is on.' : 'Using the built-in rules.'); }
+    catch (err) { toast(err.message, 6000); e.target.checked = !e.target.checked; }
+    paintAI(configured);
+  };
 }
 function appRow(a, c) {
   const setting = x => `<div class="setrow"><label class="meta" for="s_${a.key}_${x.key}">${esc(x.label)}${x.required ? ' (required)' : ' (optional)'}</label>${x.kind === 'picker'
@@ -597,8 +606,8 @@ function wireConnections(el) {
 }
 async function prepConnect(c) {
   try {
-    CONN.token = (await api('/connections/token?actor_id=' + who)).token;
-    for (const a of c.apps) CONN.info[a.key] = await api(`/connections/service/${a.key}?actor_id=${who}`);
+    CONN.token = (await api('/connections/token')).token;
+    for (const a of c.apps) CONN.info[a.key] = await api(`/connections/service/${a.key}`);
     if (!document.getElementById('viasocket-connect-script')) {
       await new Promise((ok, no) => { const sc = document.createElement('script'); sc.id = 'viasocket-connect-script'; sc.src = c.connect_js; sc.onload = ok; sc.onerror = () => no(new Error('Could not load the viaSocket connect script. Check the network and reload.')); document.head.appendChild(sc); });
     }
@@ -614,31 +623,31 @@ window.addEventListener('message', async ev => {
   const d = ev.data; if (!d || typeof d !== 'object') return;
   if (d.type === 'viasocket_connection_success') {
     const key = CONN.pending || Object.keys(CONN.info).find(k => CONN.info[k].service_id === d.serviceId);
-    try { await api('/connections/connected', { actor_id: who, app: key, auth_id: d.data && d.data.id }); toast('Connected.'); } catch (e) { toast(e.message, 6000); }
+    try { await api('/connections/connected', { app: key, auth_id: d.data && d.data.id }); toast('Connected.'); } catch (e) { toast(e.message, 6000); }
     if (current.page === 'health') pageHealth();
   } else if (d.type === 'viasocket_connection_error') toast((d.error && d.error.message) || 'The connection did not complete.', 6000);
 });
 async function loadPicker(a, x) {
   const el = document.getElementById(`s_${a.key}_${x.key}`); if (!el) return;
   try {
-    const o = await api(`/connections/${a.key}/options?actor_id=${who}&setting=${x.key}`);
+    const o = await api(`/connections/${a.key}/options?setting=${x.key}`);
     el.innerHTML = (x.required ? '<option value="">Choose one</option>' : '<option value="">Use the connected account</option>') + o.map(v => `<option value="${esc(v.value)}">${esc(v.label)}</option>`).join('');
     el.value = x.value || '';
   } catch (e) { el.innerHTML = `<option value="">${esc(e.message)}</option>`; }
 }
 async function saveSetting(key, setting, value) {
-  try { await api(`/connections/${key}/setting`, { actor_id: who, setting, value }); toast('Saved.'); await pollCore(); } catch (e) { toast(e.message, 6000); }
+  try { await api(`/connections/${key}/setting`, { setting, value }); toast('Saved.'); await pollCore(); } catch (e) { toast(e.message, 6000); }
 }
 async function disconnectApp(key) {
   if (!await dialogPrompt({ title: `Disconnect ${key}?`, body: 'Notifications that need this app stop being delivered until it is connected again.', confirm: 'Disconnect', danger: true })) return;
-  try { await api(`/connections/${key}/disconnect`, { actor_id: who }); toast('Disconnected.'); } catch (e) { toast(e.message, 6000); }
+  try { await api(`/connections/${key}/disconnect`, {}); toast('Disconnected.'); } catch (e) { toast(e.message, 6000); }
   await pollCore(); pageHealth();
 }
 async function testConn(action) {
   const key = action.startsWith('slack') ? 'slack' : 'gmail';
   const box = $('#tres_' + key); box.innerHTML = '<p class="meta">Running</p>';
   try {
-    const r = await api('/connections/test', { actor_id: who, action, email: action === 'slack_lookup' ? ($('#lk').value || '') : null });
+    const r = await api('/connections/test', { action, email: action === 'slack_lookup' ? ($('#lk').value || '') : null });
     const ok = r.outcome === 'success';
     box.innerHTML = `<ul class="verdict"><li class="${ok ? 'ok' : 'no'}">${icon(ok ? 's-check' : 's-cross')}<b>${ok ? 'It worked' : esc(nice(r.outcome))}</b></li>${r.error ? `<li class="meta" style="margin-left:24px">${esc(r.error)}</li>` : ''}${r.data ? `<li class="meta" style="margin-left:24px">${esc(Object.entries(r.data).map(([k, v]) => `${k}: ${v}`).join(' · '))}</li>` : ''}</ul>`;
   } catch (e) { box.innerHTML = `<p role="alert" style="color:var(--rejected)">${esc(e.message)}</p>`; }
@@ -661,29 +670,240 @@ async function pageAudit() {
   $('#af').oninput = draw; draw();
 }
 
+/* ---------- accounts: sign in, register, join, account menu ---------- */
+const ACCESS = { owner: 'Owner', admin: 'Admin', member: 'Member' };
+const initials = n => String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
+function go(h) { if (location.hash === h) return render(false); location.hash = h; }  // a changed hash renders by itself
+function resetPerson() {
+  REQS = []; INBOX = []; LOG.chat = []; SEENMSG.clear();
+  [SEEN, PREV].forEach(o => Object.keys(o).forEach(k => delete o[k]));
+}
+function signedOut(msg) {
+  NEXT = /^#(login|register|join)/.test(location.hash) ? '' : location.hash;
+  ME = null; resetPerson(); NOTICE = msg || ''; paintShell(); go('#login');
+}
+function paintShell() {
+  const inn = !!ME && !AUTH_PAGES.includes(current.page);  // sign-in, register and join stand alone, even if someone is signed in
+  $('#shell').classList.toggle('solo', !inn);
+  $('#nav').hidden = !inn;
+  $$('#nav [data-admin]').forEach(a => { a.hidden = !isAdmin(); });
+  $('#demobtn').hidden = !(inn && isDemo());
+  const ab = $('#acctbtn'); ab.hidden = !inn;
+  if (inn) {
+    ab.setAttribute('aria-label', `Account: ${ME.user.name}, ${ME.org.name}`);
+    ab.innerHTML = `<span class="av" aria-hidden="true">${esc(initials(ME.user.name))}</span><span class="acct-name">${esc(ME.user.name)}<span class="meta"> · ${esc(ME.org.name)}</span></span>`;
+  } else { $('#status').hidden = true; $('#statusbtn').hidden = true; $('#statuspanel').hidden = true; $('#banner').innerHTML = ''; }
+}
+async function enter(me) {
+  ME = me; resetPerson();
+  const to = NEXT || '#ask'; NEXT = '';
+  try { await loadCore(); } catch (e) { toast(e.message, 6000); }
+  paintShell();
+  history.replaceState(null, '', to);
+  await render(true);
+}
+function authShell(title, lede, inner) {
+  $('#main').innerHTML = `<div class="auth"><h1 class="display">${esc(title)}</h1>${lede ? `<p class="lede">${esc(lede)}</p>` : ''}${inner}</div>`;
+}
+const fld = (id, label, type = 'text', extra = '', hint = '') => `<div><label class="l" for="${id}">${esc(label)}</label><input class="field" id="${id}" type="${type}" ${extra}>${hint ? `<div class="meta">${esc(hint)}</div>` : ''}</div>`;
+function submitForm(form, errId, work) {
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const btn = $('button[type=submit]', form); btn.disabled = true; $(errId).textContent = '';
+    try { await work(); } catch (err) { $(errId).textContent = err.message; btn.disabled = false; }
+  };
+}
+
+async function pageLogin() {
+  try { AUTHOPT = await api('/auth/options'); } catch { /* keep what we knew */ }
+  const notice = NOTICE; NOTICE = '';
+  authShell('Sign in', 'Use the email and password for your company.', `
+    ${notice ? `<div class="state" role="status" style="margin-bottom:16px">${esc(notice)}</div>` : ''}
+    <form class="stack authform" id="lform" novalidate>${fld('le', 'Email', 'email', 'autocomplete="username"')}${fld('lp', 'Password', 'password', 'autocomplete="current-password"')}
+      <div class="err" id="lerr" role="alert"></div><button class="btn primary" type="submit">Sign in</button></form>
+    <div class="altlinks">${AUTHOPT.registration_open ? '<a href="#register">Create a company</a>' : ''}${AUTHOPT.demo_available ? '<button class="btn" id="demogo" type="button">Try the demo</button>' : ''}</div>
+    <p class="meta">Forgot your password? Ask your company admin for a new link.</p>`);
+  submitForm($('#lform'), '#lerr', async () => { await enter(await api('/auth/login', { email: $('#le').value.trim(), password: $('#lp').value })); });
+  const d = $('#demogo'); if (d) d.onclick = async () => { d.disabled = true; try { await enter(await api('/demo/enter', null)); } catch (e) { toast(e.message, 6000); d.disabled = false; } };
+  $('#le').focus();
+}
+async function pageRegister() {
+  try { AUTHOPT = await api('/auth/options'); } catch { /* keep what we knew */ }
+  if (!AUTHOPT.registration_open) { authShell('Registration is closed', 'New companies join by invitation.', '<p>Ask us for an invite code, then come back here.</p><p><a href="#login">Back to sign in</a></p>'); return; }
+  authShell('Create your company', 'You become its owner and can invite everyone else.', `
+    <form class="stack authform" id="rform" novalidate>${fld('rc', 'Company name', 'text', 'autocomplete="organization"')}${fld('rn', 'Your name', 'text', 'autocomplete="name"')}${fld('re', 'Your work email', 'email', 'autocomplete="username"')}
+      ${fld('rp', 'Password', 'password', 'autocomplete="new-password"', 'At least 10 characters.')}${fld('rk', 'Invite code', 'text', 'autocomplete="off"', 'The code we gave you.')}
+      <div class="err" id="rerr" role="alert"></div><button class="btn primary" type="submit">Create company</button></form>
+    <p class="meta"><a href="#login">Already have an account? Sign in</a></p>`);
+  submitForm($('#rform'), '#rerr', async () => {
+    const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return null; } })();
+    await enter(await api('/auth/register', { company: $('#rc').value, name: $('#rn').value, email: $('#re').value.trim(), password: $('#rp').value, code: $('#rk').value.trim(), timezone: tz }));
+  });
+  $('#rc').focus();
+}
+async function pageJoin(token) {
+  let info;
+  try { info = await api('/auth/invite/' + encodeURIComponent(token || '')); } catch (e) {
+    authShell('This link no longer works', '', `<div class="state" role="alert"><b>${esc(e.message)}</b></div><p style="margin-top:16px"><a href="#login">Go to sign in</a></p>`); return;
+  }
+  const reset = info.kind === 'reset';
+  authShell(reset ? 'Choose a new password' : `Join ${info.company}`, reset ? `For ${info.email}.` : `Hi ${info.name}. Choose a password for ${info.email}.`, `
+    <form class="stack authform" id="jform" novalidate>${fld('jp', 'Password', 'password', 'autocomplete="new-password"', 'At least 10 characters.')}${fld('jq', 'Password again', 'password', 'autocomplete="new-password"')}
+      <div class="err" id="jerr" role="alert"></div><button class="btn primary" type="submit">${reset ? 'Save password and sign in' : 'Join and sign in'}</button></form>`);
+  submitForm($('#jform'), '#jerr', async () => {
+    if ($('#jp').value !== $('#jq').value) throw new Error('The two passwords do not match.');
+    await enter(await api('/auth/join', { token, password: $('#jp').value }));
+  });
+  $('#jp').focus();
+}
+
+function openAccount() {
+  const u = ME.user;
+  $('#acct-id').innerHTML = `<dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd><dt>Company</dt><dd>${esc(ME.org.name)}</dd><dt>Access</dt><dd>${esc(ACCESS[u.access_role] || u.access_role)}</dd>`;
+  $('#theme').value = store.get('dh_theme') || 'system';
+  $('#pwbox').hidden = isDemo(); $('#pwbox').open = false; $('#pwform').reset(); $('#pwerr').textContent = '';
+  $('#acct').showModal();
+}
+async function changePassword(e) {
+  e.preventDefault();
+  const err = $('#pwerr'); err.textContent = '';
+  if ($('#pw1').value !== $('#pw2').value) { err.textContent = 'The two new passwords do not match.'; return; }
+  try { ME = await api('/auth/password', { current: $('#pw0').value, new: $('#pw1').value }); toast('Password changed. Other devices are signed out.', 5000); $('#acct').close(); }
+  catch (x) { err.textContent = x.message; }
+}
+async function signOut() {
+  $('#acct').close();
+  try { await api('/auth/logout', null); } catch { /* the cookie is cleared by the server; if it was not reachable the session simply expires */ }
+  NEXT = ''; ME = null; resetPerson(); NOTICE = 'You are signed out.'; paintShell(); go('#login');
+}
+
+/* ---------- people (admin) ---------- */
+let PEOPLE = [];
+const PSTATUS = { active: ['approved', 's-done', 'Active'], invited: ['pending', 's-pending', 'Invited, not joined yet'], disabled: ['neutral', 's-cancelled', 'Deactivated'], demo: ['neutral', 's-upcoming', 'Demo person'] };
+const pchip = s => { const [c, i, w] = PSTATUS[s] || ['neutral', 's-upcoming', s]; return `<span class="chip ${c}">${icon(i)}${esc(w)}</span>`; };
+const pname = id => { const p = PEOPLE.find(x => x.id === id); return p ? p.name : '–'; };
+
+function formDialog({ title, intro = '', fields, confirm = 'Save', submit }) {
+  const d = $('#fdlg');
+  $('#fdlg-title').textContent = title; $('#fdlg-intro').textContent = intro; $('#fdlg-err').textContent = '';
+  $('#fdlg-fields').innerHTML = fields.map((f, i) => `<div><label class="l" for="ff${i}">${esc(f.label)}</label>${f.options
+    ? `<select class="field" id="ff${i}" ${f.disabled ? 'disabled' : ''}>${f.options.map(([v, l]) => `<option value="${esc(v)}" ${v === (f.value ?? '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`
+    : `<input class="field" id="ff${i}" type="${f.type || 'text'}" value="${esc(f.value ?? '')}" autocomplete="off" ${f.disabled ? 'disabled' : ''}>`}${f.hint ? `<div class="meta">${esc(f.hint)}</div>` : ''}</div>`).join('');
+  const ok = $('#fdlg-ok'); ok.textContent = confirm; ok.disabled = false;
+  $('#fdlg-cancel').onclick = () => d.close();
+  $('#fdlgform').onsubmit = async e => {
+    e.preventDefault();
+    const vals = {}; fields.forEach((f, i) => { vals[f.key] = $('#ff' + i).value; });
+    ok.disabled = true;
+    try { await submit(vals); d.close(); } catch (err) { $('#fdlg-err').textContent = err.message; ok.disabled = false; }
+  };
+  d.showModal();
+  const first = $('#ff0'); if (first && !first.disabled) first.focus();
+}
+function showLink(title, body, token) {
+  const d = $('#ldlg'); const link = `${location.origin}/#join/${token}`;
+  $('#ldlg-title').textContent = title; $('#ldlg-body').textContent = body; $('#ldlg-link').value = link;
+  $('#ldlg-copy').textContent = 'Copy link';
+  $('#ldlg-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(link); $('#ldlg-copy').textContent = 'Copied'; }
+    catch { $('#ldlg-link').select(); $('#ldlg-copy').textContent = 'Press Ctrl+C or ⌘C to copy'; }
+  };
+  $('#ldlg-close').onclick = () => { $('#ldlg-link').value = ''; d.close(); };
+  d.onclose = () => { $('#ldlg-link').value = ''; };
+  d.showModal(); $('#ldlg-link').select();
+}
+const managerOptions = (selfId) => [['', 'No manager']].concat(PEOPLE.filter(p => p.id !== selfId && ['active', 'invited', 'demo'].includes(p.status)).map(p => [p.id, p.name]));
+
+async function pagePeople() {
+  const m = $('#main');
+  m.innerHTML = `<div class="page-head"><h1>People</h1><span class="meta">Who works here, who they report to, and what they can do.</span></div>
+    <div class="peoplebar">${isDemo() ? '<span class="meta">The demo company\'s people are fixed. Create your own company to invite people.</span>' : '<button class="btn primary" id="invitebtn">Invite a person</button><span class="meta">Each person gets a link to copy and send. Requests go to their manager, or to an admin if they have none.</span>'}</div>
+    <div id="plist">${loading('people')}</div>`;
+  let rows;
+  try { rows = await api('/people'); } catch (e) { $('#plist').innerHTML = errorState('people', e, pagePeople); return; }
+  PEOPLE = rows;
+  const act = p => isDemo() ? '' : `<button class="btn small" data-edit="${esc(p.id)}">Edit</button>${['active', 'invited'].includes(p.status) ? `<button class="btn small" data-link="${esc(p.id)}">${p.status === 'invited' ? 'New invite link' : 'Password reset link'}</button>` : ''}`;
+  $('#plist').innerHTML = `<div class="scroll"><table class="t people"><tr><th>Person</th><th>Access</th><th>Reports to</th><th>Department</th><th>Status</th><th></th></tr>${rows.map(p =>
+    `<tr><td class="pname"><b>${esc(p.name)}${p.id === meId() ? ' (you)' : ''}</b><span class="meta">${esc(p.email)}</span></td><td data-l="Access">${esc(ACCESS[p.access_role] || p.access_role)}</td><td data-l="Reports to">${esc(pname(p.manager_id))}</td><td data-l="Department">${esc(p.department || '–')}</td><td>${pchip(p.status)}</td><td class="pact">${act(p)}</td></tr>`).join('')}</table></div>`;
+  const inv = $('#invitebtn'); if (inv) inv.onclick = invitePerson;
+  $$('[data-edit]').forEach(b => b.onclick = () => editPerson(b.dataset.edit));
+  $$('[data-link]').forEach(b => b.onclick = () => personLink(b.dataset.link));
+}
+function invitePerson() {
+  formDialog({
+    title: 'Invite a person', intro: 'They get a link to choose a password. Nothing is emailed yet: you copy the link and send it yourself.', confirm: 'Create invite',
+    fields: [{ key: 'name', label: 'Name' }, { key: 'email', label: 'Work email', type: 'email' }, { key: 'access_role', label: 'Access', options: [['member', 'Member: asks for things and approves what is assigned to them'], ['admin', 'Admin: sees everything and manages people and apps']], value: 'member' },
+      { key: 'department', label: 'Department (optional)' }, { key: 'manager_id', label: 'Reports to', options: managerOptions(null), value: '' }],
+    submit: async v => {
+      const r = await api('/people/invite', { name: v.name, email: v.email.trim(), access_role: v.access_role, department: v.department || null, manager_id: v.manager_id || null });
+      await loadCore(); await pagePeople();
+      showLink(`Invite for ${r.user.name}`, `Send this link to ${r.user.name} (${r.user.email}).`, r.join_token);
+    },
+  });
+}
+function editPerson(id) {
+  const p = PEOPLE.find(x => x.id === id); if (!p) return;
+  const owner = p.access_role === 'owner', pending = p.status === 'invited';
+  formDialog({
+    title: `Edit ${p.name}`, intro: owner ? 'The owner cannot be demoted or deactivated. Keep a second admin in case the owner is locked out.' : (pending ? 'This person has not joined yet.' : ''),
+    fields: [{ key: 'name', label: 'Name', value: p.name }, { key: 'department', label: 'Department', value: p.department || '' },
+      { key: 'manager_id', label: 'Reports to', options: managerOptions(p.id), value: p.manager_id || '' },
+      { key: 'access_role', label: 'Access', options: owner ? [['owner', 'Owner']] : [['member', 'Member'], ['admin', 'Admin']], value: p.access_role, disabled: owner },
+      { key: 'status', label: 'Account', options: pending ? [['invited', 'Invited, not joined yet']] : [['active', 'Active'], ['disabled', 'Deactivated: signed out and cannot sign in']], value: pending ? 'invited' : p.status, disabled: owner || pending }],
+    submit: async v => {
+      const changed = {};
+      ['name', 'department', 'manager_id', 'access_role', 'status'].forEach(k => { if ((v[k] || '') !== (p[k] || '')) changed[k] = v[k] || null; });
+      if (!Object.keys(changed).length) return;
+      await api('/people/' + encodeURIComponent(id), changed);
+      toast('Saved.'); await loadCore(); await pagePeople();
+    },
+  });
+}
+async function personLink(id) {
+  const p = PEOPLE.find(x => x.id === id); if (!p) return;
+  const ok = await dialogPrompt({ title: p.status === 'invited' ? 'Make a new invite link?' : `Make a password reset link for ${p.name}?`, body: p.status === 'invited' ? 'The earlier invite link stops working.' : `${p.name} is signed out everywhere when the link is used. Earlier links stop working.`, confirm: 'Make the link' });
+  if (!ok) return;
+  try { const r = await api(`/people/${encodeURIComponent(id)}/link`, null); showLink(p.status === 'invited' ? `Invite for ${p.name}` : `Password reset for ${p.name}`, `Send this link to ${p.name} (${p.email}).`, r.join_token); }
+  catch (e) { toast(e.message, 6000); }
+}
+
 /* ---------- render loop ---------- */
+const TITLES = { login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', people: 'People', health: 'Health', audit: 'Audit' };
 async function render(userNav) {
   const my = ++seq;
   const route = parseHash();
+  const authPage = AUTH_PAGES.includes(route.page);
+  if (!ME && !authPage) { NEXT = location.hash; return go('#login'); }
+  if (ME && (route.page === 'login' || route.page === 'register')) return go('#ask');
+  if (ME && ADMIN_PAGES.includes(route.page) && !isAdmin()) return go('#ask');
   const changedPage = route.page !== current.page || route.id !== current.id;
   current = route;
+  if (userNav && changedPage) window.scrollTo(0, 0);
+  paintShell();
   $$('#nav a').forEach(a => { if (a.dataset.page === route.page) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
-  document.title = { ask: 'Ask', mine: 'My requests', needs: 'Needs you', health: 'Health', audit: 'Audit' }[route.page] + ' · Deskhand';
+  document.title = TITLES[route.page] + ' · Deskhand';
   const m = $('#main');
-  if (changedPage) m.innerHTML = loading(route.page === 'health' ? 'health' : 'your requests');
   try {
+    if (authPage) {
+      if (route.page === 'login') await pageLogin(); else if (route.page === 'register') await pageRegister(); else await pageJoin(route.id);
+      if (userNav) m.focus({ preventScroll: true });
+      return;
+    }
+    if (changedPage) m.innerHTML = loading(route.page === 'health' ? 'health' : (route.page === 'people' ? 'people' : 'your requests'));
     if (['ask', 'mine', 'needs'].includes(route.page)) { await loadLists(); if (!SEEN.__init) { diffStatuses(REQS); SEEN.__init = 1; } }
     if (my !== seq) return;
     if (route.page === 'ask') await pageAsk();
     else if (route.page === 'mine') await pageMine(route.id);
     else if (route.page === 'needs') await pageNeeds(route.id);
+    else if (route.page === 'people') await pagePeople();
     else if (route.page === 'health') await pageHealth();
     else await pageAudit();
-  } catch (e) { if (my === seq) m.innerHTML = errorState('this page', e, () => render(true)); }
+  } catch (e) { if (my === seq && ME) m.innerHTML = errorState('this page', e, () => render(true)); }
   if (userNav && changedPage) m.focus({ preventScroll: true });
 }
 
 async function refreshAll(force, afterDecision) {
+  if (!ME || AUTH_PAGES.includes(current.page)) return;
   if (!['ask', 'mine', 'needs'].includes(current.page)) { await pollCore(); if (force || afterDecision) await render(false); return; }
   const interacting = document.activeElement && document.activeElement.closest && document.activeElement.closest('.decide, .composer');
   const typed = $('#reason') && $('#reason').value;
@@ -702,7 +922,6 @@ async function refreshAll(force, afterDecision) {
     const detId = $('#det') && +$('#det').dataset.id;
     if (detId && changed.has(detId) && !interacting && !typed) await paintDetail(detId, current.page);
     else if (detId && !interacting && !typed) {
-      const r = rows.find(x => x.id === detId);
       if (current.page === 'needs' && !INBOX.some(x => x.id === detId)) await paintDetail(detId, 'needs');
     }
   } catch { /* the page keeps what it has; the header shows reachability */ }
@@ -713,12 +932,20 @@ function wireShell() {
   window.addEventListener('hashchange', () => render(true));
   $('#demobtn').onclick = () => { $('#clock').textContent = stamp(NOW); $('#drawer').showModal(); };
   $('#drawer-close').onclick = () => $('#drawer').close();
-  $('#who').onchange = e => { setWho(e.target.value); };
-  const theme = store.get('dh_theme') || 'system';
-  $('#theme').value = theme;
+  $('#who').onchange = async e => {
+    try { ME = await api('/demo/act-as', { person_id: e.target.value }); } catch (err) { toast(err.message, 6000); $('#who').value = meId(); return; }
+    resetPerson(); $('#drawer').close();
+    try { await loadCore(); } catch (err) { toast(err.message, 6000); }
+    paintShell();
+    if (ADMIN_PAGES.includes(current.page) && !isAdmin()) go('#ask'); else render(false);
+  };
   const applyTheme = t => { if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t); };
-  applyTheme(theme);
+  applyTheme(store.get('dh_theme') || 'system');
   $('#theme').onchange = e => { store.set('dh_theme', e.target.value); applyTheme(e.target.value); };
+  $('#acctbtn').onclick = openAccount;
+  $('#acct-close').onclick = () => $('#acct').close();
+  $('#signout').onclick = signOut;
+  $('#pwform').onsubmit = changePassword;
   $$('[data-adv]').forEach(b => b.onclick = async () => {
     try { const r = await api('/clock/advance', { hours: +b.dataset.adv }); toast(`Clock moved ${b.dataset.adv} h. Reminders sent: ${r.sweep.reminders}. Escalations: ${r.sweep.escalations}.`, 5000); } catch (e) { toast(e.message, 6000); }
     await pollCore(); refreshAll(true);
@@ -726,7 +953,7 @@ function wireShell() {
   $('#resetbtn').onclick = async () => {
     $('#drawer').close();
     if (!await dialogPrompt({ title: 'Reset all demo data?', body: 'This deletes every request, message and audit event and restarts the demo clock. Connections and settings stay.', label: 'Type reset to confirm', confirm: 'Reset demo data', match: 'reset', danger: true })) return;
-    try { await api('/reset', {}); LOG.chat = {}; LOG.email = {}; Object.keys(SEENMSG).forEach(k => delete SEENMSG[k]); Object.keys(SEEN).forEach(k => delete SEEN[k]); Object.keys(PREV).forEach(k => delete PREV[k]); toast('Demo data reset.'); } catch (e) { toast(e.message, 6000); }
+    try { await api('/reset', {}); resetPerson(); toast('Demo data reset.'); } catch (e) { toast(e.message, 6000); }
     await pollCore(); render(false);
   };
   const sb = $('#statusbtn');
@@ -736,9 +963,14 @@ function wireShell() {
 
 async function boot() {
   wireShell();
-  try { await loadCore(); } catch (e) { $('#main').innerHTML = errorState('Deskhand', e, () => location.reload()); return; }
+  try { ME = await api('/auth/me'); } catch (e) {
+    if (e.status !== 401) { paintShell(); $('#main').innerHTML = errorState('Deskhand', e, () => location.reload()); return; }
+    ME = null;
+  }
+  if (ME) { try { await loadCore(); } catch (e) { paintShell(); $('#main').innerHTML = errorState('Deskhand', e, () => location.reload()); return; } }
+  paintShell();
   await render(false);
-  setInterval(() => { if (!document.hidden && !document.querySelector('dialog[open]')) refreshAll(false); }, 4000);
+  setInterval(() => { if (ME && !document.hidden && !document.querySelector('dialog[open]')) refreshAll(false); }, 4000);
 }
 boot();
 })();
