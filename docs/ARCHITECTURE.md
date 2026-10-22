@@ -56,7 +56,8 @@ Invalid transitions raise an error and are never applied silently.
 - inbound_events(id, channel, source_event_id, received_at, outcome)  UNIQUE(channel, source_event_id)
 - events(id, request_id, ts, actor, type, data_json)  append-only audit
 - action_runs(id, request_id, step, idempotency_key UNIQUE, attempts, status, last_error, updated_at)
-- outbox(id, request_id, channel, to, body, idempotency_key UNIQUE, status, created_at)
+- outbox(id, request_id, channel, to, body, idempotency_key UNIQUE, status, created_at, delivery_*, read_at, sent_to)  every message a person is told; `read_at` is the person's unread mark, `sent_to` who Slack or Gmail really messaged
+- notification_prefs(person_id, category, slack, email)  per-category Slack and email choices; the in-app copy is always kept
 - settings(key, value) including ai_budget_per_day, rate_limit_per_min, breaker_state
 
 ## Guard design

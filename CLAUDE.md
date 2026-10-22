@@ -71,6 +71,8 @@ interfaces; the simulator stays the default until the spike (M1.5) proves each c
     only against the directory's Slack ids, of someone who can act on the request right now. The callback answers HTTP 200 with a status word for every outcome and a repeat does nothing.
     A Slack Reject never rejects: a reason is mandatory, so it points to the web page.
 19. Leave records are append-only (who, why, which request) and a request is deducted at most once. The AI and the message text never write to them.
+20. A person's notification preferences can reduce how they are reached but never hide what needs their decision: the in-app copy is always kept, "Needs your decision" always keeps at least one of Slack or email,
+    and only the person themself reads or changes their own list. The admin delivery log is metadata only: no message text, subject or body is ever returned by it, and errors in it are redacted.
 
 ## Commands
 `make dev` (run the app on :8000), `make test` (pytest), `make reset` (delete the demo database).
