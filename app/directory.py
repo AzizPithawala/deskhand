@@ -1,39 +1,81 @@
-"""Employee directory and routing map. Approvers come from here, never from message text."""
+"""Employee directory and routing map. Approvers come from here, never from message text.
+A company's directory is its people, its business roles and holders, the built-in request types with the admin's edits applied, and its policies."""
 import json
 import os
 import re
 
 DATA = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
+# The only type fields a company can change. Everything else (codes, names, the leave action) comes from the template.
+EDITABLE_FIELDS = ("enabled", "requires_approval", "approver_rule", "backup_rule", "extra_approvers", "auto_allow_up_to",
+                   "reminder_hours", "escalate_hours", "fulfiller_rule", "details_needed", "redirect")
+
+
+def normalize_type(t):
+    """Canonical form of a request type. Adds the fields the UI reads (cost_threshold, second_approver_rule) from the first cost-based extra approver."""
+    t = dict(t)
+    extras = [dict(x) for x in (t.get("extra_approvers") or [])]
+    t["extra_approvers"] = extras
+    first = next((x for x in extras if isinstance(x.get("when"), dict) and x["when"].get("cost_above") is not None), None)
+    t["cost_threshold"] = first["when"]["cost_above"] if first else None
+    t["second_approver_rule"] = first["rule"] if first else None
+    t.setdefault("enabled", True)
+    return t
+
+
+def _number(v):
+    try:
+        return float(v) if v not in (None, "", True, False) else None
+    except (TypeError, ValueError):
+        return None
+
 
 class Directory:
-    def __init__(self, employees, types, policies=None, balances=None):
+    def __init__(self, employees, types, policies=None, balances=None, roles=None):
         self.employees = {e["id"]: e for e in employees}
-        self.types = {t["code"]: t for t in types}
+        self.types = {t["code"]: normalize_type(t) for t in types}
         self.policies = policies or {}
         self.balances = balances or {}
+        self.roles = roles or {}  # business roles of a company: code -> {"name", "holder_id", "builtin"}. Empty for the demo, which uses its JSON roles.
+
+    @classmethod
+    def template(cls, data_dir=DATA):
+        return json.load(open(os.path.join(data_dir, "request_types.demo.json")))
 
     @classmethod
     def load(cls, data_dir=DATA):
         emp = json.load(open(os.path.join(data_dir, "employees.demo.json")))
-        typ = json.load(open(os.path.join(data_dir, "request_types.demo.json")))
+        typ = cls.template(data_dir)
         return cls(emp["employees"], typ["request_types"], typ.get("policies"), emp.get("leave_balances"))
 
     @staticmethod
-    def employee_from_user(u):
-        """A signed-in person as a directory entry. Access role maps to the business role the router knows until Phase 2 adds real roles."""
+    def employee_from_user(u, held=()):
+        """A signed-in person as a directory entry. `role` is the access level the router knows (admin or employee); `roles` are the business roles they hold."""
         return {"id": u["id"], "name": u["name"], "role": "admin" if u["access_role"] in ("owner", "admin") else "employee",
-                "manager_id": u.get("manager_id"), "email": u["email"], "slack_id": u.get("slack_id") or "", "phone": u.get("phone") or "",
+                "roles": list(held), "manager_id": u.get("manager_id"), "email": u["email"], "slack_id": u.get("slack_id") or "", "phone": u.get("phone") or "",
                 "active": u["status"] == "active", "department": u.get("department") or ""}
 
     @classmethod
-    def from_users(cls, users, data_dir=DATA):
-        typ = json.load(open(os.path.join(data_dir, "request_types.demo.json")))
-        return cls([cls.employee_from_user(u) for u in users], typ["request_types"], typ.get("policies"), {})
+    def for_company(cls, users, store, data_dir=DATA):
+        """A real company's directory: template types plus this company's edits, its roles and holders, its own policies (none until it writes them)."""
+        roles = {r["code"]: {"name": r["name"], "holder_id": r["holder_id"], "builtin": bool(r["builtin"])}
+                 for r in store.all("SELECT * FROM roles ORDER BY builtin DESC, created_at, code")}
+        edits = {r["code"]: json.loads(r["rules_json"] or "{}") for r in store.all("SELECT code, rules_json FROM type_rules")}
+        types = []
+        for t in cls.template(data_dir)["request_types"]:
+            patch = {k: v for k, v in (edits.get(t["code"]) or {}).items() if k in EDITABLE_FIELDS}
+            types.append({**t, **patch})
+        policies = {p["key"]: p["text"] for p in store.all("SELECT key, text FROM policies ORDER BY key")}
+        held = {}
+        for code, r in roles.items():
+            if r["holder_id"]:
+                held.setdefault(r["holder_id"], []).append(code)
+        return cls([cls.employee_from_user(u, held.get(u["id"], ())) for u in users], types, policies, {}, roles)
 
-    def replace_employees(self, users):
-        """Refresh the people in place (the engine keeps this object) after an admin changes the company's people."""
-        self.employees = {u["id"]: self.employee_from_user(u) for u in users}
+    def refresh(self, users, store):
+        """Reload people, roles, type rules and policies in place: the engine keeps this object."""
+        fresh = Directory.for_company(users, store)
+        self.employees, self.types, self.policies, self.roles = fresh.employees, fresh.types, fresh.policies, fresh.roles
 
     def emp(self, eid):
         return self.employees.get(eid)
@@ -49,6 +91,10 @@ class Directory:
         return None
 
     def role_holder(self, role):
+        """The active person holding a business role. `admin` is any owner or admin. The demo's JSON people carry one role string each."""
+        if role != "admin" and role in self.roles:
+            e = self.employees.get(self.roles[role].get("holder_id"))
+            return e if e and e["active"] else None
         for e in self.employees.values():
             if e["role"] == role and e["active"]:
                 return e
@@ -58,12 +104,16 @@ class Directory:
         return self.employees.get(e["manager_id"]) if e and e.get("manager_id") else None
 
     def resolve_rule(self, rule, requester):
+        """A rule is `manager`, `role:<code>` or `person:<id>`. Only people of this company can come out of it."""
         if not rule:
             return None
         if rule == "manager":
             return self.manager_of(requester)
         if rule.startswith("role:"):
             return self.role_holder(rule.split(":", 1)[1])
+        if rule.startswith("person:"):
+            e = self.employees.get(rule.split(":", 1)[1])
+            return e if e and e["active"] else None
         return None
 
     def other_names_in(self, text, requester):
@@ -76,8 +126,22 @@ class Directory:
                 found.append(e)
         return found
 
+    @staticmethod
+    def condition_holds(when, details):
+        """Does an extra approver's condition hold for these structured details? No condition means always."""
+        if not when:
+            return True
+        if when.get("cost_above") is not None:
+            cost, limit = _number(details.get("estimated_cost")), _number(when["cost_above"])
+            return bool(cost and limit is not None and cost > limit)
+        dc = when.get("detail_contains")
+        if dc and dc.get("words"):
+            text = str(details.get(dc.get("field")) or "")
+            return bool(re.search(r"\b(" + "|".join(re.escape(w) for w in dc["words"]) + r")\b", text, re.I))
+        return False
+
     def approver_chain(self, t, requester, details):
-        """Ordered list of approver ids. Rules: routing map + directory + structured details only."""
+        """Ordered list of approver ids. Rules: routing map + company edits + directory + structured details only."""
         chain = []
 
         def add(e):
@@ -85,21 +149,15 @@ class Directory:
                 chain.append(e["id"])
 
         needs = t.get("requires_approval", False)
-        cost = details.get("estimated_cost")
-        if not needs and t["code"] == "accessories" and cost and cost > t.get("auto_allow_up_to", 0):
+        cost, allow = _number(details.get("estimated_cost")), _number(t.get("auto_allow_up_to"))
+        if not needs and allow is not None and cost and cost > allow:
             needs = True
         if not needs:
             return []
         add(self.resolve_rule(t.get("approver_rule") or "manager", requester))
-        thr = t.get("cost_threshold")
-        if t.get("second_approver_rule") and thr is not None and cost and cost > thr and t["code"] != "access":
-            add(self.resolve_rule(t["second_approver_rule"], requester))
-        if t["code"] == "access":
-            res = (details.get("resource") or "").lower()
-            if "finance" in res:
-                add(self.role_holder("finance_lead"))
-            if re.search(r"\b(admin|root|aws|production|prod)\b", res):
-                add(self.role_holder("it_admin"))
+        for x in t.get("extra_approvers") or []:
+            if self.condition_holds(x.get("when"), details):
+                add(self.resolve_rule(x.get("rule"), requester))
         if not chain:  # requester was their own approver or no manager: use the backup
             add(self.resolve_rule(t.get("backup_rule"), requester))
         if not chain:
