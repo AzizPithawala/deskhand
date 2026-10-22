@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-from . import accounts as ac, chaos, delivery as dl, viasocket_adapter as vs, viasocket_ai as vsai
+from . import accounts as ac, chaos, delivery as dl, setup as st, viasocket_adapter as vs, viasocket_ai as vsai
 from .engine import InvalidTransition, NotAuthorized, Refused
 from .registry import DEMO_ORG_ID, open_platform
 
@@ -522,6 +522,152 @@ def person_link(uid: str, ctx: Ctx = Depends(real_admin)):
         return _fail(e)
     ctx.engine.audit(None, ctx.uid, "reset_link_created", {"user": uid})
     return {"join_token": token}
+
+
+# ---------------- Company setup (admin). Reads work in the demo company (read-only); every write is validated, audited and refused in the demo. ----------------
+class RoleAdd(BaseModel):
+    name: str
+
+
+class RoleHolder(BaseModel):
+    holder_id: str | None = None
+
+
+class PolicyIn(BaseModel):
+    title: str
+    text: str
+
+
+class TypePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # an unknown or non-editable field is refused, never ignored
+    enabled: bool | None = None
+    requires_approval: bool | None = None
+    approver_rule: str | None = None
+    backup_rule: str | None = None
+    extra_approvers: list[dict] | None = None
+    auto_allow_up_to: float | None = None
+    reminder_hours: int | None = None
+    escalate_hours: int | None = None
+    fulfiller_rule: str | None = None
+    details_needed: list[str] | None = None
+    redirect: str | None = None
+
+
+class Simulate(BaseModel):
+    person_id: str
+    type_code: str
+    estimated_cost: float | None = None
+    resource: str | None = None
+
+
+def _setup(fn, *a):
+    try:
+        return fn(*a)
+    except st.SetupError as e:
+        raise HTTPException(e.status, str(e))
+
+
+def _setup_changed(ctx, area, code, changes):
+    """Every setup write leaves an audit event (who, what, from and to) and refreshes the company's directory so the next request uses it."""
+    ctx.engine.audit(None, ctx.uid, "setup_changed", {"area": area, "code": code, "changes": changes})
+    registry.refresh_directory(ctx.org["id"])
+
+
+def _pickable(ctx):
+    d = ctx.engine.d
+    return {"people": [{"id": e["id"], "name": e["name"]} for e in d.employees.values() if e["active"]], "role_options": [{"code": r["code"], "name": r["name"]} for r in st.list_roles(d)]}
+
+
+@app.get("/api/setup/roles")
+def setup_roles(ctx: Ctx = Depends(admin)):
+    return {"roles": st.list_roles(ctx.engine.d), **_pickable(ctx), "demo": ctx.is_demo}
+
+
+@app.post("/api/setup/roles")
+def setup_role_add(b: RoleAdd, ctx: Ctx = Depends(real_admin)):
+    code = _setup(st.add_role, ctx.engine.s, ctx.engine.d, b.name)
+    _setup_changed(ctx, "roles", code, {"added": True})
+    return {"code": code, "roles": st.list_roles(ctx.engine.d)}
+
+
+@app.post("/api/setup/roles/{code}")
+def setup_role_holder(code: str, b: RoleHolder, ctx: Ctx = Depends(real_admin)):
+    changes = _setup(st.set_holder, ctx.engine.s, ctx.engine.d, code, b.holder_id)
+    _setup_changed(ctx, "roles", code, changes)
+    return {"roles": st.list_roles(ctx.engine.d)}
+
+
+@app.post("/api/setup/roles/{code}/delete")
+def setup_role_delete(code: str, ctx: Ctx = Depends(real_admin)):
+    _setup(st.delete_role, ctx.engine.s, ctx.engine.d, code)
+    _setup_changed(ctx, "roles", code, {"deleted": True})
+    return {"roles": st.list_roles(ctx.engine.d)}
+
+
+@app.get("/api/setup/types")
+def setup_types(ctx: Ctx = Depends(admin)):
+    return {"types": st.list_types(ctx.engine.d, ctx.engine.s), **_pickable(ctx), "demo": ctx.is_demo}
+
+
+@app.post("/api/setup/types/{code}")
+def setup_type_edit(code: str, b: TypePatch, ctx: Ctx = Depends(real_admin)):
+    changes = _setup(st.patch_type, ctx.engine.s, ctx.engine.d, code, b.model_dump(exclude_unset=True), ctx.uid)
+    _setup_changed(ctx, "types", code, changes)
+    return st.type_view(ctx.engine.d, ctx.engine.s, code)
+
+
+@app.post("/api/setup/types/{code}/reset")
+def setup_type_reset(code: str, ctx: Ctx = Depends(real_admin)):
+    changes = _setup(st.reset_type, ctx.engine.s, ctx.engine.d, code, ctx.uid)
+    _setup_changed(ctx, "types", code, {"reset_to_default": changes})
+    return st.type_view(ctx.engine.d, ctx.engine.s, code)
+
+
+@app.post("/api/setup/types/{code}/reviewed")
+def setup_type_reviewed(code: str, ctx: Ctx = Depends(real_admin)):
+    _setup(st.mark_reviewed, ctx.engine.s, code, ctx.uid)
+    _setup_changed(ctx, "types", code, {"reviewed": True})
+    return st.type_view(ctx.engine.d, ctx.engine.s, code)
+
+
+@app.get("/api/setup/policies")
+def setup_policies(ctx: Ctx = Depends(admin)):
+    return {"policies": st.list_policies(ctx.engine.d, ctx.engine.s), "demo": ctx.is_demo}
+
+
+@app.post("/api/setup/policies")
+def setup_policy_set(b: PolicyIn, ctx: Ctx = Depends(real_admin)):
+    key = _setup(st.set_policy, ctx.engine.s, ctx.engine.d, b.title, b.text)
+    _setup_changed(ctx, "policies", key, {"saved": True})
+    return {"policies": st.list_policies(ctx.engine.d, ctx.engine.s)}
+
+
+@app.post("/api/setup/policies/{key}/delete")
+def setup_policy_delete(key: str, ctx: Ctx = Depends(real_admin)):
+    _setup(st.delete_policy, ctx.engine.s, ctx.engine.d, key)
+    _setup_changed(ctx, "policies", key, {"deleted": True})
+    return {"policies": st.list_policies(ctx.engine.d, ctx.engine.s)}
+
+
+@app.post("/api/setup/simulate")
+def setup_simulate(b: Simulate, ctx: Ctx = Depends(admin)):
+    return _setup(st.simulate, ctx.engine.d, b.person_id, b.type_code, b.estimated_cost, b.resource)
+
+
+@app.get("/api/setup/checklist")
+def setup_checklist(ctx: Ctx = Depends(admin)):
+    if ctx.is_demo:
+        return {"demo": True, "steps": [], "done": 0, "total": 0, "dismissed": True}
+    store = vs.ConnectionStore(ctx.engine.s, ctx.org["id"])
+    connected = {a: bool((store.get(a) or {}).get("script_id")) for a in ("slack", "gmail")}
+    n = ctx.engine.s.one("SELECT COUNT(*) c FROM requests")["c"]
+    return {"demo": False, **st.checklist(ctx.engine.d, ctx.engine.s, accounts.list_users(ctx.org["id"]), connected, n)}
+
+
+@app.post("/api/setup/checklist/dismiss")
+def setup_checklist_dismiss(ctx: Ctx = Depends(real_admin)):
+    ctx.engine.s.set_setting("checklist_dismissed", 1)
+    return {"ok": True}
 
 
 # ---------------- Connections (viaSocket). Admin only. auth_id and script_id never leave the server. ----------------

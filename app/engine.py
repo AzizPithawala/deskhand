@@ -212,7 +212,7 @@ class Engine:
         types = [i["type_code"] for i in cls["intents"]]
         if "payroll" in types:
             self.audit(None, emp["id"], "blocked_sensitive", {"type": "payroll"})
-            hr = self.d.role_holder("hr_lead")
+            hr = self._hr_contact(emp)
             self._reply(emp, channel, f"I can't handle payroll or salary questions here. Please contact {hr['name'] if hr else 'HR'} privately.")
             self.s.q("UPDATE inbound_events SET outcome='blocked_sensitive' WHERE channel=? AND source_event_id=?", (channel, eid))
             return {"outcome": "blocked_sensitive", "request_ids": []}
@@ -228,6 +228,12 @@ class Engine:
         notes = []
         for it in cls["intents"]:
             code = it["type_code"]
+            tdef = self.d.type(code)
+            if tdef and not tdef.get("enabled", True):
+                self.audit(None, emp["id"], "disabled_type_refused", {"type": code})
+                admin = self.d.role_holder("admin")
+                notes.append(f"{tdef['name']} requests are not handled through Deskhand here. Please contact {admin['name'] if admin else 'an admin'} directly.")
+                continue
             if code == "leave" and self.d.other_names_in(clean, emp):
                 self.audit(None, emp["id"], "leave_for_other_refused", {})
                 notes.append("I can only apply leave for you, not for someone else. Ask them to message me, or ask their manager.")
@@ -320,7 +326,7 @@ class Engine:
             self._notify(rid, emp["id"], self._answer_policy(emp, r["raw_text"]), "answer")
             self._set_status(rid, "CLOSED", "system")
             return
-        if r["type_code"] == "leave":
+        if r["type_code"] == "leave" and self.d.balances:
             bal = self.hr.list_leave_balances(emp["id"])
             r["details"]["balance"] = bal
             self.s.q("UPDATE requests SET details_json=? WHERE id=?", (dumps(r["details"]), rid))
@@ -337,15 +343,22 @@ class Engine:
         extra = f" It needs {len(chain)} approvals, in order." if len(chain) > 1 else ""
         self._notify(rid, emp["id"], f"I've sent your request #{rid} to {self.name(chain[0])} for approval.{extra} I'll update you here.\nWhat I understood: {r['summary']}.", "submitted")
 
+    def _hr_contact(self, emp):
+        """Who to send payroll and policy questions to: the payroll type's own setting, else the HR lead."""
+        pay = self.d.type("payroll") or {}
+        return self.d.resolve_rule(pay.get("redirect"), emp) or self.d.role_holder("hr_lead")
+
     def _answer_policy(self, emp, text):
         t = text.lower()
+        hr = self._hr_contact(emp)
         if re.search(r"how many|balance|left", t):
+            if not self.d.balances:  # a company has no leave ledger yet (Phase 3): say so rather than invent figures
+                return f"I can't see leave balances yet. Please ask {hr['name'] if hr else 'HR'}."
             b = self.hr.list_leave_balances(emp["id"])
             return "Your leave balance: " + ", ".join(f"{k} {v}" for k, v in b.items()) + "."
         for k, v in self.d.policies.items():
             if k.replace("_", " ") in t or k.split("_")[0] in t:
                 return f"{k.replace('_', ' ').title()}: {v}"
-        hr = self.d.role_holder("hr_lead")
         return f"I don't have that policy to hand. Please ask {hr['name'] if hr else 'HR'}."
 
     # ---------- decisions ----------
@@ -583,7 +596,7 @@ class Engine:
         guard = {r["type"]: r["c"] for r in self.s.all("SELECT type, COUNT(*) c FROM events GROUP BY type")}
         keys = ["duplicate_suppressed", "own_message_ignored", "breaker_opened", "action_retry", "action_idempotent_hit", "action_failed",
                 "injection_suspected", "unknown_sender_refused", "blocked_sensitive", "secret_redacted", "leave_for_other_refused",
-                "unauthorized_action_refused", "escalated", "reminder_sent", "ai_budget_exhausted", "delivery_retry", "delivery_failed"]
+                "unauthorized_action_refused", "disabled_type_refused", "escalated", "reminder_sent", "ai_budget_exhausted", "delivery_retry", "delivery_failed"]
         prov = {r["provider"]: r["c"] for r in self.s.all("SELECT provider, COUNT(*) c FROM requests GROUP BY provider")}
         return {"by_status": by_status, "total": sum(by_status.values()), "avg_decision_minutes": round(dec / 60, 1) if dec else None,
                 "guard": {k: guard.get(k, 0) for k in keys}, "classified_by": prov,
