@@ -18,9 +18,9 @@ NOT_DELIVERED_KINDS = {"delivery_failed"}
 # Who gets what (docs/AGENT_PLATFORM_PLAN.md). Chat replies, policy answers and "request received" stay in the Deskhand chat; everything that needs someone's attention
 # or tells them a decision goes to their Slack DM, and the important ones also by email.
 SLACK_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "escalated", "stage_approved", "approved", "rejected", "pending_update", "task", "assigned", "fulfilled",
-               "parked", "delay", "breaker"}
+               "parked", "delay", "breaker", "approval_fallback", "reject_link", "decision_ack"}
 EMAIL_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "escalated", "approved", "rejected", "fulfilled", "task", "parked"}
-NEEDS_LINK_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "task", "parked"}  # addressed to someone who acts: link to the decision page
+NEEDS_LINK_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "task", "parked", "approval_fallback", "reject_link"}  # addressed to someone who acts: link to the decision page
 FROM_REQUESTER_KINDS = {"approval_request"}  # the request email comes from the requester's own mailbox when they connected one
 FROM_DECIDER_KINDS = {"approved", "rejected", "fulfilled", "stage_approved"}  # decisions and completion come from the approver's own mailbox when they connected one
 DAILY_CAP = 150
@@ -119,6 +119,11 @@ class Delivery:
             return bool(self._conn("gmail"))
         return False
 
+    def buttons_ready(self):
+        """Approve / Reject buttons are used only in live mode, once an admin switched them on, and only where viaSocket can reach us (a public https address)."""
+        flow = self.conns.get("slack_flow")
+        return self.mode() == "live" and bool(flow and flow["script_id"]) and self.base_url.startswith("https://")
+
     def used_today(self):
         return self.e.s.one("SELECT COUNT(*) c FROM delivery_ledger WHERE day=?", (_today(),))["c"]
 
@@ -155,6 +160,7 @@ class Delivery:
         return {"used_today": self.used_today(), "cap": DAILY_CAP, "capped": self.capped(), "counts": counts, "mode": self.mode(),
                 "rehearsal_person": {"id": who["id"], "name": who["name"]} if who else None,
                 "slack_matched": sum(1 for e in people if e.get("slack_id")), "people": len(people),
+                "buttons": {"enabled": bool((self.conns.get("slack_flow") or {}).get("script_id")), "public_url": self.base_url.startswith("https://")},
                 "ready": {"slack": self.ready("chat"), "email": self.ready("email")}, "problems": self.problems(), "notes": self.notes()}
 
     def deliver_pending(self, limit=20):
@@ -280,6 +286,13 @@ class Delivery:
         if not rec.get("slack_id"):
             return vs.Result(vs.PERMANENT, error=f"no Slack account is matched for {rec['name']}", code="no_slack_id")
         text = f"{slack_escape(tag)}*{slack_escape(subject)}*\n{slack_escape(body)}\nOpen it: {link}"
+        if row["kind"] == "approval_request" and not rehearsal and self.buttons_ready():  # live approvals can be decided from Slack
+            from . import slack_decisions as sd  # here, not at the top: the engine imports this module
+            token = sd.issue(e, self.tenant, "approval", row["request_id"], row["to_person"], row["id"])
+            res = self.factory().slack_approval(rec["slack_id"], text, token)
+            if res.ok or res.kind != vs.PERMANENT:
+                return res
+            # a certain failure to start the buttons: nothing went out, so the plain message with the link goes instead
         return self.factory().slack_dm(rec["slack_id"], text)
 
 

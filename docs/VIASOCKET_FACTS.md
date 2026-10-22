@@ -187,4 +187,11 @@ Read from viaSocket's public Slack document (`documentation/rowbu58rc.md` and it
 - Send Interactive Message: action_id `rowbevmtsy7h`, version V61. inputData `{messageto:"user"|"channel", userId?, channel_id?, content, operation:"Approval"|"Form", buttons?: Record<string,string>, bot_details?}`:
   an approval message can be addressed to a user directly (so spike S3 is likely to pass).
 - The Slack "Send Message" action also accepts a user as the destination, but its input shape was not documented in the pages read.
-UNVERIFIED until spike S1: that a DM by Slack user id is delivered and answers Slack's `ok:true` with a `ts`; what a wrong or unknown user id answers.
+
+## SPIKE S1 RESULT (2026-10-22, real calls through our adapter on the test workspace; no ids or secrets recorded)
+VERIFIED
+- Get User Information by directory email answers the member's Slack user id in 2.6 s (an id starting with U, 9+ characters).
+- Send Direct Message (`userId` = that id, `content`, `isScheduledMessage:"no"`, `bot_details.bot_name`) answers `{ok:true, ts, channel:"D..."}` in 1.8 s and the message arrived as a DM from "Deskhand". Our adapter keeps only `ts` and `channel`.
+- An unknown user id answers HTTP 200 with the bare string `channel_not_found` as `data` (no `ts`): classified as a PERMANENT failure (never retried) with the message "Slack refused the message: channel_not_found". Nothing was sent to anyone.
+- S3 was already proven in Phase 0: Send Interactive Message with `messageto:"user"` and `userId` delivers a DM with Approve / Reject buttons (a direct run does not capture the click; an automation does).
+STILL UNVERIFIED (spike S2, needs the callback deployed): an automation's HTTP request step calling back to a public Deskhand URL with the click.

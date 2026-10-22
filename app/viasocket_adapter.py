@@ -22,7 +22,7 @@ USER_AGENT = "deskhand/0.1 (+viasocket-adapter)"  # Python's default urllib agen
 APPS = {
     "slack": {
         "service_id": "rowbu58rc", "name": "Slack", "icon": "https://stuff.thingsofbrand.com/slack.com/images/img668216333e_slack.jpg",
-        # send_dm: catalog ids from viaSocket's public Slack document (action rowovgwtt9u4, V3). A real DM has NOT been verified yet (spike S1).
+        # send_dm: catalog ids from viaSocket's public Slack document (action rowovgwtt9u4, V3). Verified with a real call on 2026-10-22 (spike S1).
         "actions": {"send_message": ("rowj2u3wc8h5", "row1jrbor"), "get_user": ("rowrubgppa5r", "rowtstp3fqlh"), "send_dm": ("rowa5mg9fywy", "rowovgwtt9u4")},
         "settings": [],  # people are messaged one by one by Slack user id; no shared channel to choose any more
     },
@@ -32,6 +32,10 @@ APPS = {
         "settings": [{"key": "from", "label": "Send from mailbox", "kind": "picker", "action": "send_email", "field": "from", "existing": {}, "required": False}],
     },
 }
+
+# viaSocket's own, public "automations from code" functions (https://flow.viasocket.com/documentation/automations.md). They are not ours and not secret.
+FLOW_FUNCTIONS = {"create": "scrisgf5H0hN", "trigger": "scrij2DSRMlP", "steps": "scrigkyMNOEC", "read": "scriiZYPU6I3"}
+INTERACTIVE_ACTION_ID = "rowbevmtsy7h"  # Slack, Send Interactive Message (V61): catalog id from viaSocket's Slack document
 
 _ID_LIKE = re.compile(r"\b(scri[A-Za-z0-9]{6,}|eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]*|emb_[0-9a-f]{20,})\b")
 
@@ -252,6 +256,30 @@ class VsClient:
     def run(self, script_id, version_id, input_data, expect=None):
         return self._send("POST", f"{run_base()}/func/{script_id}", None, {"action_version_id": version_id, "inputData": input_data}, expect, extra=(script_id,))
 
+    # ---- automations (viaSocket runs the steps; a refused call still answers HTTP 200 with the refusal in the body, which normalise reads) ----
+    def automation_token(self):
+        r = self.api("GET", "/users/register")
+        d = r.data if isinstance(r.data, dict) else {}
+        tok = d.get("token") or (d.get("data") or {}).get("token") if r.ok else None
+        if r.ok and not tok:
+            return Result(PERMANENT, error="viaSocket gave no automation token", code="unexpected_body")
+        return Result(SUCCESS, data=tok) if tok else r
+
+    def flow_call(self, fn, body, token, extra=()):
+        return self._send("POST", f"{run_base()}/func/{FLOW_FUNCTIONS[fn]}", None, {**body, "proxy_auth_token": token}, extra=(token, *extra))
+
+    def webhook(self, script_id, body):
+        """Start one run of an automation (a webhook trigger). A run that now waits for a person's click answers that it is paused, and that is success."""
+        try:
+            status, text = self.t.request("POST", f"{run_base()}/func/{script_id}", None, body)
+        except TransportError as ex:
+            return Result(RETRYABLE, error=f"network error: {ex}", code="transport", safe_retry=str(ex) in ("ConnectError", "ConnectTimeout", "PoolTimeout"))
+        if "waiting for human intervention" in (text or "").lower():
+            return Result(SUCCESS, data={"waiting": True})
+        r = normalise(status, text)
+        r.error = redact(r.error, (script_id,))
+        return r
+
 
 # ---------------- connection store (per tenant and app; ids are secrets and never leave the server) ----------------
 class ConnectionStore:
@@ -304,6 +332,12 @@ class Integration:
         raise NotImplementedError
 
     def slack_dm(self, user_id, text):
+        raise NotImplementedError
+
+    def slack_approval(self, user_id, text, token):
+        raise NotImplementedError
+
+    def create_approval_flow(self, callback_url):
         raise NotImplementedError
 
     def gmail_send(self, to, subject, body):
@@ -365,7 +399,50 @@ class ViaSocketIntegration(Integration):
         r = self._run("slack", "send_dm", {"userId": user_id, "content": text[:3000], "isScheduledMessage": "no", "bot_details": {"bot_name": "Deskhand"}}, _slack_sent_ok)
         if r.ok:
             r.data = {"ts": r.data.get("ts"), "channel": r.data.get("channel")}
+        elif isinstance(r.data, str) and re.fullmatch(r"[a-z_]{3,40}", r.data):  # an unknown or deactivated user comes back as Slack's bare error word, e.g. channel_not_found
+            r.error, r.code = f"Slack refused the message: {r.data}", r.data
         return r
+
+    def approval_flow(self):
+        row = self.conns.get("slack_flow")
+        return row["script_id"] if row and row["script_id"] else None
+
+    def slack_approval(self, user_id, text, token):
+        """Start one run of the company's approval automation: it DMs the person with Approve and Reject buttons and waits for the click. UNVERIFIED end to end until spike S2."""
+        flow = self.approval_flow()
+        if not flow:
+            return Result(PERMANENT, error="Slack buttons are not switched on yet. An admin does that on Integrations.", code="no_flow")
+        r = self.client.webhook(flow, {"slack_user": user_id, "text": text[:2500], "token": token})
+        r.error = redact(r.error, self.conns.secrets())
+        r.data = scrub(r.data, self.conns.secrets())
+        return r
+
+    def create_approval_flow(self, callback_url):
+        """Build the company's approval automation once: a webhook starts it, step one DMs the buttons and waits for the click, step two calls Deskhand back with the click.
+        The callback address is written into the step code here, never taken from the request that starts a run."""
+        c, err = self._conn("slack")
+        if err:
+            return err
+        if not re.fullmatch(r"https://[A-Za-z0-9.\-]+(:\d+)?/api/hooks/slack-decision", callback_url or ""):
+            return Result(PERMANENT, error="Slack buttons need the public https address of Deskhand (DESKHAND_BASE_URL).", code="no_public_url")
+        tok = self.client.automation_token()
+        if not tok.ok:
+            return tok
+        proj = os.environ.get("VIASOCKET_PROJECT_ID")
+        extra = self.conns.secrets()
+        made = self.client.flow_call("create", {"title": "Deskhand approvals", "description": "Sends an approval request to a person on Slack with Approve and Reject buttons and tells Deskhand which they pressed.", "projectId": proj}, tok.data, extra)
+        flow = ((made.data or {}).get("script_id") if isinstance(made.data, dict) else None) if made.ok else None
+        if not flow:
+            return made if not made.ok else Result(PERMANENT, error="viaSocket created no automation", code="unexpected_body")
+        trig = self.client.flow_call("trigger", {"scriptId": flow, "projectId": proj, "triggerType": "webhook"}, tok.data, (flow, *extra))
+        if not trig.ok:  # one call at a time: a refused trigger must not be followed by the steps
+            return trig
+        steps = self.client.flow_call("steps", {"scriptId": flow, "steps": _approval_steps(c["auth_id"], callback_url)}, tok.data, (flow, *extra))
+        if not steps.ok:
+            return steps
+        self.conns.s.q("INSERT INTO connections(tenant,app,auth_id,script_id,settings_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(tenant,app) DO UPDATE SET script_id=excluded.script_id, updated_at=excluded.updated_at",
+                       (self.conns.tenant, "slack_flow", None, flow, "{}", time.time()))
+        return Result(SUCCESS, data={"created": True})
 
     def gmail_send(self, to, subject, body):
         c, err = self._conn("gmail")
@@ -378,6 +455,18 @@ class ViaSocketIntegration(Integration):
         if r.ok:
             r.data = {"id": r.data.get("id"), "threadId": r.data.get("threadId")}
         return r
+
+
+def _approval_steps(slack_auth_id, callback_url):
+    ask = ('const b = context?.req?.body || {};\n'
+           'return await sendInteractive({ inputData: { messageto: "user", userId: b.slack_user, content: b.text, operation: "Approval", '
+           'buttons: { "Approve": "approve", "Reject": "reject" }, bot_details: { bot_name: "Deskhand" } } })')
+    report = ('const b = context?.req?.body || {};\nconst a = context?.res?.ask || {};\nconst act = (a.actions && a.actions[0]) || {};\n'
+              'const body = { token: b.token, slack_user: a.error ? "" : ((a.user && a.user.id) || ""), decision: a.error ? "error" : (act.value || "") };\n'
+              f'const r = await axios.post("{callback_url}", body, {{ headers: {{ "Content-Type": "application/json" }}, timeout: 20000 }});\n'
+              'return { status: r && r.status };')
+    return [{"stepname": "ask", "code": ask, "service_action_functions": [{"name": "sendInteractive", "auth_id": slack_auth_id, "action_id": INTERACTIVE_ACTION_ID}]},
+            {"stepname": "report", "code": report, "service_action_functions": []}]
 
 
 def personal_tenant(org_id, person_id):

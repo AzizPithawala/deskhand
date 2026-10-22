@@ -240,6 +240,9 @@ def test_slack_dm_uses_the_documented_action_and_returns_only_what_we_need():
     assert empty.slack_dm("U1", "x").code == "not_connected"
     bad, _ = _integ(ok({"success": True, "data": {"ok": False, "error": "user_not_found"}}))
     assert bad.slack_dm("U9", "x").kind == vs.PERMANENT
+    unknown, _ = _integ(ok({"success": True, "data": "channel_not_found"}))  # what viaSocket really answered for an unknown user id (spike S1)
+    r = unknown.slack_dm("UNOSUCHUSER1", "x")
+    assert r.kind == vs.PERMANENT and r.code == "channel_not_found" and r.error == "Slack refused the message: channel_not_found"
 
 
 def test_no_secret_or_viasocket_ids_in_client_code():

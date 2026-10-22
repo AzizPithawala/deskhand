@@ -9,25 +9,26 @@ import pytest
 from app import chaos, delivery as dl, viasocket_adapter as vs
 from app.engine import Engine
 
-SCRIPT_S, SCRIPT_G, SCRIPT_P = "scriSLACKRUNNER1", "scriGMAILRUNNER1", "scriPERSONALRUN1"
+SCRIPT_S, SCRIPT_G, SCRIPT_P, SCRIPT_F = "scriSLACKRUNNER1", "scriGMAILRUNNER1", "scriPERSONALRUN1", "scriFLOWRUNNER001"
 SLACK_OK = (200, json.dumps({"ok": True, "ts": "1.2", "channel": "D1", "message": {"metadata": {"event_payload": {"script_id": SCRIPT_S}}}}))
 GMAIL_OK = (200, json.dumps({"success": True, "data": {"id": "m1", "threadId": "t1"}}))
+FLOW_OK = (200, "Flow is currently paused, waiting for human intervention")  # an approval run now waits for the click
 
 
 class Fake:
     """Answers by which runner is called; records every call as (app, body, url). `plan` can inject failures per app."""
     def __init__(self):
-        self.calls, self.plan = [], {"slack": [], "gmail": []}
+        self.calls, self.plan = [], {"slack": [], "gmail": [], "flow": []}
 
     def request(self, method, url, headers=None, body=None, timeout=25):
-        app = "slack" if SCRIPT_S in url else "gmail"
+        app = "slack" if SCRIPT_S in url else ("flow" if SCRIPT_F in url else "gmail")
         self.calls.append((app, body, url))
         if self.plan[app]:
             a = self.plan[app].pop(0)
             if isinstance(a, Exception):
                 raise a
             return a
-        return SLACK_OK if app == "slack" else GMAIL_OK
+        return {"slack": SLACK_OK, "gmail": GMAIL_OK, "flow": FLOW_OK}[app]
 
 
 @pytest.fixture

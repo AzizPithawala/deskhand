@@ -398,7 +398,7 @@ class Engine:
         return f"I don't have that policy to hand. Please ask {hr['name'] if hr else 'HR'}."
 
     # ---------- decisions ----------
-    def approve(self, rid, actor_id):
+    def approve(self, rid, actor_id, via=None):
         r = self.req(rid)
         if r["status"] != "PENDING_APPROVAL":
             self.audit(rid, actor_id, "duplicate_action_ignored", {"action": "approve", "status": r["status"]})
@@ -406,7 +406,7 @@ class Engine:
         if not self.can_act(r, actor_id):
             self.audit(rid, actor_id, "unauthorized_action_refused", {"action": "approve"})
             raise NotAuthorized("only the assigned approver, an escalation contact or an admin can approve")
-        self.audit(rid, actor_id, "approved_stage", {"stage": r["chain_index"] + 1, "of": len(r["chain"])})
+        self.audit(rid, actor_id, "approved_stage", {"stage": r["chain_index"] + 1, "of": len(r["chain"]), **({"via": via} if via else {})})
         if r["chain_index"] + 1 < len(r["chain"]):
             nxt = r["chain"][r["chain_index"] + 1]
             self.s.q("UPDATE requests SET chain_index=chain_index+1, assigned_at=?, last_reminder_at=NULL, escalated_to=NULL, escalation_level=0 WHERE id=?",

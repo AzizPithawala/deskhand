@@ -1162,7 +1162,12 @@ async function paintMessaging() {
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">${live ? '<button class="btn" id="torehearsal">Back to rehearsal</button>' : '<button class="btn primary" id="golive">Go live</button>'}
       <button class="btn" id="matchslack" ${d.ready.slack ? '' : 'disabled'}>Match Slack accounts</button></div>
     <p class="meta">Slack accounts matched by email: <b>${d.slack_matched} of ${d.people}</b>${unmatched.length ? `. Not matched yet: ${esc(unmatched.slice(0, 8).map(p => p.name).join(', '))}${unmatched.length > 8 ? '…' : ''}. They get email only until matched.` : '.'}</p>
-    <div id="matchres" aria-live="polite"></div>`;
+    <div id="matchres" aria-live="polite"></div>
+    <h3 style="margin-top:20px">Approve and Reject buttons in Slack <span class="chip ${d.buttons.enabled ? 'approved' : 'neutral'}" style="margin-left:6px">${icon(d.buttons.enabled ? 's-done' : 's-upcoming')}${d.buttons.enabled ? 'On' : 'Off'}</span></h3>
+    <p class="meta" style="max-width:680px">When on, a live approval message in Slack has Approve and Reject buttons. Approve decides it right there; Reject opens Deskhand for the reason, because the person who asked is told why. Only the approver (or an admin) can press them, once, and the web page always works too.
+      ${d.buttons.public_url ? '' : 'This needs Deskhand to be reachable from the internet: set DESKHAND_BASE_URL to its public https address.'}</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">${d.buttons.enabled ? '<button class="btn" id="testapproval">Send me a test approval</button>' : `<button class="btn" id="enablebuttons" ${d.ready.slack && d.buttons.public_url ? '' : 'disabled'}>Switch on Slack buttons</button>`}</div>
+    <div id="btnres" aria-live="polite"></div>`;
   const post = async body => { try { await api('/delivery/mode', body); toast(body.mode === 'live' ? 'Live: real people now get Slack messages and emails.' : 'Back in rehearsal.'); await pollCore(); } catch (e) { toast(e.message, 6000); } paintMessaging(); };
   const g = $('#golive'); if (g) g.onclick = async () => {
     if (!await dialogPrompt({ title: 'Go live?', body: 'Your colleagues will start receiving Slack messages and emails from Deskhand. Messages written before now are not sent. You can go back to rehearsal at any time.', confirm: 'Go live' })) return;
@@ -1170,6 +1175,25 @@ async function paintMessaging() {
   };
   const r = $('#torehearsal'); if (r) r.onclick = () => post({ mode: 'rehearsal', confirm: false });
   const rp = $('#rehearsal_person'); if (rp) rp.onchange = () => post({ mode: 'rehearsal', rehearsal_person: rp.value });
+  const eb = $('#enablebuttons'); if (eb) eb.onclick = async () => {
+    eb.disabled = true;
+    try { await api('/integrations/slack/buttons', {}); toast('Slack buttons are on.'); } catch (e) { toast(e.message, 7000); }
+    paintMessaging();
+  };
+  const ta = $('#testapproval'); if (ta) ta.onclick = async () => {
+    ta.disabled = true; $('#btnres').innerHTML = '<p class="meta">Sending a test to your Slack…</p>';
+    try {
+      await api('/integrations/slack/test-approval', {});
+      $('#btnres').innerHTML = '<p class="meta">Sent. Press Approve or Reject on the Slack message. Nothing will change.</p>';
+      for (let i = 0; i < 45; i++) {
+        await sleep(2000);
+        const s = await api('/integrations/slack/test-approval');
+        if (s.state !== 'waiting') { $('#btnres').innerHTML = s.state === 'received' ? '<p class="meta" style="color:var(--approved)">The click came back: the buttons work.</p>' : `<p class="err">It came back as: ${esc(nice(s.state))}.</p>`; ta.disabled = false; return; }
+      }
+      $('#btnres').innerHTML = '<p class="err">No click yet. If you pressed a button and nothing arrived, the callback cannot reach Deskhand.</p>';
+    } catch (e) { $('#btnres').innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+    ta.disabled = false;
+  };
   $('#matchslack').onclick = async e => {
     e.target.disabled = true;
     try {

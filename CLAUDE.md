@@ -67,6 +67,10 @@ interfaces; the simulator stays the default until the spike (M1.5) proves each c
     before a mode change is sent after it.
 17. A person's own mailbox is used only for messages about that person's own requests and decisions, to people in the company directory, with text Deskhand composes; if it cannot send,
     the company mailbox does. Recipients are directory people only, never an address found in message text.
+18. A Slack button press authorises nothing by itself. It needs a one-time token Deskhand issued for that very message (only its hash is stored, it expires, it works once) AND a Slack user id, matched
+    only against the directory's Slack ids, of someone who can act on the request right now. The callback answers HTTP 200 with a status word for every outcome and a repeat does nothing.
+    A Slack Reject never rejects: a reason is mandatory, so it points to the web page.
+19. Leave records are append-only (who, why, which request) and a request is deducted at most once. The AI and the message text never write to them.
 
 ## Commands
 `make dev` (run the app on :8000), `make test` (pytest), `make reset` (delete the demo database).

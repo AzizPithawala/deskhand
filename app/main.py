@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from . import accounts as ac, chaos, delivery as dl, setup as st, viasocket_adapter as vs, viasocket_ai as vsai
+from . import slack_decisions as sd
 from .ledger import num
 from .engine import InvalidTransition, NotAuthorized, Refused
 from .registry import DEMO_ORG_ID, open_platform
@@ -42,6 +43,8 @@ async def password_gate(request, call_next):
     import base64
     import hashlib
     from fastapi.responses import PlainTextResponse
+    if request.url.path == "/api/hooks/slack-decision":  # viaSocket calls this: it is protected by a one-time token and the clicker's Slack identity, not by the shared password
+        return await call_next(request)
     now = time.time()
     _gate_failures[:] = [t for t in _gate_failures if now - t < 60]
     if len(_gate_failures) >= 20:
@@ -967,6 +970,61 @@ def ai_set(b: AISet, ctx: Ctx = Depends(real_admin)):
     vs.ConnectionStore(ctx.engine.s, ctx.org["id"]).set_ai_enabled(b.enabled)
     ctx.engine.audit(None, ctx.uid, "ai_setting_changed", {"enabled": b.enabled})
     return {"ok": True, "enabled": ctx.engine.vs_ai.enabled()}
+
+
+# ---------------- Slack Approve / Reject buttons ----------------
+class SlackClick(BaseModel):
+    token: str = ""
+    slack_user: str | None = None
+    decision: str | None = None
+
+
+@app.post("/api/hooks/slack-decision")
+def slack_decision(b: SlackClick, request: Request):
+    """Called by the company's viaSocket approval automation when someone presses a button. Public, so everything is checked here (see app/slack_decisions.py); every answer is HTTP 200."""
+    _limit("hook:" + _ip(request), 120, 60)
+    org = sd.org_of(b.token)
+    try:
+        eng = registry.engine_for(org) if org else None
+    except KeyError:
+        eng = None
+    if not eng or eng.is_demo:
+        log.warning("slack decision: invalid")
+        return {"status": "invalid"}
+    out = sd.decide(eng, b.token, (b.slack_user or "")[:40], (b.decision or "")[:12])
+    log.info("slack decision: %s", out["status"])  # the status word only: never the token or the user
+    return out
+
+
+def _callback_url(ctx):
+    return ctx.engine.live.base_url + "/api/hooks/slack-decision"
+
+
+@app.post("/api/integrations/slack/buttons")
+def slack_buttons_enable(ctx: Ctx = Depends(real_admin)):
+    r = vs.get_integration(ctx.engine.s, ctx.org["id"]).create_approval_flow(_callback_url(ctx))
+    if not r.ok:
+        raise HTTPException(409 if r.code in ("not_connected", "no_public_url") else 422, vs.redact(r.error))
+    ctx.engine.audit(None, ctx.uid, "slack_buttons_enabled", {})
+    return ctx.engine.live.summary()
+
+
+@app.post("/api/integrations/slack/test-approval")
+def slack_test_approval(ctx: Ctx = Depends(real_admin)):
+    """A test message with Approve and Reject buttons to the signed-in admin. Pressing them changes nothing: it only proves the click comes back."""
+    me = ctx.engine.d.emp(ctx.uid)
+    if not (me or {}).get("slack_id"):
+        raise HTTPException(409, "Your Slack account is not matched yet. Press Match Slack accounts first.")
+    token = sd.issue(ctx.engine, ctx.org["id"], "test", None, ctx.uid)
+    r = vs.get_integration(ctx.engine.s, ctx.org["id"]).slack_approval(me["slack_id"], "*Deskhand test*\nPress Approve or Reject. Nothing will change: this only checks that the buttons work.", token)
+    if not r.ok:
+        raise HTTPException(409 if r.code in ("no_flow", "not_connected") else 422, vs.redact(r.error))
+    return sd.latest_test(ctx.engine, ctx.uid)
+
+
+@app.get("/api/integrations/slack/test-approval")
+def slack_test_approval_state(ctx: Ctx = Depends(real_admin)):
+    return sd.latest_test(ctx.engine, ctx.uid)
 
 
 # ---------------- Delivery mode, Slack matching, and each person's own mailbox ----------------
