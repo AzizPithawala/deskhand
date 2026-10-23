@@ -547,6 +547,9 @@ dialog.wide { max-width: min(780px, 96vw); max-height: 92vh; overflow: auto; }
 .sgroup { border: 1px solid var(--rule); border-radius: var(--radius); padding: var(--s-3); display: grid; gap: var(--s-3); margin: 0; min-width: 0; }
 .sgroup > legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
 .sdprev { background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); padding: var(--s-3); font: var(--t-sm)/1.5 inherit; white-space: pre-wrap; word-break: break-word; max-height: 170px; overflow: auto; margin: 0; }
+.stepbar { display: grid; gap: var(--s-3); margin: var(--s-4) 0; }
+.stepbar .sb { display: grid; gap: var(--s-2); padding: var(--s-3) var(--s-4); border: 1px solid var(--accent); border-radius: var(--radius); background: var(--raised); }
+.stepbar .btns { display: flex; gap: var(--s-2); flex-wrap: wrap; }
 .sdchoices { display: grid; gap: var(--s-1); }
 .sdchoices label { display: flex; gap: 10px; align-items: flex-start; min-height: 36px; cursor: pointer; }
 .sdchoices input { width: 20px; height: 20px; margin-top: 2px; }

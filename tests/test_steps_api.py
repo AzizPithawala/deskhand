@@ -80,7 +80,7 @@ def test_the_demo_company_can_see_the_steps_page_but_nothing_else_here(main):
     demo = Browser(main)
     assert demo.demo("e10").status_code == 200
     v = demo.get("/api/setup/steps/software_seat").json()
-    assert v["demo"] is True and v["eligible"] and v["steps"] == []
+    assert v["demo"] is True and v["eligible"] and [(x["label"], x["app_name"], x["enabled"], x["tested"]) for x in v["steps"]] == [("Add a row to the seats sheet", "Google Sheets", True, True)]  # the one read-only example
     for url in GETS[1:]:
         assert demo.get(url).status_code == 403, url  # it makes no call to the catalog or viaSocket
     for url, body in POSTS:

@@ -84,7 +84,22 @@ function resolveRule(rule, emp) {
 }
 const adminPerson = () => S.employees.find(e => e.role === 'admin') || null;
 
-function stagesFor(r, tl) {
+function stepStage(s, app) {  // one step in another app, drawn as a station on the request's route
+  const base = { k: 'step' + s.position, title: s.label }, where = s.app_name || 'the app';
+  switch (s.status) {
+    case 'succeeded': return { ...base, state: 'done', word: 'Done', note: `Done in ${where}${s.result && s.result.ref ? ` (${s.result.ref})` : ''}.` };
+    case 'rehearsed': return { ...base, state: 'done', word: 'Not sent', note: isDemo() ? 'Not sent: the demo never calls other apps.' : 'Not sent: this company is still in rehearsal.' };
+    case 'running': return { ...base, state: 'current', word: 'Running', note: `Running in ${where} now.` };
+    case 'pending': return { ...base, state: 'current', word: 'Queued', note: `Queued: Deskhand runs it within a few seconds.${s.error ? ' Trying again: ' + s.error : ''}` };
+    case 'ready': return { ...base, state: 'current', word: 'Waits for Run', note: 'Waiting for someone to press Run.' };
+    case 'failed': return { ...base, state: 'parked', word: 'Needs attention', note: `${s.error || 'The app refused it.'} Nothing was lost. An admin decides what happens next.` };
+    case 'unknown': return { ...base, state: 'parked', word: 'Check the app', note: `It may or may not have happened in ${where}: check there first. ${s.error || ''}`.trim() };
+    case 'skipped': return { ...base, state: 'parked', word: 'Skipped', note: s.error || 'It was skipped. An admin can run it again.' };
+    default: return { ...base, state: 'upcoming', word: 'Upcoming', note: s.status === 'planned' ? `Runs in ${where} after the final approval${s.run_mode === 'confirm' ? ', when someone presses Run' : ''}.` : 'Starts after the step before it.' };
+  }
+}
+
+function stagesFor(r, tl, runs) {
   const t = TYPE[r.type_code] || {};
   const ev = (type) => (tl || []).filter(e => e.type === type);
   const out = [{ k: 'asked', state: 'done', title: 'Asked', who: r.employee_id, time: r.created_at }];
@@ -124,6 +139,8 @@ function stagesFor(r, tl) {
     out.push(st);
   });
   if (['REJECTED', 'CANCELLED'].includes(r.status)) return out;
+  const stepsOpen = (runs || []).some(s => !['succeeded', 'rehearsed'].includes(s.status));
+  (runs || []).forEach(s => out.push(stepStage(s)));
   const auto = t.fulfilment_kind === 'auto_action';
   const ful = r.fulfiller_id || (resolveRule(t.fulfiller_rule, EMP[r.employee_id]) || {}).id;
   if (r.type_code !== 'policy_question') {
@@ -132,6 +149,7 @@ function stagesFor(r, tl) {
     else if (r.status === 'PARKED') state = 'parked';
     else if (['FULFILLED', 'CLOSED'].includes(r.status)) state = 'done';
     const st = { k: 'ful', state, title: auto ? cap(hrApplied()) : `Done by ${ful ? nm(ful) : 'the fulfiller'}` };
+    if (stepsOpen && state !== 'done') state = st.state = 'upcoming';  // the steps in other apps come first
     if (state === 'current') st.note = auto ? 'Deskhand is applying it now.' : `${nm(ful)} grants access, then clicks Done.`;
     if (state === 'parked') {
       const f = ev('action_failed').slice(-1)[0];
@@ -144,8 +162,9 @@ function stagesFor(r, tl) {
   return out;
 }
 
-function nextSentence(r) {
+function nextSentence(r, runs) {
   const t = TYPE[r.type_code] || {};
+  if (r.status === 'FULFILLING' && (runs || []).some(s => !['succeeded', 'rehearsed'].includes(s.status))) return 'Next: Deskhand works through the steps in other apps, then the fulfiller clicks Done.';
   if (r.status === 'PENDING_APPROVAL') {
     const holder = r.escalated_to || (r.chain || [])[r.chain_index];
     const age = (NOW - (r.assigned_at || r.created_at)) / 3600;
@@ -186,21 +205,21 @@ function sentence(r) {
 const NODE = { done: 's-done', current: 's-pending', upcoming: 's-upcoming', rejected: 's-rejected', parked: 's-parked', cancelled: 's-cancelled' };
 const WORD = { done: 'Done', current: 'In progress', upcoming: 'Upcoming', rejected: 'Rejected', parked: 'Parked', cancelled: 'Cancelled' };
 
-function journeyHTML(r, tl) {
-  const st = stagesFor(r, tl);
+function journeyHTML(r, tl, runs) {
+  const st = stagesFor(r, tl, runs);
   const prev = PREV[r.id];
   const states = st.map(s => s.k + ':' + s.state);
   const html = st.map((s, i) => {
     const changed = prev && prev[i] !== states[i];
-    return `<li class="stage ${s.state}" aria-label="${esc(s.title)}: ${WORD[s.state]}">
+    return `<li class="stage ${s.state}" aria-label="${esc(s.title)}: ${esc(s.word || WORD[s.state])}">
       <div class="rail">${icon(NODE[s.state], 'node' + (changed ? ' pop' : ''))}<span class="thread${changed ? ' draw' : ''}"></span></div>
-      <div><div class="what"><span>${esc(s.title)}</span><span class="meta">${s.because ? esc(s.because) : (s.state === 'current' ? '' : esc(WORD[s.state]))}</span></div>
+      <div><div class="what"><span>${esc(s.title)}</span><span class="meta">${s.because ? esc(s.because) : (s.state === 'current' && !s.word ? '' : esc(s.word || WORD[s.state]))}</span></div>
         ${s.wait ? `<div class="note"><span class="wait">${esc(s.wait)}</span></div>` : ''}
         ${s.who && !s.wait && s.time ? `<div class="meta">${esc(nm(s.who))}, ${stamp(s.time)}</div>` : (s.time ? `<div class="meta">${stamp(s.time)}</div>` : '')}
         ${s.note ? `<div class="note meta">${esc(s.note)}</div>` : ''}</div></li>`;
   }).join('');
   PREV[r.id] = states;
-  const nx = nextSentence(r);
+  const nx = nextSentence(r, runs);
   return `<ol class="journey" style="list-style:none;padding:0">${html}</ol>${nx ? `<div class="next fade">${esc(nx)}</div>` : ''}`;
 }
 
@@ -419,7 +438,7 @@ async function pageNeeds(id) {
   if (pick) await paintDetail(pick, 'needs');
   else if ($('#det')) $('#det').innerHTML = '';
 }
-const KIND = { approval: 'Needs your decision', task: 'Needs you to finish it', parked: 'Parked: needs an admin' };
+const KIND = { approval: 'Needs your decision', task: 'Needs you to finish it', run: 'Needs you to press Run', parked: 'Parked: needs an admin' };
 function paintNeeds(id, changed) {
   const lst = $('#lst'); if (!lst) return;
   lst.innerHTML = INBOX.length ? INBOX.map(r => {
@@ -438,8 +457,11 @@ function whatWasUnderstood(r) {
   return rows.length ? `<dl class="kv">${rows.map(([a, b]) => `<dt>${esc(a)}</dt><dd>${esc(b)}</dd>`).join('')}</dl>` : '<p class="meta">Deskhand found no structured details in the message. The original is below.</p>';
 }
 const REC = {
+  step_planned: d => `Steps planned: ${(d.steps || []).join(', ')}`, step_rehearsed: d => `Step "${d.label}" would have run (nothing was sent)`, step_started: d => `Step "${d.label}" started`,
+  step_succeeded: d => `Step "${d.label}" done`, step_retry: d => `Step "${d.label}" tried again (attempt ${d.attempt})`, step_confirmed: d => `Run pressed for "${d.label}"`,
+  step_replayed: d => `Step "${d.label}" run again by an admin`, step_marked_done: d => `Step "${d.label}" marked done by an admin after checking: ${d.reason}`, step_skipped: d => `Step "${d.label}" skipped`, steps_finished: 'All steps finished',
   request_created: 'Request created', approved_stage: d => `Approved (step ${d.stage} of ${d.of})`, reminder_sent: 'Reminder sent',
-  escalated: d => `Escalated to ${nm(d.to)}`, action_succeeded: 'HR action succeeded', action_retry: 'HR action retried', action_failed: 'HR action failed',
+  escalated: d => `Escalated to ${nm(d.to)}`, action_succeeded: 'HR action succeeded', action_retry: 'HR action retried', action_failed: d => (d.outcome ? `Step "${d.step}" ${d.outcome === 'unknown' ? 'may or may not have run' : 'did not finish'}` : 'HR action failed'),
   marked_pending: d => `Marked pending${d.note ? ': ' + d.note : ''}`, injection_suspected: 'Instructions inside the message were ignored',
   duplicate_suppressed: 'Duplicate delivery ignored', delivery_succeeded: 'Notification delivered', delivery_failed: 'Notification could not be delivered',
   delivery_retry: 'Notification delivery retried', delivery_replayed: 'Notification retried by an admin', replayed: 'Replayed by an admin',
@@ -461,13 +483,36 @@ async function paintDetail(id, base) {
     <p class="ticket-kind">${esc(typeName(r))}, request ${r.id}</p>
     <div class="page-head" style="margin-bottom:var(--s-2)"><h1>${esc(r.summary)}</h1>${chip(r)}</div>
     <p class="meta ticket-sub">Asked by ${esc(nm(r.employee_id))}${EMP[r.employee_id] && EMP[r.employee_id].department ? ' (' + esc(EMP[r.employee_id].department) + ')' : ''} in ${esc(r.channel)} on ${stamp(r.created_at)}.</p>
-    <section aria-label="Journey of this request">${journeyHTML(r, d.timeline)}</section>
-    ${act ? decisionHTML(act) : ''}
+    <section aria-label="Journey of this request">${journeyHTML(r, d.timeline, d.steps)}</section>
+    ${stepBarHTML(r, d.steps)}${act && !(act.inbox_kind === 'run' || (act.inbox_kind === 'parked' && (d.steps || []).length)) ? decisionHTML(act) : ''}
     <section class="sec"><h3>What Deskhand understood</h3>${whatWasUnderstood(r)}</section>
     <section class="sec"><h3>${r.email_subject ? 'Original email' : 'Original message'}</h3>${r.email_subject ? `<p class="meta">Subject: ${esc(r.email_subject)}</p>` : ''}<div class="quote">${esc(r.message)}</div></section>
     <section class="sec"><h3>Record</h3><p class="meta">Every change is written once and never edited.</p><ul class="record">${d.timeline.map(e => `<li><span class="meta">${new Date(e.ts * 1000).toLocaleTimeString('en-GB', { timeZone: 'UTC' })}</span><span>${esc(recLine(e))} <span class="meta">by ${esc(nm(e.actor))}</span></span></li>`).join('')}</ul></section></div>`;
-  wireDecision(r);
+  wireDecision(r); wireStepBar(r);
   if (NUNREAD > 0 && current.id === id) api('/notifications/read', { request_id: id }).then(j => { NUNREAD = NSTATE.painted = j.unread; paintBadge(); }).catch(() => {});  // opening a request is reading what was said about it; the list's own first pick is not
+}
+
+function stepBarHTML(r, runs) {  // what a person can do about a step: press Run, or decide what happens to one that did not finish
+  const items = (runs || []).filter(s => s.can_run || s.can_decide);
+  if (!items.length) return '';
+  return `<div class="stepbar" data-id="${r.id}">${items.map(s => s.can_run
+    ? `<div class="sb"><b>${esc(s.label)}</b><span class="meta">This step waits for you to press Run.${isDemo() ? ' The demo sends nothing.' : ''}</span><div class="btns"><button class="btn primary" data-sdo="run" data-pos="${s.position}">Run this step</button></div></div>`
+    : `<div class="sb"><b>${esc(s.label)}</b><span class="meta">${s.status === 'unknown' ? 'Check the app first: it may already have happened, and running it again could repeat it.' : 'Nothing was lost.'}</span><div class="btns"><button class="btn primary" data-sdo="again" data-pos="${s.position}">Run again</button><button class="btn" data-sdo="done" data-pos="${s.position}">Mark as done</button></div></div>`).join('')}</div>`;
+}
+function wireStepBar(r) {
+  $$('.stepbar [data-sdo]').forEach(b => {
+    b.onclick = async () => {
+      const what = b.dataset.sdo, pos = b.dataset.pos; let extra = {};
+      if (what === 'done') {
+        if (!await dialogPrompt({ title: 'Mark this step as done?', body: 'Do this only after checking in the app that it really happened. Deskhand will not run it.', label: 'What did you check?', confirm: 'Mark as done' })) return;
+        extra = { reason: $('#dlg-input').value.trim() };
+      }
+      $$('.stepbar button').forEach(x => { x.disabled = true; });
+      const path = what === 'run' ? `/requests/${r.id}/steps/${pos}/run` : (what === 'again' ? `/requests/${r.id}/steps/${pos}/again` : `/requests/${r.id}/steps/${pos}/mark-done`);
+      try { await api(path, extra); toast({ run: 'Run. Deskhand goes on with the next step.', again: 'Queued to run again.', done: 'Marked as done. Deskhand goes on.' }[what]); } catch (e) { toast(e.message, 6000); }
+      await refreshAll(false, true);
+    };
+  });
 }
 
 function decisionHTML(it) {
@@ -1083,7 +1128,7 @@ async function setupTypes() {
     ${TD.types.map(t => `<div class="typecard" data-type="${esc(t.code)}"><div class="h"><b>${esc(t.name)}</b>
       <span class="chip ${t.enabled ? 'approved' : 'neutral'}">${icon(t.enabled ? 's-done' : 's-cancelled')}${t.enabled ? 'On' : 'Off'}</span>
       ${t.changed.length ? '<span class="meta">edited</span>' : ''}${ro ? '' : `<span class="meta">${t.reviewed_at ? 'reviewed' : 'not reviewed yet'}</span>`}</div>
-      ${typeLines(t).map(l => `<p class="sub">${l}</p>`).join('')}${!ro && t.steps && t.steps.eligible ? `<p class="sub">After approval: ${t.steps.count ? `${plural(t.steps.count, 'step')} in other apps (${t.steps.on} switched on).` : 'nothing in other apps.'}</p>` : ''}${typeWarnings(t).map(w => `<div class="warnrow">${icon('s-alert')}<span>${esc(w)}</span></div>`).join('')}
+      ${typeLines(t).map(l => `<p class="sub">${l}</p>`).join('')}${t.steps && t.steps.eligible && (!ro || t.steps.count) ? `<p class="sub">After approval: ${t.steps.count ? `${plural(t.steps.count, 'step')} in other apps (${t.steps.on} switched on)${ro ? ', shown as an example: the demo never calls other apps' : ''}.` : 'nothing in other apps.'}</p>` : ''}${typeWarnings(t).map(w => `<div class="warnrow">${icon('s-alert')}<span>${esc(w)}</span></div>`).join('')}
       ${ro ? '' : `<div class="btns"><button class="btn small" data-edit="${esc(t.code)}">Edit</button>${t.steps && t.steps.eligible ? `<button class="btn small" data-steps="${esc(t.code)}">After approval</button>` : ''}${t.reviewed_at ? '' : `<button class="btn small" data-ok="${esc(t.code)}">Looks right</button>`}</div>`}</div>`).join('')}`;
   $$('[data-edit]').forEach(b => b.onclick = () => editType(b.dataset.edit));
   $$('[data-steps]').forEach(b => b.onclick = () => openSteps(b.dataset.steps));

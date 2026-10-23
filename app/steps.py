@@ -547,6 +547,20 @@ def close_when_done(store, code):
     return store.get_setting(f"steps_close:{code}", "0") == "1"
 
 
+def seed_demo(store, d):
+    """The demo company shows one example step on software seats. It is read-only and never runs: the demo does not call other apps (the run engine records it as not sent)."""
+    if store.one("SELECT 1 x FROM type_steps LIMIT 1"):
+        return
+    cat = vcat.FakeCatalog()
+    aid = next(a["action_id"] for a in cat.app("google-sheets")["actions"] if a["name"] == "Add New Row to Sheet")
+    row = {"spreadsheet_Id": "demo-seats-sheet", "grid_Id": "0", "column_key": True, "column_selected": ["Name", "Email", "Tool"],
+           "column_name": {"Name": "{requester.name}", "Email": "{requester.email}", "Tool": "{detail.tool}"}}
+    save_steps(store, d, "software_seat", [{"app": "google-sheets", "action_id": aid, "run_mode": "auto", "label": "Add a row to the seats sheet", "input": row}], cat, "demo")
+    r = store.one("SELECT * FROM type_steps")
+    store.q("UPDATE type_steps SET tested_hash=?, tested_at=?, enabled=1, expect_json=? WHERE id=?",
+            (step_hash(r["app_slug"], r["action_id"], r["action_version_id"], json.loads(r["input_json"])), time.time(), json.dumps({"kind": "object", "keys": ["Name", "Email", "Tool"]}), r["id"]))
+
+
 def view(d, store, code):
     ok, why = eligible(d, code)
     return {"code": code, "eligible": ok, "reason": why, "max_steps": MAX_STEPS, "close_when_done": close_when_done(store, code), "steps": list_steps(store, code),

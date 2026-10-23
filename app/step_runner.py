@@ -18,7 +18,7 @@ BAD = ("failed", "unknown", "skipped")
 MAX_ATTEMPTS, PER_SWEEP, STUCK_S = 3, 3, 300
 BACKOFF = [1, 4, 16]
 WORDS = {"waiting": "Waiting for the step before", "ready": "Waiting for someone to press Run", "pending": "Queued", "running": "Running", "succeeded": "Done", "rehearsed": "Not sent (rehearsal)",
-         "failed": "Needs attention", "unknown": "Needs attention: outcome unknown", "skipped": "Skipped"}
+         "failed": "Needs attention", "unknown": "Needs attention: outcome unknown", "skipped": "Skipped", "planned": "Planned: runs after the final approval"}
 
 
 def _engine():
@@ -340,14 +340,20 @@ class StepRunner:
             self._set(row["id"], "skipped", error="The request was cancelled.", finished_at=self.e.now())
 
     # ---------- what people see ----------
-    def view(self, rid, with_input=False):
+    def view(self, rid, with_input=False, actor=None):
+        """The runs of a request as people may see them. With `actor`, each says whether that person may press Run or decide what happens to it (the server still checks again)."""
         snap = self._snap(rid)
-        out = []
+        out, r = [], self.e.req(rid)
+        if snap and not self._rows(rid) and r["status"] in ("SUBMITTED", "PENDING_APPROVAL", "APPROVED"):  # not approved yet: what will happen afterwards, so approver and requester can see it
+            return [{"position": s["position"], "label": s["label"], "app_name": s["app_name"], "action_name": s["action_name"], "status": "planned", "status_text": WORDS["planned"], "run_mode": s["run_mode"],
+                     "attempts": 0, "error": None, "result": None, "can_run": False, "can_decide": False} for s in snap["steps"]]
         for row in self._rows(rid):
             st = snap["steps"][row["position"]] if snap and row["position"] < len(snap["steps"]) else {}
             out.append({"position": row["position"], "label": row["label"], "app_name": st.get("app_name"), "action_name": st.get("action_name"), "status": row["status"],
                         "status_text": WORDS.get(row["status"], row["status"]), "run_mode": row["run_mode"], "attempts": row["attempts"], "error": row["error"] or None,
-                        "result": json.loads(row["result_summary"]) if row["result_summary"] else None, **({"input": json.loads(row["input_json"]) if row["input_json"] else None} if with_input else {})})
+                        "result": json.loads(row["result_summary"]) if row["result_summary"] else None, **({"input": json.loads(row["input_json"]) if row["input_json"] else None} if with_input else {}),
+                        "can_run": bool(actor and row["status"] == "ready" and r["status"] == "FULFILLING" and self.can_run(r, actor)),
+                        "can_decide": bool(actor and row["status"] in BAD and r["status"] == "PARKED" and self.e._is_admin(actor))})
         return out
 
     # ---------- an admin's test of one step (the only real call before going live) ----------

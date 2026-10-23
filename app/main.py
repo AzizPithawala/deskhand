@@ -376,7 +376,7 @@ def requests(status: str | None = None, employee: str | None = None, ctx: Ctx = 
 def request_detail(rid: int, ctx: Ctx = Depends(auth)):
     r = _get_visible(ctx, rid)
     r["status_text"] = ctx.engine.status_text(r)
-    return {"request": r, "timeline": ctx.engine.timeline(rid), "steps": ctx.engine.stepper.view(rid, with_input=ctx.is_admin)}
+    return {"request": r, "timeline": ctx.engine.timeline(rid), "steps": ctx.engine.stepper.view(rid, with_input=ctx.is_admin, actor=ctx.uid)}
 
 
 @app.post("/api/requests/{rid}/approve")

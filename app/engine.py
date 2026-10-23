@@ -712,6 +712,9 @@ class Engine:
         for r in self.list_requests():
             if r["status"] == "PENDING_APPROVAL" and self.can_act(r, person_id):
                 items.append({**r, "inbox_kind": "approval"})
+            elif r["status"] == "FULFILLING" and r["type_code"] != "leave" and self.stepper.unfinished(r["id"]):  # Deskhand is working through the steps in other apps: only a step waiting for Run needs a person
+                if any(x["status"] == "ready" for x in self.stepper._rows(r["id"])) and self.stepper.can_run(r, person_id):
+                    items.append({**r, "inbox_kind": "run"})
             elif r["status"] == "FULFILLING" and (r["fulfiller_id"] == person_id or self._is_admin(person_id)) and r["type_code"] != "leave":
                 items.append({**r, "inbox_kind": "task"})
             elif r["status"] == "PARKED" and self._is_admin(person_id):

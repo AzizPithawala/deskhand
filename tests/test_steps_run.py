@@ -470,3 +470,76 @@ def test_replaying_a_parked_leave_leaves_the_delivery_records_of_that_request_al
     e.hr.heal()
     e.replay(rid, "e10")
     assert e.req(rid)["status"] == "CLOSED" and e.s.one("SELECT status FROM action_runs WHERE idempotency_key='deliver:keep'")["status"] == "succeeded"
+
+
+# ---------------- 5A.4: what people see and who is asked ----------------
+def inbox_kinds(e, person):
+    return [(i["id"], i["inbox_kind"]) for i in e.inbox(person)]
+
+
+def test_before_approval_the_request_already_shows_the_steps_that_will_follow(w):
+    make_steps(w, modes=("auto", "confirm"))
+    rid = routed(w)
+    v = w.stepper.view(rid)
+    assert [(s["label"], s["status"], s["status_text"]) for s in v] == [("Step 1", "planned", "Planned: runs after the final approval"), ("Step 2", "planned", "Planned: runs after the final approval")]
+    assert all(not s["can_run"] and not s["can_decide"] and "input" not in s for s in v)
+    w.approve(rid, "e06")
+    assert [s["status"] for s in w.stepper.view(rid)] == ["rehearsed", "ready"]  # the real runs replace the plan
+    w.cancel(rid, "e01")
+    assert [s["status"] for s in w.stepper.view(rid)] == ["rehearsed", "skipped"]  # what already happened stays; what had not yet is skipped
+
+
+def test_a_step_that_waits_for_run_is_a_task_for_those_who_may_press_it_and_the_fulfiller_waits_until_the_steps_are_done(w):
+    make_steps(w, modes=("confirm",))
+    rid = approved(w)
+    assert inbox_kinds(w, "e06") == [(rid, "run")] and inbox_kinds(w, "e10") == [(rid, "run")] and inbox_kinds(w, "e01") == []  # not the requester, and nobody is asked to click Done yet
+    flags = {a: [s["can_run"] for s in w.stepper.view(rid, actor=a)] for a in ("e06", "e10", "e01")}
+    assert flags == {"e06": [True], "e10": [True], "e01": [False]}
+    w.stepper.confirm(rid, 0, "e06")
+    assert inbox_kinds(w, "e06") == [(rid, "task")]  # the steps are done: now the person who completes it clicks Done
+
+
+def test_while_steps_run_by_themselves_nobody_is_asked_to_click_done(w):
+    make_steps(w)
+    go_live(w)
+    rid = approved(w)
+    assert inbox_kinds(w, "e06") == [] and inbox_kinds(w, "e10") == []
+    w.stepper.run_pending()
+    assert inbox_kinds(w, "e06") == [(rid, "task")]
+
+
+def test_only_an_admin_is_offered_a_decision_about_a_parked_step(w):
+    make_steps(w)
+    go_live(w)
+    w.t.answers = [vs.TransportError("ReadTimeout")]
+    rid = approved(w)
+    w.stepper.run_pending()
+    assert [s["can_decide"] for s in w.stepper.view(rid, actor="e10")] == [True] and [s["can_decide"] for s in w.stepper.view(rid, actor="e06")] == [False]
+    assert inbox_kinds(w, "e10") == [(rid, "parked")] and inbox_kinds(w, "e06") == []
+
+
+def test_the_demo_company_shows_one_example_step_that_never_runs(tmp_path, monkeypatch):
+    from tests import apiutil
+    main = apiutil.load_app(monkeypatch, tmp_path)
+    demo = apiutil.Browser(main)
+    demo.demo("e01")
+    rid = demo.post("/api/ingest", {"text": "Need a Claude seat for my work on the research project"}).json()["request_ids"][0]
+    assert [s["status"] for s in demo.get(f"/api/requests/{rid}").json()["steps"]] == ["planned"]
+    admin = apiutil.Browser(main)
+    admin.demo("e06")  # Imran approves the seat
+    assert admin.post(f"/api/requests/{rid}/approve", {}).status_code == 200
+    steps_ = admin.get(f"/api/requests/{rid}").json()["steps"]
+    assert [(s["label"], s["status"]) for s in steps_] == [("Add a row to the seats sheet", "rehearsed")]
+    assert admin.engine.s.one("SELECT COUNT(*) c FROM outbox WHERE body LIKE '%would have run%'")["c"] == 1 and admin.engine.stepper.run_pending() == {"ran": 0}
+    assert main.registry.engine_for(admin.org_id).s.one("SELECT COUNT(*) c FROM type_steps")["c"] == 1  # seeded once, not on every start
+
+
+def test_the_preflight_report_counts_steps_and_their_runs(tmp_path):
+    from app import preflight
+    from app.db import Store
+    path = str(tmp_path / "p.db")
+    store = Store(path)
+    store.q("INSERT INTO type_steps(type_code,position,app_slug,action_id,action_version_id,label,input_json,enabled) VALUES('software_seat',0,'google-sheets','a','v','L','{}',1)")
+    store.q("INSERT INTO step_runs(request_id,position,step_key,status) VALUES(1,0,'1:0','rehearsed')")
+    lines = dict(preflight.report(path, "x"))
+    assert lines["steps in other apps"] == "1 set up, 1 switched on" and lines["step runs"] == "rehearsed 1"

@@ -6,7 +6,7 @@ import shutil
 import sqlite3
 import threading
 
-from . import setup, viasocket_adapter as vs, viasocket_ai as vsai
+from . import setup, steps, viasocket_adapter as vs, viasocket_ai as vsai
 from .accounts import Accounts
 from .db import Store
 from .delivery import Delivery
@@ -46,6 +46,8 @@ class OrgRegistry:
             engine.ledger = ledger
         engine.org_id, engine.is_demo = org["id"], bool(org["is_demo"])
         engine.live = Delivery(engine, tenant=org["id"])  # live-only delivery, per company
+        if org["is_demo"]:
+            steps.seed_demo(store, directory)  # one read-only example step, so the demo can show the feature without ever calling an app
         ai = vsai.ViaSocketClassifier(engine.s, org["id"])
         engine.ai_classify, engine.ai_enabled = ai, ai.enabled
         engine.vs_ai = ai
