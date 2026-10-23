@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS requests(
   source_event_id TEXT, raw_text TEXT, summary TEXT, details_json TEXT DEFAULT '{}', confidence REAL, provider TEXT,
   status TEXT NOT NULL, chain_json TEXT DEFAULT '[]', chain_index INTEGER DEFAULT 0, escalated_to TEXT,
   escalation_level INTEGER DEFAULT 0, escalated_at REAL, fulfiller_id TEXT, rejection_reason TEXT,
-  created_at REAL NOT NULL, assigned_at REAL, last_reminder_at REAL, decided_at REAL, closed_at REAL, flags TEXT DEFAULT '');
+  created_at REAL NOT NULL, assigned_at REAL, last_reminder_at REAL, decided_at REAL, closed_at REAL, flags TEXT DEFAULT '', steps_json TEXT);
 CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY AUTOINCREMENT, request_id INTEGER, ts REAL NOT NULL, actor TEXT, type TEXT NOT NULL,
   data_json TEXT DEFAULT '{}');
@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS slack_decisions(
   token_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, request_id INTEGER, person_id TEXT, outbox_id INTEGER, created_at REAL NOT NULL, expires_at REAL NOT NULL,
   used_at REAL, outcome TEXT, clicked_by TEXT);
 CREATE INDEX IF NOT EXISTS slack_decisions_outbox ON slack_decisions(outbox_id);
+CREATE TABLE IF NOT EXISTS type_steps(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, type_code TEXT NOT NULL, position INTEGER NOT NULL, app_slug TEXT NOT NULL, app_name TEXT, action_id TEXT NOT NULL, action_name TEXT,
+  action_version_id TEXT NOT NULL, label TEXT NOT NULL, run_mode TEXT NOT NULL DEFAULT 'auto', input_json TEXT NOT NULL DEFAULT '{}', expect_json TEXT, tested_hash TEXT, tested_at REAL,
+  enabled INTEGER NOT NULL DEFAULT 0, updated_at REAL, updated_by TEXT);
+CREATE INDEX IF NOT EXISTS type_steps_type ON type_steps(type_code, position);
+CREATE TABLE IF NOT EXISTS step_runs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, request_id INTEGER NOT NULL, position INTEGER NOT NULL, step_key TEXT UNIQUE NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+  run_mode TEXT, mode_at_creation TEXT, label TEXT, app_slug TEXT, action_id TEXT, input_json TEXT, result_summary TEXT, error TEXT, next_at REAL, created_at REAL, started_at REAL, finished_at REAL);
+CREATE INDEX IF NOT EXISTS step_runs_request ON step_runs(request_id, position);
 CREATE TABLE IF NOT EXISTS leave_types(
   code TEXT PRIMARY KEY, name TEXT NOT NULL, yearly_days REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS leave_ledger(
@@ -62,8 +71,9 @@ CREATE TRIGGER IF NOT EXISTS leave_ledger_no_delete BEFORE DELETE ON leave_ledge
 """
 OUTBOX_MIGRATION = {"delivery_status": "TEXT DEFAULT 'skipped'", "delivery_attempts": "INTEGER DEFAULT 0", "delivery_error": "TEXT",
                     "delivery_next_at": "REAL", "delivered_at": "REAL", "delivery_note": "TEXT", "from_person": "TEXT", "read_at": "REAL", "sent_to": "TEXT", "email_json": "TEXT"}
+MIGRATIONS = {"outbox": OUTBOX_MIGRATION, "requests": {"steps_json": "TEXT"}}  # columns added after a table first shipped: older company databases get them when they open
 # "connections", "delivery_ledger", "roles", "type_rules", "policies", "leave_types", "leave_ledger", "slack_decisions" and "notification_prefs" are deliberately NOT here: a demo reset must not disconnect apps, reset the daily live-delivery cap or undo company setup
-TABLES = ["settings", "inbound_events", "requests", "events", "action_runs", "outbox"]
+TABLES = ["settings", "inbound_events", "requests", "events", "action_runs", "outbox", "step_runs"]
 
 
 class Store:
@@ -82,12 +92,14 @@ class Store:
         self.conn.commit()
 
     def _migrate(self):
-        """Databases made before delivery existed get the new outbox columns."""
-        have = {r[1] for r in self.conn.execute("PRAGMA table_info(outbox)")}
-        for col, decl in OUTBOX_MIGRATION.items():
-            if col not in have:
-                self.conn.execute(f"ALTER TABLE outbox ADD COLUMN {col} {decl}")
-        if "read_at" not in have:  # messages from before notifications existed are not "new": a company must not open to hundreds of unread
+        """Databases made before a column existed get it now (outbox for delivery and notifications, requests for the steps snapshot)."""
+        had_read_at = "read_at" in {r[1] for r in self.conn.execute("PRAGMA table_info(outbox)")}
+        for table, columns in MIGRATIONS.items():
+            have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for col, decl in columns.items():
+                if col not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        if not had_read_at:  # messages from before notifications existed are not "new": a company must not open to hundreds of unread
             self.conn.execute("UPDATE outbox SET read_at=created_at WHERE read_at IS NULL")
 
     def q(self, sql, args=()):

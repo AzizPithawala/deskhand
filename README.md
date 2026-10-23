@@ -44,6 +44,14 @@ Admins open **Setup** (and **Integrations**, **People**) from the sidebar; on a 
 - **Checklist.** Six steps that tick themselves from the data: invite people, set managers, choose role holders, review the request types ("Looks right"), connect Slack and Gmail, send a test request.
 - The **demo company** shows its prepared rules read-only. Under the hood: tables `roles`, `type_rules`, `policies` in each company's own database file, merged over the template by `Directory.for_company`; `tests/test_setup_directory.py` runs the old hard-coded router against the new data-driven one for over 50,000 combinations.
 
+## After-approval steps (Phase 5, in progress)
+An admin will be able to say, per request type, what happens in another app once a request is approved ("add a row in Google Sheets", "create a ticket"), using any app from viaSocket's public catalog.
+**Built so far (5A.1, nothing runs yet):** the catalog adapter (`app/viasocket_catalog.py`, with a recorded fixture for tests and offline work: `DESKHAND_STEPS_CATALOG=fixture`), the validated step data
+(`app/steps.py`: a closed list of request fields a step may use, the form-definition reader, a small safe evaluator for the apps' visibility conditions, bounds, neutralising of request text), tables for
+steps and their runs, and the admin routes (`/api/setup/steps/{type}`, `/api/steps/...`: browse apps and actions, check a form, connect an app, load pickers). A step starts untested and off; it can be switched on
+only after a test of exactly that step. Never for leave or payroll. What viaSocket really does in a real app is in `docs/VIASOCKET_FACTS.md` ("PHASE 5 SPIKE 5A.0"). Running steps, the admin screens and the ticket
+view come in 5A.2 to 5A.4. Tests never read your `.env` or reach viaSocket.
+
 ## Leave record (Phase 3, step 1)
 A real company keeps leave in its own **append-only ledger** (database triggers forbid editing or deleting a line). Each person gets the yearly allowance (default casual 12, sick 8, editable under Setup, Leave) the first time leave is looked at in a calendar year; leave taken
 and an admin's corrections (Setup, Leave, Adjust: plus or minus days with a reason) are further lines, each with who and why. A balance is the sum of a person's lines for the year; a leave is keyed by its request, so a retry can never deduct twice. Only Monday to Friday count, a half day is 0.5,

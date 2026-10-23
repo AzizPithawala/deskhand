@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from . import accounts as ac, chaos, delivery as dl, setup as st, viasocket_adapter as vs, viasocket_ai as vsai
-from . import notifications as nt, slack_decisions as sd
+from . import notifications as nt, slack_decisions as sd, steps as sp, viasocket_catalog as vcat
 from .ledger import num
 from .engine import InvalidTransition, NotAuthorized, Refused
 from .registry import DEMO_ORG_ID, open_platform
@@ -931,6 +931,201 @@ def connection_test(b: ConnAct, ctx: Ctx = Depends(real_admin)):
         raise HTTPException(404, "unknown test")
     ctx.engine.audit(None, ctx.uid, "integration_test", {"action": b.action, "outcome": r.kind, "code": r.code})
     return {"outcome": r.kind, "code": r.code, "error": vs.redact(r.error), "data": vs.scrub(r.data)}
+
+
+# ---------------- After-approval steps (admin). The owner picks any app from viaSocket's catalog and what to do in it once a request type is approved (rule 21). ----------------
+class StepIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int | None = None
+    app: str
+    action_id: str
+    label: str | None = None
+    run_mode: str
+    input: dict = {}
+
+
+class StepsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    steps: list[StepIn]
+    close_when_done: bool | None = None
+
+
+class StepOn(BaseModel):
+    enabled: bool
+
+
+class FormState(BaseModel):
+    type_code: str
+    app: str
+    action_id: str
+    values: dict = {}
+
+
+class PickerIn(BaseModel):
+    app: str
+    action_id: str
+    field_key: str
+    existing: dict = {}
+    search: str | None = None
+
+
+def _step_action(slug, action_id):
+    """The catalog's app and a described action, or an HTTP error the admin can read."""
+    try:
+        return sp.find_action(vcat.get_catalog(), slug, action_id)
+    except sp.StepError as e:
+        raise HTTPException(e.status, str(e))
+
+
+def _step_app(slug):
+    try:
+        app_ = vcat.get_catalog().app(slug)
+    except vcat.CatalogError as e:
+        raise HTTPException(e.status, str(e))
+    if not app_:
+        raise HTTPException(404, "That app is not in the catalog.")
+    return app_
+
+
+def _connected(ctx, slug):
+    row = vs.ConnectionStore(ctx.engine.s, ctx.org["id"]).get(slug)
+    return bool(row and row["script_id"])
+
+
+def _steps_view(ctx, code):
+    v = sp.view(ctx.engine.d, ctx.engine.s, code)
+    if not v["eligible"] and v["reason"].startswith("No such"):
+        raise HTTPException(404, v["reason"])
+    for s_ in v["steps"]:
+        s_["connected"] = _connected(ctx, s_["app"])
+    return {**v, "demo": ctx.is_demo}
+
+
+@app.get("/api/setup/steps/{code}")
+def setup_steps(code: str, ctx: Ctx = Depends(admin)):
+    return _steps_view(ctx, code)
+
+
+@app.post("/api/setup/steps/{code}")
+def setup_steps_save(code: str, b: StepsIn, ctx: Ctx = Depends(real_admin)):
+    changes = _setup(sp.save_steps, ctx.engine.s, ctx.engine.d, code, [x.model_dump() for x in b.steps], vcat.get_catalog(), ctx.uid, b.close_when_done)
+    if changes:
+        _setup_changed(ctx, "steps", code, changes)
+    return _steps_view(ctx, code)
+
+
+@app.post("/api/setup/steps/{code}/{step_id}/enabled")
+def setup_step_enabled(code: str, step_id: int, b: StepOn, ctx: Ctx = Depends(real_admin)):
+    changes = _setup(sp.set_enabled, ctx.engine.s, code, step_id, b.enabled)
+    _setup_changed(ctx, "steps", code, changes)
+    return _steps_view(ctx, code)
+
+
+@app.get("/api/steps/apps")
+def steps_apps(q: str = "", ctx: Ctx = Depends(real_admin)):
+    try:
+        found = vcat.get_catalog().search(q)
+    except vcat.CatalogError as e:
+        raise HTTPException(e.status, str(e))
+    return {"apps": [{**a, "connected": _connected(ctx, a["slug"])} for a in found]}
+
+
+@app.get("/api/steps/apps/{slug}")
+def steps_app(slug: str, ctx: Ctx = Depends(real_admin)):
+    app_ = _step_app(slug)
+    actions = []
+    for raw in app_["actions"]:
+        d_ = sp.describe_action(raw)
+        actions.append({k: d_[k] for k in ("action_id", "name", "description", "destructive", "supported", "reasons")})
+    return {"slug": slug, "name": app_["name"], "auth_type": app_["auth_type"], "requires_auth": app_["requires_auth"], "connected": _connected(ctx, slug), "actions": actions}
+
+
+@app.get("/api/steps/apps/{slug}/actions/{action_id}")
+def steps_action(slug: str, action_id: str, ctx: Ctx = Depends(real_admin)):
+    app_, a = _step_action(slug, action_id)
+    raw = next(x for x in app_["actions"] if x["action_id"] == action_id)
+    sample = vs.scrub(raw.get("sample_output"))
+    return {"app": {"slug": slug, "name": app_["name"]}, "action": {k: a[k] for k in ("action_id", "name", "description", "destructive", "supported", "reasons", "version")},
+            "schema": a["schema"], "sample": sample if len(json.dumps(sample, default=str)) <= 3000 else None}
+
+
+@app.post("/api/steps/form-state")
+def steps_form_state(b: FormState, ctx: Ctx = Depends(real_admin)):
+    ok, why = sp.eligible(ctx.engine.d, b.type_code)
+    if not ok:
+        raise HTTPException(422, why)
+    _, a = _step_action(b.app, b.action_id)
+    cleaned, errors, dropped, unreadable = sp.validate_values(a["schema"], b.values, sp.tokens_for(b.type_code))
+    return {"visible": sp.visible_keys(a["schema"], b.values if isinstance(b.values, dict) else {}), "errors": errors, "dropped": dropped, "unreadable": unreadable, "cleaned": cleaned}
+
+
+@app.post("/api/steps/options")
+def steps_options(b: PickerIn, ctx: Ctx = Depends(real_admin)):
+    app_, a = _step_action(b.app, b.action_id)
+    if b.field_key not in sp.field_keys(a["schema"]):
+        raise HTTPException(404, "That field is not part of the action's form.")
+    if len(json.dumps(b.existing, default=str)) > 8000:
+        raise HTTPException(422, "Too many values were sent.")
+    client, store = _real(ctx)
+    row = store.get(app_["slug"])
+    if not row or not row["auth_id"]:
+        raise HTTPException(409, f"{app_['name']} is not connected yet.")
+    r = client.picker(a["action_version_id"], b.field_key, row["auth_id"], b.existing, (b.search or "")[:80])
+    if not r.ok:
+        raise HTTPException(422 if r.kind == vs.PERMANENT else 503, vs.redact(r.error, store.secrets()))
+    return r.data
+
+
+@app.get("/api/steps/apps/{slug}/connect")
+def steps_connect(slug: str, actions: str = "", ctx: Ctx = Depends(real_admin)):
+    """Everything the Connect popup needs for this app. The popup asks consent only for the actions named here."""
+    app_ = _step_app(slug)
+    if not app_["requires_auth"]:
+        raise HTTPException(422, "Apps that need no sign-in are not supported yet.")
+    known = {a["action_id"] for a in app_["actions"]}
+    wanted = [x for x in actions.split(",") if x][:20]
+    if not wanted or any(x not in known for x in wanted):
+        raise HTTPException(422, "Choose which actions you will use before connecting.")
+    client, _ = _real(ctx)
+    return {"token": client.token(), "service_id": app_["service_id"], "action_ids": wanted}
+
+
+@app.post("/api/steps/apps/{slug}/connected")
+def steps_connected(slug: str, b: ConnAct, ctx: Ctx = Depends(real_admin)):
+    app_ = _step_app(slug)
+    client, store = _real(ctx)
+    if not b.auth_id:
+        raise HTTPException(422, "no connection id was returned")
+    r = client.connections()
+    if not r.ok:
+        _vfail(r)
+    if str(b.auth_id) not in {str(c.get("id")) for c in r.data if isinstance(c, dict)}:
+        raise HTTPException(422, "that connection does not belong to this company")  # a forged or stale id
+    en = client.enable(app_["service_id"], b.auth_id)
+    if not en.ok:
+        _vfail(en)
+    store.save(slug, b.auth_id, en.data)
+    ctx.engine.audit(None, ctx.uid, "connection_added", {"app": slug, "reused_runner": en.meta.get("reused")})
+    return {"ok": True}
+
+
+@app.post("/api/steps/apps/{slug}/disconnect")
+def steps_disconnect(slug: str, ctx: Ctx = Depends(real_admin)):
+    if slug in vs.APPS:
+        raise HTTPException(422, "Slack and Gmail are disconnected on the Integrations page.")
+    _step_app(slug)
+    client, store = _real(ctx)
+    row = store.get(slug)
+    switched_off = 0
+    if row:
+        client.api("PUT", f"/embed/updatestatus/{row['script_id']}?status=0")  # remove the runner first, then the connection
+        r = client.revoke(row["auth_id"])
+        if not r.ok:
+            raise HTTPException(422, vs.redact(r.error, store.secrets()))
+        store.delete(slug)
+        switched_off = ctx.engine.s.q("UPDATE type_steps SET enabled=0 WHERE app_slug=? AND enabled=1", (slug,)).rowcount
+        ctx.engine.audit(None, ctx.uid, "connection_removed", {"app": slug, "steps_switched_off": switched_off})
+    return {"ok": True, "steps_switched_off": switched_off}
 
 
 # ---------------- Delivery status ----------------
