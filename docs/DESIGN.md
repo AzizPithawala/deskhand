@@ -18,6 +18,27 @@ Spend boldness in one place: everything else is flat and quiet (hairlines only w
 - **Type:** one family, Atkinson Hyperlegible Next Variable (SIL OFL 1.1, self-hosted, Latin and Latin-extended files). Body 16/26, scale 13 / 14 / 16 / 18 / 22 / 28 / 36 / 56 / 72, tight tracking on large sizes, tabular figures for waiting times. Its zero is slashed on purpose (legibility); it was left as is.
 - Space, radius (controls 8, panels 12), elevation and motion tokens sit next to the colours. Token names that the page script uses inline (`--bg --surface --ink --muted --rule --accent --pending --approved --rejected --parked ...`) must not be renamed.
 
+## The logo
+**The idea: a request handed on.** A filled station (the person who asked), a line, and a half-filled station (whoever has it now). The half-filled shape is the product's own "in progress" status symbol, so the logo and the interface speak one language.
+
+**Construction** (64 x 64 grid, in `app/static/icon.svg` and, as theme-aware `<symbol id="logo">`, in the sprite in `index.html`):
+- tile: rounded square, radius 15
+- filled station: circle at (17, 32), radius 9
+- line: x 17 to 37, y 29.75 to 34.25 (4.5 thick), ends hidden under the second station
+- half-filled station: ring at (46, 32), radius 7.5, stroke 5, left half filled (`M46 24.5a7.5 7.5 0 0 0 0 15z`)
+
+**Colour.** Tab icon and app icon: tile `#1e4fff`, mark white (a blue tile reads on light and dark tab strips). In the app the tile is `var(--accent)` and the mark `var(--on-accent)`, so it follows the theme: tile `#7c9bff` and mark `#0a0e1a` at night. A test keeps the two drawings identical. `apple-touch-icon.png` is the same mark on a full-bleed square (iOS rounds it); `icon-32.png` is the fallback for browsers that ignore SVG icons.
+
+**Wordmark.** "Deskhand", capital D, Atkinson Hyperlegible Next 700, tracking -0.025em, set as live text next to the mark; in the app header the muted "request desk" follows it. There is no outlined wordmark file.
+
+**Use.** Clear space of a quarter of the tile on every side. Smallest: 16 px in a tab, 24 px in the app (the app uses 28). Do not recolour the mark on its own, add a gradient or shadow, rotate it, or draw the tile without the mark.
+
+**Why heavier than it first looked.** A first version had a 5 px line on a 64 px grid with smaller stations and read like a dumbbell. A thin line and larger stations read as a route; at a true 16 px the line must still be about 1 px, so the final line is 4.5 and the stations 9 and 7.5. Checked at 16 and 32 px, rendered pixel for pixel.
+
+**Tried and dropped.** Direction B, a lowercase "d" built from a half-filled station and a line (busy at 16 px). Direction C, a capital D drawn as a route with one station (a letter, says little about what the product does). A diagonal and an elbow version of the route fill the tile better but changed the character of the approved straight mark. A tile-less blue mark would be about 2.7:1 on a dark tab strip.
+
+**Not in emails.** Mail clients block remote images and strip data: SVG, and an image link would sit behind the shared password, so emails keep the text header "Deskhand".
+
 ## What was tried and dropped
 - A different line colour for every request type (a rainbow): reads like a children's map and fights the status colours. Four lines only.
 - A transit-map menu with named interchanges: too cute. A plain line with dots and one "you are here".

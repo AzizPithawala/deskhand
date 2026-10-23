@@ -118,10 +118,7 @@ label.l { display: block; font-size: var(--t-sm); color: var(--muted); margin-bo
   position: sticky; top: 0; z-index: 20;
 }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: var(--t-md); letter-spacing: -.025em; color: var(--ink); text-decoration: none; }
-.brand::before {  /* a station and the start of a line: the product's whole idea in one mark */
-  content: ""; width: 28px; height: 12px; flex: none;
-  background: radial-gradient(circle at 6px 6px, var(--accent) 0 5.5px, transparent 6px), linear-gradient(var(--accent), var(--accent)) 11px 4.5px / 17px 3px no-repeat;
-}
+.brand .mark { width: 28px; height: 28px; flex: none; }  /* the logo (symbol #logo): a request handed on from one station to the next */
 .brand span { color: var(--muted); font-weight: 400; font-size: var(--t-sm); letter-spacing: 0; padding-left: 10px; border-left: 1px solid var(--rule); line-height: 16px; }
 .grow { flex: 1; }
 .status { display: flex; gap: var(--s-4); align-items: center; font-size: var(--t-sm); color: var(--muted); }

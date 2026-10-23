@@ -1,6 +1,8 @@
 """The browser code and the API must agree, and the browser must never say who is acting. No network."""
 import os
 import re
+import struct
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -110,3 +112,56 @@ def test_every_line_colour_the_script_picks_is_defined_for_both_themes_and_style
     assert lines == {"time", "tools", "gear", "help"}
     for name in lines:
         assert css.count(f"--line-{name}:") >= 3 and f".line-{name} {{ --line: var(--line-{name}); }}" in css  # day, night by system, night by choice; and the class that uses it
+
+
+STATIC = os.path.join(os.path.dirname(__file__), "..", "app", "static")
+SHAPE = re.compile(r"<(rect|circle|path)\b([^>]*?)/?>")
+GEOMETRY = ("x", "y", "width", "height", "rx", "cx", "cy", "r", "d")
+
+
+def _png_header(name):
+    b = open(os.path.join(STATIC, name), "rb").read()
+    assert b[:8] == b"\x89PNG\r\n\x1a\n" and b[12:16] == b"IHDR"  # a real PNG
+    return struct.unpack(">II", b[16:24]), len(b)
+
+
+def test_the_page_declares_its_icons_and_each_one_is_a_local_file():
+    declared = re.findall(r'<link rel="(icon|apple-touch-icon)"([^>]*)>', HTML)
+    hrefs = sorted(h for _, attrs in declared for h in re.findall(r'href="([^"]+)"', attrs))
+    assert hrefs == ["/static/apple-touch-icon.png", "/static/icon-32.png", "/static/icon.svg"]
+    for h in hrefs:
+        assert h.startswith("/static/") and os.path.isfile(os.path.join(STATIC, h[len("/static/"):]))  # our own server, no address elsewhere
+    assert '<link rel="icon" href="/static/icon.svg" type="image/svg+xml">' in HTML
+    assert '<link rel="icon" href="/static/icon-32.png" sizes="32x32" type="image/png">' in HTML
+    assert HTML.count('name="theme-color"') == 2 and 'media="(prefers-color-scheme: dark)"' in HTML and 'media="(prefers-color-scheme: light)"' in HTML
+
+
+def test_the_svg_icon_is_plain_shapes_with_no_script_text_font_or_outside_reference():
+    root = ET.parse(os.path.join(STATIC, "icon.svg")).getroot()
+    assert root.get("viewBox") == "0 0 64 64"
+    assert {el.tag.split("}")[1] for el in root.iter()} <= {"svg", "title", "rect", "circle", "path"}  # no script, style, text, image, use or foreignObject
+    for el in root.iter():
+        for key, value in el.attrib.items():
+            assert key in {"viewBox", "width", "height", "rx", "cx", "cy", "r", "x", "y", "d", "fill", "stroke", "stroke-width"} and "http" not in value and "url(" not in value, (el.tag, key)  # no event handler, link or style
+
+
+def test_the_png_icons_are_real_pngs_of_the_declared_size_and_small():
+    for name, size in (("icon-32.png", (32, 32)), ("apple-touch-icon.png", (180, 180))):
+        dims, length = _png_header(name)
+        assert dims == size and length < 20_000, (name, dims, length)
+
+
+def test_the_logo_is_one_drawing_in_the_icon_and_the_page_and_it_follows_the_theme():
+    css = open(os.path.join(STATIC, "app.css")).read()
+    symbol = re.search(r'<symbol id="logo" viewBox="0 0 64 64">(.*?)</symbol>', HTML, re.S).group(1)
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b", symbol) and "var(--accent)" in symbol and "var(--on-accent)" in symbol  # tile and mark take the theme's colours
+
+    def geometry(shapes):
+        return [(tag, {k: v for k, v in attrs.items() if k in GEOMETRY}) for tag, attrs in shapes]
+    svg = open(os.path.join(STATIC, "icon.svg")).read().split("</title>", 1)[1]
+    drawn = lambda text: [(t, dict(re.findall(r'([\w-]+)="([^"]*)"', a))) for t, a in SHAPE.findall(text)]  # noqa: E731
+    assert len(drawn(svg)) == 5 and geometry(drawn(svg)) == geometry(drawn(symbol))  # the tab icon and the in-app mark are the same shapes
+    mark = '<svg class="mark" aria-hidden="true"><use href="#logo"/></svg>'
+    assert f'<a class="brand" href="#ask">{mark}Deskhand<span>request desk</span></a>' in HTML  # the app header
+    assert f'<a class="brand" href="#welcome">{mark}Deskhand</a>' in JS  # the landing header
+    assert ".brand .mark {" in css and ".brand::before" not in css  # the CSS-drawn stand-in is gone

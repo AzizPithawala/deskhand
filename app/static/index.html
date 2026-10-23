@@ -4,7 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0e1a" media="(prefers-color-scheme: dark)">
 <title>Deskhand</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/icon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <link rel="preload" href="/static/fonts/AtkinsonHyperlegibleNext-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/app.css">
 </head>
@@ -21,6 +26,8 @@
     <symbol id="s-alert" viewBox="0 0 24 24"><path d="M12 2.5L22.5 21h-21z" fill="currentColor"/><path d="M12 9.5v5M12 17.2v.3" fill="none" stroke="var(--surface)" stroke-width="2.2" stroke-linecap="round"/></symbol>
     <symbol id="s-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="s-cross" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <!-- the logo: a filled station, a line, and a half-filled station (a request handed on). Same drawing as icon.svg, but the tile and mark follow the theme. -->
+    <symbol id="logo" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" style="fill:var(--accent)"/><circle cx="17" cy="32" r="9" style="fill:var(--on-accent)"/><rect x="17" y="29.75" width="20" height="4.5" style="fill:var(--on-accent)"/><circle cx="46" cy="32" r="7.5" style="fill:none;stroke:var(--on-accent);stroke-width:5"/><path d="M46 24.5a7.5 7.5 0 0 0 0 15z" style="fill:var(--on-accent)"/></symbol>
     <!-- navigation -->
     <symbol id="i-ask" viewBox="0 0 24 24"><path d="M4 5.5h16v10H9.5L5 19.5v-4H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
     <symbol id="i-mine" viewBox="0 0 24 24"><path d="M5 6.5h14M5 12h14M5 17.5h9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
@@ -40,7 +47,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <div class="app">
   <header class="top">
-    <a class="brand" href="#ask">Deskhand<span>request desk</span></a>
+    <a class="brand" href="#ask"><svg class="mark" aria-hidden="true"><use href="#logo"/></svg>Deskhand<span>request desk</span></a>
     <span class="grow"></span>
     <div class="status" id="status" aria-label="Delivery status" hidden></div>
     <button class="btn small quiet" id="statusbtn" aria-expanded="false" aria-controls="statuspanel" hidden><span class="dot" id="statusdot"></span>Status</button>
