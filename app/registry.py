@@ -49,6 +49,7 @@ class OrgRegistry:
         ai = vsai.ViaSocketClassifier(engine.s, org["id"])
         engine.ai_classify, engine.ai_enabled = ai, ai.enabled
         engine.vs_ai = ai
+        engine.ai_write = vsai.ViaSocketWriter(engine.s, org["id"])  # the same switch and budget as the classifier
         return engine
 
     def engine_for(self, org_id):

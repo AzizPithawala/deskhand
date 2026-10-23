@@ -51,7 +51,7 @@ interfaces; the simulator stays the default until the spike (M1.5) proves each c
 7. No real network calls in tests. External systems sit behind adapter interfaces with mocks.
 8. viaSocket secrets (VIASOCKET_EMBED_SECRET, every script_id, every proxy_auth_token, test connection ids)
    never appear in code, fixtures, logs, error messages, client-side code or the UI. Redact them in logs.
-9. The AI never chooses which action runs. Our code picks the action; the AI may only fill validated values.
+9. The AI never chooses which action runs. Our code picks the action; the AI may only fill validated values. (The one free-text value it may draft is a single sentence in an approval email, from structured facts only, checked by `emailkit.valid_sentence` and replaced by a template sentence if it fails any check.)
 10. A viaSocket HTTP 200 does not mean success. Always inspect the response body (see
     docs/VIASOCKET_INTEGRATION.md) and normalise every result to success, retryable failure or permanent failure.
 

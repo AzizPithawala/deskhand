@@ -66,9 +66,10 @@ def detect_types(text):
     return found
 
 
-def _next_weekday(today, idx):
+def _next_weekday(today, idx, after=False):
+    """The first day with this weekday on or after today, so "Friday" said on a Friday is today. With after=True ("next Friday") today itself does not count."""
     ahead = (idx - today.weekday()) % 7
-    return today + timedelta(days=ahead or 7)
+    return today + timedelta(days=(ahead or 7) if after else ahead)
 
 
 def parse_leave(text, today):
@@ -97,15 +98,17 @@ def parse_leave(text, today):
             days.append(today)
         if "tomorrow" in t:
             days.append(today + timedelta(days=1))
-        wd = [(t.find(w), i) for i, w in enumerate(WEEKDAYS) if re.search(r"\b" + w + r"\b", t)]
+        wd = [(t.find(w), i, bool(re.search(r"\bnext\s+" + w + r"\b", t))) for i, w in enumerate(WEEKDAYS) if re.search(r"\b" + w + r"\b", t)]
         n = re.search(r"(\d+)\s*days?", t)
         if wd and n and ("starting" in t or "from" in t):
-            start = _next_weekday(today, sorted(wd)[0][1])
+            first = sorted(wd)[0]
+            start = _next_weekday(today, first[1], first[2])
             days = [start, start + timedelta(days=int(n.group(1)) - 1)]
             d["date_range"] = True
         else:
-            for _, i in sorted(wd):
-                days.append(_next_weekday(today, i))
+            for _, i, nxt in sorted(wd):
+                days.append(_next_weekday(today, i, nxt))
+            days = sorted(set(days))  # always in date order, whatever order the person wrote them in
         d["dates"] = [x.isoformat() for x in days]
     comma = text.rsplit(",", 1)
     if len(comma) == 2 and 2 < len(comma[1].strip()) <= 60:

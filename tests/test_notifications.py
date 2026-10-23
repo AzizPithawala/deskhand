@@ -118,6 +118,6 @@ def test_a_database_made_before_notifications_gets_the_new_columns_and_index(tmp
     c.close()
     s = Store(path)
     cols = {r["name"] for r in s.all("PRAGMA table_info(outbox)")}
-    assert {"read_at", "sent_to", "from_person", "delivery_status"} <= cols
+    assert {"read_at", "sent_to", "from_person", "delivery_status", "email_json"} <= cols
     assert s.one("SELECT read_at, sent_to FROM outbox")["read_at"] == 0 and s.one("SELECT sent_to FROM outbox")["sent_to"] is None  # old messages are not new: they start as read
     assert "outbox_person" in [r["name"] for r in s.all("PRAGMA index_list(outbox)")]

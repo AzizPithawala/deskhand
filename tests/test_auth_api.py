@@ -104,7 +104,7 @@ def test_employees_see_only_their_own_and_assigned_requests(main):
     boss = apiutil.add_person(owner, "boss@acme.test", "Boss")
     ann = apiutil.add_person(owner, "ann@acme.test", "Ann", manager_id=boss.uid)
     bob = apiutil.add_person(owner, "bob@acme.test", "Bob")
-    rid = ann.post("/api/ingest", {"text": "I need leave tomorrow, family function"}).json()["request_ids"][0]
+    rid = ann.post("/api/ingest", {"text": "I need Tuesday off, family function"}).json()["request_ids"][0]
     assert [r["id"] for r in ann.get("/api/requests").json()] == [rid]
     assert [r["id"] for r in boss.get("/api/requests").json()] == [rid] and boss.get("/api/inbox").json()[0]["id"] == rid  # the manager from the reporting line
     assert bob.get("/api/requests").json() == [] and bob.get(f"/api/requests/{rid}").status_code == 404
@@ -139,10 +139,10 @@ def test_people_edits_drive_routing_and_refuse_loops(main):
     owner = apiutil.company(main)
     boss = apiutil.add_person(owner, "boss@acme.test", "Boss")
     ann = apiutil.add_person(owner, "ann@acme.test", "Ann")
-    first = ann.post("/api/ingest", {"text": "I need leave tomorrow, family function", "source_event_id": "a"}).json()["request_ids"][0]
+    first = ann.post("/api/ingest", {"text": "I need Tuesday off, family function", "source_event_id": "a"}).json()["request_ids"][0]
     assert owner.engine.req(first)["chain"] == [owner.uid]  # no manager yet: falls back to an admin
     assert owner.post(f"/api/people/{ann.uid}", {"manager_id": boss.uid, "department": "Sales"}).json()["manager_id"] == boss.uid
-    second = ann.post("/api/ingest", {"text": "I need leave tomorrow, family function", "source_event_id": "b"}).json()["request_ids"][0]
+    second = ann.post("/api/ingest", {"text": "I need Tuesday off, family function", "source_event_id": "b"}).json()["request_ids"][0]
     assert owner.engine.req(second)["chain"] == [boss.uid]
     assert owner.post(f"/api/people/{boss.uid}", {"manager_id": ann.uid}).status_code == 422  # a loop
     assert owner.post(f"/api/people/{owner.uid}", {"access_role": "member"}).status_code == 422

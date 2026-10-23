@@ -4,6 +4,7 @@ Delivery starts by itself once an admin has connected Slack and chosen a channel
 Slack or Gmail can never block or undo a decision. Safeguards: a daily backstop cap, exactly-once per outbox idempotency_key (atomic claim, single-flight
 sweep), no automatic resend when the outcome is unknown, escaped message text, and email only ever to the one stored notification address."""
 import html
+import json
 import os
 import re
 import threading
@@ -11,7 +12,8 @@ import time
 from urllib.parse import urlsplit
 from contextlib import contextmanager
 
-from . import notifications, viasocket_adapter as vs
+from . import emailkit, notifications, viasocket_adapter as vs
+from .classifier import PAYROLL
 
 # The system notice about a failed delivery is never delivered: if Slack is down, delivering that notice through Slack would fail and create the next notice,
 # forever. It stays in the outbox (and on Integrations and the dashboard).
@@ -25,6 +27,7 @@ NEEDS_LINK_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_
 FROM_REQUESTER_KINDS = {"approval_request"}  # the request email comes from the requester's own mailbox when they connected one
 FROM_DECIDER_KINDS = {"approved", "rejected", "fulfilled", "stage_approved"}  # decisions and completion come from the approver's own mailbox when they connected one
 DAILY_CAP = 150
+AI_SENTENCES_PER_SWEEP = 3  # the worker is one thread for every company: a few AI sentences per sweep, then the template
 MAX_ATTEMPTS = 3
 SENDING_TIMEOUT_S = 300
 ONE_EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
@@ -41,6 +44,7 @@ def slack_escape(text):
 class Delivery:
     def __init__(self, engine, integration_factory=None, base_url=None, tenant=None, personal_factory=None, fanout=None):
         self.e = engine
+        self._ai_left = 0  # AI sentences still allowed in this sweep (set at the start of each sweep)
         self.tenant = tenant or os.environ.get("DESKHAND_TENANT_ID", "acme-demo")
         self.conns = vs.ConnectionStore(engine.s, self.tenant)
         self.factory = integration_factory or (lambda: vs.get_integration(engine.s, self.tenant))  # the company's Slack and Gmail
@@ -185,6 +189,7 @@ class Delivery:
             self._flight.release()
 
     def _sweep(self, out, limit):
+        self._ai_left = AI_SENTENCES_PER_SWEEP
         now = self.e.now()
         for r in self.e.s.all("SELECT id FROM outbox WHERE delivery_status='sending' AND delivery_next_at<?", (time.time() - SENDING_TIMEOUT_S,)):
             self._fail(r["id"], "outcome unknown: the app stopped before an answer; check the channel before retrying", unknown=True)
@@ -273,6 +278,31 @@ class Delivery:
             return self.base_url
         return f"{self.base_url}/#{'needs' if row['kind'] in NEEDS_LINK_KINDS else 'request'}/{rid}"
 
+    def _with_ai_sentence(self, row, layout):
+        """For an approval request, once per email: ask the AI for one sentence if an admin switched it on, there is budget and this sweep has room. The answer is checked and stored
+        with the payload (so a retry never asks again); anything unusable is stored as "" and the template sentence is used. Facts only go in, never the original message."""
+        e = self.e
+        if layout.get("kind") != "approval_request" or "ai" in layout or not getattr(e, "ai_write", None) or self._ai_left <= 0:
+            return layout
+        if e.ai_enabled and not e.ai_enabled():
+            return layout
+        facts = emailkit.facts_text(layout)
+        calls, budget = e.ai_usage()
+        if PAYROLL.search(facts) or calls >= budget:  # salary and payroll text is never sent to any AI; an exhausted budget means the template
+            return layout
+        self._ai_left -= 1
+        sentence = ""
+        try:
+            sentence = e.ai_write(emailkit.ai_facts(layout))
+            e.ai_counted(calls + 1, budget)
+        except Exception as ex:  # any failure: the template sentence, never an error for the approver
+            e.audit(row["request_id"], "system", "ai_email_failed", {"error": vs.redact(str(ex))[:120]})
+        layout["ai"] = sentence.strip() if sentence and emailkit.valid_sentence(sentence, facts) else ""
+        if sentence and not layout["ai"]:
+            e.audit(row["request_id"], "system", "ai_email_rejected", {})  # the code only: what the model said is not kept
+        e.s.q("UPDATE outbox SET email_json=? WHERE id=?", (emailkit.dumps(layout), row["id"]))
+        return layout
+
     def _send(self, row):
         e = self.e
         rec = self.recipient(row["to_person"])
@@ -288,6 +318,14 @@ class Delivery:
                 return vs.Result(vs.PERMANENT, error=f"{rec['name']} has no email address", code="no_address")
             intro = f"Rehearsal: this is the message {e.name(row['to_person'])} would get once Deskhand is live." if rehearsal else ""
             html_body = ("<p><i>" + html.escape(intro) + "</i></p>" if intro else "") + "<p>" + html.escape(body).replace("\n", "<br>") + f'</p><p><a href="{html.escape(link)}">Open it in Deskhand</a></p>'
+            layout = emailkit.loads(row.get("email_json"))
+            if layout:  # the email's own layout; a row from before it existed, or an address that is not a web address, keeps the plain wrapper above
+                try:
+                    layout = self._with_ai_sentence(row, layout)
+                    layout = json.loads(vs.redact(emailkit.dumps(layout)))  # a secret-shaped value never reaches an email
+                    html_body = emailkit.render(layout, link=link, rehearsal_for=e.name(row["to_person"]) if rehearsal else None, ai_sentence=layout.get("ai"))
+                except ValueError:
+                    pass
             mailbox = row.get("from_person")
             if self._personal_gmail(mailbox):  # their own mailbox; if it cannot send (nothing was sent), the company mailbox does
                 res = self.personal_factory(vs.personal_tenant(self.tenant, mailbox)).gmail_send(rec["email"], tag + subject, html_body)

@@ -90,6 +90,7 @@ VERIFIED
   (`id`, `name`, `real_name`, as requested); an unknown address answers HTTP 200 `{"email":"<asked>","message":"User not found"}` in about 1 s.
   Both are HTTP 200, so "not found" is read from the body and treated as a clean answer (found:false), not an error. One earlier
   call for the unknown address ended in a 25 s read timeout and was correctly classed retryable; the next two calls answered in about a second.
+- DOCUMENTED, not yet proven by our own send (viaSocket's public page `documentation/gmail/send-email.details.md`, V55): Send Email takes `to`, `subject`, `messageBody` ("plain text or HTML. HTML will be rendered as formatted content"), and optional `cc`, `bcc`, `from`, `fromName`, `replyTo`, `attachments`, `labelIds`. There is no separate plain-text field. Our HTML emails (app/emailkit.py) rely on this; the proof is one rehearsal email read in an inbox.
 - Step 3, Gmail Send Email (rowwj0sfmhub) with an optional From mailbox chosen on the Connections tab: HTTP 200 envelope
   `{success:true, data:{id, threadId}}`; success requires `data.id`. The test message reached the recipient's Gmail (proved by the API answer only; delivery was not checked from the recipient's side).
 - viaSocket's check script (`make check-viasocket`) passes: 0 FAIL; catalog ids match; the embed token is accepted; connect.js loads. It flags

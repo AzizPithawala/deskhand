@@ -5,9 +5,9 @@ import os
 import sqlite3
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from . import classifier, delivery as dl
+from . import classifier, delivery as dl, emailkit
 from .adapters import ActionError, MockHR
 from .db import Store, dumps
 from .directory import Directory
@@ -49,7 +49,7 @@ def details_view(d):
     """Readable (label, value) pairs for people. No Python reprs, no empty values."""
     rows = []
     for k, v in d.items():
-        if k in ("date_range", "leave_check") or v in (None, "", [], False) or (k == "balance" and d.get("leave_check")):
+        if k in ("date_range", "leave_check", "includes_today", "has_past_dates") or v in (None, "", [], False) or (k == "balance" and d.get("leave_check")):
             continue
         label = LABELS.get(k, k.replace("_", " ").capitalize())
         if k == "dates":
@@ -66,6 +66,10 @@ def details_view(d):
         rows.append(("Working days", str(chk["days"])))
         rows.append(("Balance", f"{chk['type']} {chk['balance']} → {chk['after']}"))
         rows += [("Check", w) for w in chk.get("warnings", [])]
+    if d.get("includes_today"):
+        rows.append(("Note", "Includes today"))
+    if d.get("has_past_dates"):
+        rows.append(("Note", "Some dates are in the past"))
     return rows
 
 
@@ -90,13 +94,14 @@ class Engine:
         self.model = os.environ.get("DESKHAND_MODEL", "claude-haiku-5-5")
         self.ai_classify = ai_classify
         self.ai_enabled = ai_enabled  # optional switch consulted before each AI call; None means always on when an AI classifier is given
+        self.ai_write = None  # optional: drafts the one sentence of an approval email (app/viasocket_ai.py); shares ai_enabled and the daily budget
         self.live = None  # set by the web app: outbound delivery (app/delivery.py). None (engine tests) means rows are only ever written to the outbox.
         self._mock_depth = 0
         self._defaults()
 
     def _defaults(self):
         for k, v in {"clock_offset": 0, "ai_budget_per_day": os.environ.get("DESKHAND_AI_BUDGET_PER_DAY", 200),
-                     "ai_calls_today": 0, "rate_limit_per_min": os.environ.get("DESKHAND_RATE_LIMIT_PER_MIN", 20),
+                     "ai_calls_today": 0, "ai_calls_day": "", "rate_limit_per_min": os.environ.get("DESKHAND_RATE_LIMIT_PER_MIN", 20),
                      "breaker_open": ""}.items():
             if self.s.get_setting(k) is None:
                 self.s.set_setting(k, v)
@@ -149,6 +154,9 @@ class Engine:
     def _write_row(self, rid, req, to_id, body, kind, n, subject, ch, from_id, suffix=""):
         if not subject and rid and kind in self.SUBJECTS:
             subject = self.SUBJECTS[kind].format(rid=rid)
+        layout = None
+        if ch == "email" and kind in dl.EMAIL_KINDS and not self._mock_depth:
+            layout = emailkit.dumps(self._email_payload(rid, req, to_id, body, kind))  # the email's own layout is built from this when it is sent
         if ch == "email":
             first = (self.name(to_id) or "there").split()[0]
             body = f"Hi {first},\n\n{body}\n\n— Deskhand"
@@ -156,8 +164,46 @@ class Engine:
                 subject = "Re: " + (req["email_subject"] or f"Request #{rid}")
         key = f"{rid}:{kind}:{to_id}:{n}{suffix}"
         dstatus, dnote = self.live.status_for(kind, ch, to_id) if self.live and not self._mock_depth else ("skipped", "no delivery for this run")
-        self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at,delivery_status,delivery_note,from_person) "
-                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now(), dstatus, dnote, from_id))
+        self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at,delivery_status,delivery_note,from_person,email_json) "
+                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now(), dstatus, dnote, from_id, layout))
+
+    def _email_payload(self, rid, req, to_id, body, kind):
+        """What the email layout needs, written once with the message so that a retry sends exactly the same email. Plain facts only; the chat text of the message is unchanged."""
+        emp = self.d.emp(req["employee_id"]) if req else None
+        t = self.d.type(req["type_code"]) if req else None
+        facts, rich = {}, kind in emailkit.RICH
+        if req:
+            d, chk = req["details"], req["details"].get("leave_check") or {}
+            facts = {"type_code": req["type_code"], "dates_text": dict(req["details_view"]).get("Dates"), "leave_type": d.get("leave_type"), "days": chk.get("days"), "balance": chk.get("balance"),
+                     "after": chk.get("after"), "reason": d.get("reason"), "item": d.get("item"), "tool": d.get("tool"), "project": d.get("project"), "resource": d.get("resource"), "issue": d.get("issue")}
+        # the date notes ("includes today") are true when the request is made, so only the first approval email carries them, not a later reminder
+        return emailkit.build_payload(kind, rid=rid, to_first=(self.name(to_id) or "there").split()[0], type_name=t["name"] if t else "", type_code=req["type_code"] if req else "",
+                                      summary=req["summary"] if req else "", requester=emp["name"] if emp else "", department=(emp or {}).get("department") or "",
+                                      details_rows=[r for r in req["details_view"] if kind == "approval_request" or r[0] != "Note"] if (req and rich) else [], facts=facts, message=req["message"] if (req and rich) else "",
+                                      line="" if kind == "approval_request" else body, why=self._why_you(kind, req, t, emp, to_id))
+
+    def _why_you(self, kind, req, t, emp, to_id):
+        """One line saying why this person got the email, from the same rules that routed the request."""
+        if kind in ("approved", "rejected", "fulfilled", "escalated") or not (req and t and emp):
+            return ""
+        fixed = {"task": "You are the person who completes this kind of request.", "parked": "You are receiving this as an admin of the company.",
+                 "escalation_1": "You are the backup for this kind of request: it was not decided in time.", "escalation_2": "You are receiving this as an admin: the request was not decided in time."}
+        if kind in fixed:
+            return fixed[kind]
+
+        def phrase(rule):
+            if rule == "manager":
+                return f"You are {emp['name'].split()[0]}'s manager."
+            if rule.startswith("role:"):
+                code = rule[5:]
+                return f"You hold the {(self.d.roles.get(code) or {}).get('name') or code.replace('_', ' ')} role."
+            return "You are named as the approver for this kind of request."
+        rules = [t.get("approver_rule") or "manager"] + [x.get("rule") for x in t.get("extra_approvers") or [] if x.get("rule") and self.d.condition_holds(x.get("when"), req["details"])]
+        for rule in rules:
+            who = self.d.resolve_rule(rule, emp)
+            if who and who["id"] == to_id:
+                return phrase(rule)
+        return "Deskhand routed this to you as the backup."
 
     # ---------- request helpers ----------
     def req(self, rid):
@@ -285,8 +331,23 @@ class Engine:
     def _reply(self, emp, channel, body, rid=None):
         self._notify(rid, emp["id"], body, "reply", n=self.s.one("SELECT COUNT(*) c FROM outbox")["c"], subject="Deskhand", channel=channel)
 
+    def ai_usage(self):
+        """(AI calls made today, the daily budget). The budget is per day: the counter and its two warnings start again when the date changes."""
+        day = self.today().isoformat()
+        if self.s.get_setting("ai_calls_day") != day:
+            for k, v in (("ai_calls_day", day), ("ai_calls_today", 0), ("ai_budget_warned", ""), ("ai_budget_exhausted_logged", "")):
+                self.s.set_setting(k, v)
+        return int(self.s.get_setting("ai_calls_today")), int(self.s.get_setting("ai_budget_per_day"))
+
+    def ai_counted(self, calls, budget):
+        """Record that `calls` AI calls have now been made today; warn once at 80% of the budget."""
+        self.s.set_setting("ai_calls_today", calls)
+        if calls >= int(budget * 0.8) and self.s.get_setting("ai_budget_warned") != "1":
+            self.audit(None, "system", "ai_budget_warning", {"used": calls, "budget": budget})
+            self.s.set_setting("ai_budget_warned", "1")
+
     def _classify(self, text):
-        calls, budget = int(self.s.get_setting("ai_calls_today")), int(self.s.get_setting("ai_budget_per_day"))
+        calls, budget = self.ai_usage()
         use_ai = bool(self.api_key) or bool(self.ai_classify and (self.ai_enabled() if self.ai_enabled else True))
         if use_ai and classifier.PAYROLL.search(text):  # salary and payroll text is never sent to any AI: the rules classify it and the HR redirect follows
             self.audit(None, "system", "ai_skipped_sensitive", {})
@@ -300,10 +361,7 @@ class Engine:
             try:
                 fn = self.ai_classify or (lambda t, today: classifier.classify_anthropic(t, self.api_key, self.model, today))
                 res = fn(text, self.today())
-                self.s.set_setting("ai_calls_today", calls + 1)
-                if calls + 1 >= int(budget * 0.8) and self.s.get_setting("ai_budget_warned") != "1":
-                    self.audit(None, "system", "ai_budget_warning", {"used": calls + 1, "budget": budget})
-                    self.s.set_setting("ai_budget_warned", "1")
+                self.ai_counted(calls + 1, budget)
                 res = classifier.validate_ai_result(res) if not isinstance(res, dict) or "provider" not in res else res
                 rules = classifier.classify_rules(text, self.today())
                 res["suspected_injection"] = res["suspected_injection"] or rules["suspected_injection"]
@@ -343,6 +401,20 @@ class Engine:
         lines.append("Options: Approve, Reject (a reason is required), or Mark pending.")
         return "\n".join(lines)
 
+    def _date_notes(self, r):
+        """Facts about the dates for the approver: the leave includes today, or some dates are already past. A note on the card, never a block."""
+        try:
+            days = sorted(date.fromisoformat(x) for x in r["details"].get("dates") or [])
+        except (TypeError, ValueError):
+            return
+        if not days:
+            return
+        today = self.today()
+        span = r["details"].get("date_range") and len(days) == 2
+        r["details"]["includes_today"] = (days[0] <= today <= days[-1]) if span else today in days
+        r["details"]["has_past_dates"] = days[0] < today
+        self.s.q("UPDATE requests SET details_json=? WHERE id=?", (dumps(r["details"]), r["id"]))
+
     def _route(self, rid):
         r = self.req(rid)
         emp = self.d.emp(r["employee_id"])
@@ -354,6 +426,8 @@ class Engine:
             self._notify(rid, emp["id"], self._answer_policy(emp, r["raw_text"]), "answer")
             self._set_status(rid, "CLOSED", "system")
             return
+        if r["type_code"] == "leave":
+            self._date_notes(r)
         if r["type_code"] == "leave" and getattr(self.hr, "records_balances", False):  # a company: the balance comes from its own ledger
             chk = self.hr.check(emp["id"], r["details"])
             r["details"]["balance"], r["details"]["leave_check"] = self.hr.list_leave_balances(emp["id"]), chk
@@ -641,7 +715,7 @@ class Engine:
         return {"by_status": by_status, "total": sum(by_status.values()), "avg_decision_minutes": round(dec / 60, 1) if dec else None,
                 "guard": {k: guard.get(k, 0) for k in keys}, "classified_by": prov,
                 "delivery": self.live.summary() if self.live else {"used_today": 0, "cap": 150, "capped": False, "counts": {}, "ready": {"slack": False, "email": False}, "problems": []},
-                "ai_calls_today": int(self.s.get_setting("ai_calls_today")), "ai_budget": int(self.s.get_setting("ai_budget_per_day")),
+                "ai_calls_today": self.ai_usage()[0], "ai_budget": self.ai_usage()[1],
                 "breaker_open": [c for c in self.s.get_setting("breaker_open", "").split(",") if c], "hr_effects": len(self.hr.leaves)}
 
     def digest(self, person_id):
