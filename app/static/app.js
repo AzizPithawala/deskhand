@@ -196,7 +196,7 @@ function journeyHTML(r, tl) {
       <div class="rail">${icon(NODE[s.state], 'node' + (changed ? ' pop' : ''))}<span class="thread${changed ? ' draw' : ''}"></span></div>
       <div><div class="what"><span>${esc(s.title)}</span><span class="meta">${s.because ? esc(s.because) : (s.state === 'current' ? '' : esc(WORD[s.state]))}</span></div>
         ${s.wait ? `<div class="note"><span class="wait">${esc(s.wait)}</span></div>` : ''}
-        ${s.who && !s.wait && s.time ? `<div class="meta">${esc(nm(s.who))} · ${stamp(s.time)}</div>` : (s.time ? `<div class="meta">${stamp(s.time)}</div>` : '')}
+        ${s.who && !s.wait && s.time ? `<div class="meta">${esc(nm(s.who))}, ${stamp(s.time)}</div>` : (s.time ? `<div class="meta">${stamp(s.time)}</div>` : '')}
         ${s.note ? `<div class="note meta">${esc(s.note)}</div>` : ''}</div></li>`;
   }).join('');
   PREV[r.id] = states;
@@ -673,7 +673,7 @@ async function testConn(action) {
   try {
     const r = await api('/connections/test', { action, email: action === 'slack_lookup' ? ($('#lk').value || '') : null });
     const ok = r.outcome === 'success';
-    box.innerHTML = `<ul class="verdict"><li class="${ok ? 'ok' : 'no'}">${icon(ok ? 's-check' : 's-cross')}<b>${ok ? 'It worked' : esc(nice(r.outcome))}</b></li>${r.error ? `<li class="meta" style="margin-left:24px">${esc(r.error)}</li>` : ''}${r.data ? `<li class="meta" style="margin-left:24px">${esc(Object.entries(r.data).map(([k, v]) => `${k}: ${v}`).join(' · '))}</li>` : ''}</ul>`;
+    box.innerHTML = `<ul class="verdict"><li class="${ok ? 'ok' : 'no'}">${icon(ok ? 's-check' : 's-cross')}<b>${ok ? 'It worked' : esc(nice(r.outcome))}</b></li>${r.error ? `<li class="meta" style="margin-left:24px">${esc(r.error)}</li>` : ''}${r.data ? `<li class="meta" style="margin-left:24px">${esc(Object.entries(r.data).map(([k, v]) => `${k}: ${v}`).join('; '))}</li>` : ''}</ul>`;
   } catch (e) { box.innerHTML = `<p role="alert" style="color:var(--rejected)">${esc(e.message)}</p>`; }
 }
 
@@ -687,7 +687,7 @@ async function pageAudit() {
     const q = $('#af').value.trim().toLowerCase();
     const list = rows.filter(e => !q || `${e.request_id ?? ''} ${nm(e.actor)} ${nice(e.type)}`.toLowerCase().includes(q));
     $('#at').innerHTML = list.length ? `<div class="scroll"><table class="t"><tr><th class="num">#</th><th>Request</th><th>Who</th><th>What</th><th>Detail</th></tr>${list.map(e => {
-      let det = ''; try { const o = JSON.parse(e.data_json || '{}'); det = Object.entries(o).filter(([, v]) => v !== '' && v !== null && v !== undefined).map(([k, v]) => `${nice(k)}: ${typeof v === 'object' ? JSON.stringify(v) : (EMP[v] ? nm(v) : v)}`).join(' · '); } catch { /* ignore */ }
+      let det = ''; try { const o = JSON.parse(e.data_json || '{}'); det = Object.entries(o).filter(([, v]) => v !== '' && v !== null && v !== undefined).map(([k, v]) => `${nice(k)}: ${typeof v === 'object' ? JSON.stringify(v) : (EMP[v] ? nm(v) : v)}`).join('; '); } catch { /* ignore */ }
       return `<tr><td class="num">${e.id}</td><td class="num">${e.request_id ? `<a href="#request/${e.request_id}">${e.request_id}</a>` : ''}</td><td>${esc(nm(e.actor))}</td><td>${esc(nice(e.type))}</td><td class="meta">${esc(det)}</td></tr>`;
     }).join('')}</table></div>` : emptyState('No events match', q ? 'Clear the filter to see every event.' : 'Events appear here as soon as something happens.');
   };
@@ -717,7 +717,7 @@ function paintShell() {
   const ab = $('#acctbtn'); ab.hidden = !inn;
   if (inn) {
     ab.setAttribute('aria-label', `Account: ${ME.user.name}, ${ME.org.name}`);
-    ab.innerHTML = `<span class="av" aria-hidden="true">${esc(initials(ME.user.name))}</span><span class="acct-name">${esc(ME.user.name)}<span class="meta"> · ${esc(ME.org.name)}</span></span>`;
+    ab.innerHTML = `<span class="av" aria-hidden="true">${esc(initials(ME.user.name))}</span><span class="acct-name">${esc(ME.user.name)}<span class="acct-org">${esc(ME.org.name)}</span></span>`;
   } else { $('#status').hidden = true; $('#statusbtn').hidden = true; $('#statuspanel').hidden = true; $('#banner').innerHTML = ''; }
 }
 async function enter(me) {
@@ -983,7 +983,6 @@ async function personLink(id) {
 const ADMIN_LINKS = [['setup', 'Setup', 'Roles, request types, policies and a routing test.'], ['people', 'People', 'Invite people, set managers and access.'],
   ['integrations', 'Integrations', 'Connect Slack and Gmail; switch viaSocket AI.'], ['health', 'Health', 'Is everything working, and can it be proven?'],
   ['deliverylog', 'Delivery log', 'Every message Deskhand sent: to whom, by Slack or email, and how it ended.'], ['audit', 'Audit', 'Every change, who made it, when.']];
-const HUBICON = { setup: 'i-setup', people: 'i-people', integrations: 'i-plug', health: 'i-health', deliverylog: 'i-log', audit: 'i-audit' };  // presentation only: the icon beside each admin card
 const amount = n => `₹${Number(n).toLocaleString('en-IN')}`;
 const afterSetup = async () => { try { await loadCore(); } catch { /* the page shows its own errors */ } };  // people, roles and rules feed the journeys and the status bar
 
@@ -993,7 +992,7 @@ async function pageAdmin() {
     try { const c = await api('/setup/checklist'); if (!c.dismissed && c.done < c.total) note = `<div class="state" style="margin-bottom:16px"><b>Company setup: ${c.done} of ${c.total} steps done</b><a href="#setup">Continue setting up</a></div>`; } catch { /* the hub still works without it */ }
   }
   $('#main').innerHTML = `<div class="page-head"><h1>Admin</h1><span class="meta">${esc(ME.org.name)}</span></div>${note}
-    <div class="hub">${ADMIN_LINKS.map(([k, t, d]) => `<a href="#${k}"><span class="hubicon">${icon(HUBICON[k] || 'i-admin')}</span><b>${esc(t)}</b><span class="meta">${esc(d)}</span></a>`).join('')}</div>`;
+    <div class="hub">${ADMIN_LINKS.map(([k, t, d]) => `<a href="#${k}"><b>${esc(t)}</b><span class="meta">${esc(d)}</span></a>`).join('')}</div>`;
 }
 
 async function pageIntegrations() {
@@ -1017,7 +1016,7 @@ async function setupOverview() {
   if (c.demo) { $('#sbody').innerHTML = '<div class="state"><b>This is the demo company</b>Its roles and rules are prepared and cannot be changed. Read them in the sections above and try the routing test. Create your own company to set up yours.</div>'; return; }
   $('#sbody').innerHTML = `<h2>Get your company ready <span class="meta num" style="margin-left:8px">${c.done} of ${c.total} done</span></h2>
     <p class="meta" style="max-width:640px">Each step ticks itself when it is true. Nothing here blocks anyone from asking for things.</p>
-    <ol class="checklist">${c.steps.map(s => `<li class="${s.done ? 'done' : ''}">${icon(s.done ? 's-done' : 's-upcoming')}<div><a href="${esc(s.link)}"><b>${esc(s.title)}</b></a><div class="meta">${esc(s.detail)}${s.done ? ' · done' : ''}</div></div></li>`).join('')}</ol>
+    <ol class="checklist">${c.steps.map(s => `<li class="${s.done ? 'done' : ''}">${icon(s.done ? 's-done' : 's-upcoming')}<div><a href="${esc(s.link)}"><b>${esc(s.title)}</b></a><div class="meta">${esc(s.detail)}${s.done ? ' Done.' : ''}</div></div></li>`).join('')}</ol>
     ${c.done === c.total && !c.dismissed ? '<button class="btn" id="chkdone">Hide the reminder on the Admin page</button>' : ''}`;
   const b = $('#chkdone'); if (b) b.onclick = async () => { try { await api('/setup/checklist/dismiss', {}); toast('Hidden.'); setupOverview(); } catch (e) { toast(e.message, 6000); } };
 }
@@ -1375,13 +1374,13 @@ async function nLoad(more) {
 function nItemHTML(n) {
   const line = String(n.text || '').replace(/\s+/g, ' ').slice(0, 220);
   const href = n.request_id ? `#${n.needs_action ? 'needs' : 'request'}/${n.request_id}` : '#notifications';
-  const about = n.request_id ? ` · Request ${n.request_id}${n.type_name ? ' · ' + esc(n.type_name) : ''}` : '';
+  const about = n.request_id ? `<span>Request ${n.request_id}${n.type_name ? ', ' + esc(n.type_name) : ''}</span>` : '';
   return `<a class="nitem ${n.read ? '' : 'unread'}" href="${href}" data-nid="${n.id}">
     <span class="ndot" aria-hidden="true"></span>
     <span class="nbody">
       <span class="nt"><b>${n.read ? '' : '<span class="sr">Unread. </span>'}${esc(n.subject)}</b><span class="meta">${stamp(n.created_at)}</span></span>
       <span class="nl">${esc(line)}</span>
-      <span class="meta">${esc(n.category_title)}${about}${n.needs_action ? ' · <span class="act">waiting for you</span>' : ''}</span>
+      <span class="meta nmeta"><span>${esc(n.category_title)}</span>${about}${n.needs_action ? '<span class="act">waiting for you</span>' : ''}</span>
       <span class="nc">${copyChip('Slack', n.slack)}${copyChip('Email', n.email)}</span>
     </span></a>`;
 }
@@ -1501,7 +1500,7 @@ async function dlLoad(more) {
 }
 function dlRowHTML(r) {
   const [cls, ic, w] = DSTATE[r.status] || DSTATE.skipped;
-  const detail = [r.error ? `<span class="neg">${esc(r.error)}</span>` : '', r.note ? esc(r.note) : '', r.sent_to && r.sent_to !== r.to.name ? `sent to ${esc(r.sent_to)}` : ''].filter(Boolean).join(' · ');
+  const detail = [r.error ? `<span class="neg">${esc(r.error)}</span>` : '', r.note ? esc(r.note) : '', r.sent_to && r.sent_to !== r.to.name ? `sent to ${esc(r.sent_to)}` : ''].filter(Boolean).map(x => `<span class="dline">${x}</span>`).join('');
   return `<tr><td data-l="When" class="num">${stamp(r.created_at)}</td><td data-l="To">${esc(r.to.name)}</td><td data-l="What">${esc(nice(r.kind))}</td>
     <td data-l="Request" class="num">${r.request_id ? `<a href="#request/${r.request_id}">${r.request_id}</a>${r.type_name ? ' ' + esc(r.type_name) : ''}` : ''}</td>
     <td data-l="Via">${r.channel === 'slack' ? 'Slack' : 'Email'}</td><td data-l="Status"><span class="chip ${cls}">${icon(ic)}${w}</span></td><td data-l="Tries" class="num">${r.attempts}</td>
@@ -1576,7 +1575,7 @@ async function render(userNav) {
   if (userNav && changedPage) window.scrollTo(0, 0);
   paintShell();
   $$('#nav a').forEach(a => { if (a.dataset.page === route.page || (a.dataset.page === 'health' && route.page === 'deliverylog') || (a.hasAttribute('data-hub') && ADMIN_PAGES.includes(route.page))) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
-  document.title = TITLES[route.page] + ' · Deskhand';
+  document.title = TITLES[route.page] + ' - Deskhand';
   const m = $('#main');
   try {
     if (authPage) {
