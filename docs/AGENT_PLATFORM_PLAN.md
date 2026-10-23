@@ -126,7 +126,7 @@ Per phase: `make test` green including tenant-isolation tests, a browser demo of
 - **Phase 5A (owner-defined steps after approval; branch `phase-5-steps`):** built. An admin picks any app from viaSocket's public catalog and what to do in it after a request type is approved (up to three ordered steps),
   fills the action's own form (values typed, picked from the app, or request fields from a closed list), runs a real test of that exact step, and switches it on. Steps run automatically or when the approver presses
   Run; rehearsal and the demo never call the app; a timeout parks the request for an admin ("outcome unknown"). The real calls of spike 5A.0 (`docs/VIASOCKET_FACTS.md`) proved the catalog, connecting Google Sheets, the pickers and a real add-row through the adapter. New rule 21; rule 3 amended.
-  Not yet done: one full run of the finished screens and runner against the real service (so far scripted answers); any other app; apps that sign in with an API key; a step's answer feeding the next step.
+  A full run of the finished screens and runner on the real Google Sheets passed on 2026-10-23 (test run and a live approval). Not yet done: any other app; apps that sign in with an API key; a step's answer feeding the next step.
   "My connections" (a person's own mailbox) was already built in Phase 3 as Your mailbox.
 - **Next:** 5C AI-drafted setup (AI only drafts, an admin reviews and saves, the same validator runs), 5B new request types and ordered approval-and-action steps, 5D "My connections" (a person's own mailbox), 5E people and
   managers from an HR tool (needs a test account).

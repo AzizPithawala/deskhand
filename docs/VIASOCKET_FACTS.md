@@ -224,3 +224,15 @@ STILL UNVERIFIED
 - Whether a retired action version still runs; credit cost per call; rate limits.
 - How an API-key app behaves in the Connect popup (Google Sheets is OAuth).
 - Whether `listOptions` for a field that needs a connection works for an expired (not revoked) connection.
+
+## PHASE 5A REAL RUN (2026-10-23): the finished product against the real service (local scratch company, real viaSocket and real catalog, Google Sheets; no ids recorded)
+VERIFIED, through Deskhand's own routes and screens (not the spike's scripts)
+- Catalog search and the 23 Google Sheets actions through `/api/steps/apps`, in the step editor.
+- Connecting: the Connect popup was completed in the admin's own browser (the app's browser pane is hidden in the desktop app, so a popup there is not possible), and the connection was then handed to the product's `/api/steps/apps/{slug}/connected`
+  route, which checked it against the company's connection list on viaSocket and enabled the runner.
+- The editor's pickers on the real account (spreadsheets, sheets, columns, then one text input per chosen column from the field definitions) and the preview of a made-up request.
+- The admin's Test run: one real add-row with made-up details in 2.4 s; the answer's field names were learned and the step became switchable.
+- A live approval: the step was queued on approval, the worker ran it, and it succeeded about 4 s later; Google reported the row number. The request moved on to its fulfiller.
+- Disconnecting through the product route revoked the connection and switched the step off.
+NOT verified: the failure cases through the finished runner against the real service (they were observed through the adapter in spike 5A.0 and are covered by tests with the same recorded shapes); any app other than Google Sheets; the hosted
+Embarko environment reaching the catalog host (`plug-service.viasocket.com`).
