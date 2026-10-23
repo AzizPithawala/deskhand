@@ -764,7 +764,7 @@ async function pageWelcome() {
   const createLink = (cls = 'btn') => (open ? `<a class="${cls}" href="#register">Create a company</a>` : '');
   const step = (state, ic, title, text) => `<li class="l-step ${state}">${icon(ic, 'node')}<div><h3>${title}</h3><p>${text}</p></div></li>`;
   $('#main').innerHTML = `<div class="landing">
-    <header class="l-wrap l-top"><a class="brand" href="#welcome">Deskhand</a><span class="grow"></span><a class="btn quiet" href="#login">Sign in</a>${demoBtn('btn primary small')}</header>
+    <header class="l-wrap l-top"><a class="brand" href="#welcome"><svg class="mark" aria-hidden="true"><use href="#logo"/></svg>Deskhand</a><span class="grow"></span><a class="btn quiet" href="#login">Sign in</a>${demoBtn('btn primary small')}</header>
 
     <section class="l-wrap l-hero" aria-labelledby="l-h1">
       <div class="l-hero-text">

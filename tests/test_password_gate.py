@@ -73,7 +73,8 @@ def test_brute_force_brake(make):
 
 def test_static_files_are_behind_the_gate_and_served_with_it(make):
     c, _ = make(DESKHAND_DEMO_PASSWORD=PW)
-    for r in ("/static/app.css", "/static/app.js", "/static/fonts/AtkinsonHyperlegibleNext-latin.woff2", "/static/fonts/OFL.txt"):
+    for r in ("/static/app.css", "/static/app.js", "/static/fonts/AtkinsonHyperlegibleNext-latin.woff2", "/static/fonts/OFL.txt",
+              "/static/icon.svg", "/static/icon-32.png", "/static/apple-touch-icon.png"):
         assert c.get(r).status_code == 401
         assert c.get(r, headers=basic(PW)).status_code == 200
 
