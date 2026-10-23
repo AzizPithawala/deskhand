@@ -11,7 +11,7 @@ CATEGORIES = [
     ("nudge", "Reminders and escalations", ["reminder", "escalation_1", "escalation_2", "escalated"]),
     ("mine", "About your requests", ["stage_approved", "approved", "rejected", "fulfilled", "pending_update", "assigned", "delay"]),
     ("task", "Tasks for you", ["task"]),
-    ("system", "System and admin", ["parked", "breaker", "delivery_failed"]),
+    ("system", "System and admin", ["parked", "breaker", "delivery_failed", "step_rehearsed"]),
 ]
 EXCLUDED = {"reply", "answer", "submitted", "decision_ack"}  # the Ask conversation and confirmations of your own click: not notifications
 TITLES = {c: t for c, t, _ in CATEGORIES}

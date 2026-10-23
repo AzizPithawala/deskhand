@@ -22,7 +22,7 @@ GETS = ("/api/setup/steps/software_seat", "/api/steps/apps?q=sheet", "/api/steps
 POSTS = (("/api/setup/steps/software_seat", {"steps": []}), ("/api/setup/steps/software_seat/1/enabled", {"enabled": False}),
          ("/api/steps/form-state", {"type_code": "software_seat", "app": "google-sheets", "action_id": ADD_ID, "values": {}}),
          ("/api/steps/options", {"app": "google-sheets", "action_id": ADD_ID, "field_key": "spreadsheet_Id"}), ("/api/steps/apps/google-sheets/connected", {"auth_id": "x"}),
-         ("/api/steps/apps/google-sheets/disconnect", {}))
+         ("/api/steps/apps/google-sheets/disconnect", {}), ("/api/setup/steps/software_seat/1/test", {"confirm": True}))
 
 
 @pytest.fixture(autouse=True)
@@ -253,3 +253,129 @@ def test_one_companys_steps_and_connections_are_invisible_to_another(main, owner
     mine = owner.engine.s.one("SELECT id FROM type_steps")["id"]
     assert other.post(f"/api/setup/steps/software_seat/{mine}/enabled", {"enabled": False}).status_code == 404  # another company's step id finds nothing here
     assert other.engine.s.one("SELECT COUNT(*) c FROM type_steps")["c"] == 0 and owner.engine.s.one("SELECT COUNT(*) c FROM type_steps")["c"] == 1
+
+
+# ---------------- 5A.2: testing a step, running steps, and what the request page shows ----------------
+GOOD = ok({"success": True, "data": {"Name": "Priya Sharma", "Email": "p@example.com", "_rowNumber": 2}})
+
+
+def seed_step(owner, run_mode="auto", action_id=ADD_ID, row=ROW):
+    r = owner.post("/api/setup/steps/software_seat", {"steps": [dict(STEP, run_mode=run_mode, action_id=action_id, input=row)]})
+    assert r.status_code == 200, r.text
+    return r.json()["steps"][0]["id"]
+
+
+def team(owner):
+    ann = apiutil.add_person(owner, "ann@acme.test", "Ann Employee")
+    return ann, ann.post("/api/ingest", {"text": "Need a Claude seat for my research project"}).json()["request_ids"][0]
+
+
+def test_a_test_run_needs_an_explicit_confirmation_an_admin_and_a_connected_app(owner, fake):
+    sid = seed_step(owner)
+    url = f"/api/setup/steps/software_seat/{sid}/test"
+    ann = apiutil.add_person(owner, "ann@acme.test", "Ann Employee")
+    assert ann.post(url, {"confirm": True}).status_code == 403 and Browser(owner.main).post(url, {"confirm": True}).status_code == 401
+    r = owner.post(url, {})
+    assert r.status_code == 422 and "really runs" in r.json()["detail"] and fake.calls == []  # nothing is sent without the explicit yes
+    assert owner.post(url, {"confirm": True}).json()["outcome"] == "permanent_failure"  # not connected: a readable refusal, nothing learned
+    assert owner.get("/api/setup/steps/software_seat").json()["steps"][0]["tested"] is False
+
+
+def test_a_good_test_run_marks_the_step_tested_and_only_then_can_it_be_switched_on(owner, fake):
+    connect(owner)
+    sid = seed_step(owner)
+    assert owner.post(f"/api/setup/steps/software_seat/{sid}/enabled", {"enabled": True}).status_code == 422
+    fake.answers = [GOOD]
+    r = owner.post(f"/api/setup/steps/software_seat/{sid}/test", {"confirm": True})
+    j = r.json()
+    assert r.status_code == 200 and j["outcome"] == "success" and j["tested"] and j["sent"]["column_name"]["Name"] == "Priya Sharma"  # made-up details, shown to the admin
+    assert j["view"]["steps"][0]["tested"] is True and fake.calls[-1][3]["inputData"]["column_name"]["Email"] == "priya.sharma@example.com"
+    assert owner.post(f"/api/setup/steps/software_seat/{sid}/enabled", {"enabled": True}).json()["steps"][0]["enabled"] is True
+    ev = events(owner, "step_tested")[-1]
+    assert ev["outcome"] == "success" and SCRIPT not in r.text and AUTH not in r.text and SECRET not in r.text
+    assert "Priya" not in json.dumps(owner.engine.s.all("SELECT data_json FROM events"))  # the audit never carries the values
+
+
+def test_a_destructive_step_is_tested_only_after_its_name_is_typed(owner, fake):
+    connect(owner)
+    sid = seed_step(owner, "confirm", DELETE_ID, {"spreadsheet_Id": "s", "grid_Id": "0", "deletion_mode": "specific", "row_numbers": "2"})
+    url = f"/api/setup/steps/software_seat/{sid}/test"
+    r = owner.post(url, {"confirm": True})
+    assert r.status_code == 422 and "Delete Rows" in r.json()["detail"] and fake.calls == []
+    fake.answers = [GOOD]
+    assert owner.post(url, {"confirm": True, "typed": "Delete Rows"}).json()["outcome"] == "success"
+
+
+def enable(owner, sid):
+    row = owner.engine.s.one("SELECT * FROM type_steps WHERE id=?", (sid,))
+    owner.engine.s.q("UPDATE type_steps SET tested_hash=?, tested_at=1.0, enabled=1, expect_json=? WHERE id=?",
+                     (steps.step_hash(row["app_slug"], row["action_id"], row["action_version_id"], json.loads(row["input_json"])), json.dumps({"kind": "object", "keys": ["Name", "_rowNumber"]}), sid))
+
+
+def test_the_request_page_shows_the_steps_and_their_values_only_to_an_admin_and_never_the_snapshot(owner):
+    enable(owner, seed_step(owner, "confirm"))
+    ann, rid = team(owner)
+    assert owner.post(f"/api/requests/{rid}/approve", {}).status_code == 200
+    mine = ann.get(f"/api/requests/{rid}").json()
+    theirs = owner.get(f"/api/requests/{rid}").json()
+    assert mine["steps"][0]["status"] == "ready" and mine["steps"][0]["status_text"] == "Waiting for someone to press Run" and "steps_json" not in mine["request"]
+    assert "input" not in mine["steps"][0] and "input" in theirs["steps"][0]  # the requester sees progress; an admin also sees what is sent
+    assert "action_version_id" not in json.dumps(mine) and SCRIPT not in json.dumps(theirs)
+
+
+def test_pressing_run_asks_who_you_are_and_the_demo_and_signed_out_visitors_get_nothing(owner, main):
+    enable(owner, seed_step(owner, "confirm"))
+    ann, rid = team(owner)
+    owner.post(f"/api/requests/{rid}/approve", {})
+    url = f"/api/requests/{rid}/steps/0/run"
+    assert Browser(main).post(url, {}).status_code == 401
+    assert ann.post(url, {}).status_code == 403  # the requester is not who completes this kind of request
+    good, owner.csrf = owner.csrf, None
+    assert owner.post(url, {}).status_code == 403  # no CSRF token
+    owner.csrf = good
+    assert owner.post(url, {}).status_code == 200
+    assert owner.get(f"/api/requests/{rid}").json()["steps"][0]["status"] == "rehearsed"  # a new company is in rehearsal: nothing was sent
+    assert owner.post(url, {}).status_code == 409  # pressing it twice does nothing
+
+
+def test_an_admin_decides_what_happens_to_a_parked_step_and_others_cannot(owner, fake):
+    connect(owner)
+    enable(owner, seed_step(owner))
+    owner.engine.s.set_setting("delivery_mode", "live")
+    fake.answers = [vs_timeout()]
+    ann, rid = team(owner)
+    owner.post(f"/api/requests/{rid}/approve", {})
+    owner.engine.stepper.run_pending()
+    assert owner.get(f"/api/requests/{rid}").json()["steps"][0]["status"] == "unknown" and ann.get(f"/api/requests/{rid}").json()["request"]["status"] == "PARKED"
+    for action, body in (("again", {}), ("mark-done", {"reason": "checked the sheet"})):
+        assert ann.post(f"/api/requests/{rid}/steps/0/{action}", body).status_code == 403
+    assert owner.post(f"/api/requests/{rid}/steps/0/mark-done", {"reason": ""}).status_code == 422
+    assert owner.post(f"/api/requests/{rid}/steps/0/mark-done", {"reason": "Row 2 is in the sheet"}).status_code == 200
+    assert owner.get(f"/api/requests/{rid}").json()["steps"][0]["status"] == "succeeded"
+    assert events(owner, "step_marked_done")[-1]["reason"] == "Row 2 is in the sheet" and len(fake.calls) == 1  # no second call
+
+
+def vs_timeout():
+    return vs.TransportError("ReadTimeout")
+
+
+def test_the_background_worker_runs_queued_steps_of_every_live_company(owner, fake):
+    connect(owner)
+    enable(owner, seed_step(owner))
+    owner.engine.s.set_setting("delivery_mode", "live")
+    fake.answers = [GOOD]
+    ann, rid = team(owner)
+    owner.post(f"/api/requests/{rid}/approve", {})
+    assert owner.get(f"/api/requests/{rid}").json()["steps"][0]["status"] == "pending" and fake.calls == []  # approving only queues it
+    owner.main._worker_pass(1)  # what the worker does every ten seconds
+    assert owner.get(f"/api/requests/{rid}").json()["steps"][0]["status"] == "succeeded" and len(fake.calls) == 1
+    owner.main._worker_pass(2)
+    assert len(fake.calls) == 1
+
+
+def test_a_failing_round_is_logged_without_message_text_and_does_not_stop_the_worker(owner, monkeypatch, caplog):
+    import logging
+    monkeypatch.setattr(type(owner.engine.stepper), "run_pending", lambda self, limit=3: (_ for _ in ()).throw(RuntimeError("secret text about Priya")))
+    with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
+        owner.main._worker_pass(1)
+    assert "RuntimeError" in caplog.text and "secret text" not in caplog.text and "Priya" not in caplog.text

@@ -376,7 +376,7 @@ def requests(status: str | None = None, employee: str | None = None, ctx: Ctx = 
 def request_detail(rid: int, ctx: Ctx = Depends(auth)):
     r = _get_visible(ctx, rid)
     r["status_text"] = ctx.engine.status_text(r)
-    return {"request": r, "timeline": ctx.engine.timeline(rid)}
+    return {"request": r, "timeline": ctx.engine.timeline(rid), "steps": ctx.engine.stepper.view(rid, with_input=ctx.is_admin)}
 
 
 @app.post("/api/requests/{rid}/approve")
@@ -413,6 +413,28 @@ def cancel(rid: int, ctx: Ctx = Depends(auth)):
 def replay(rid: int, ctx: Ctx = Depends(auth)):
     _get_visible(ctx, rid)
     return guard(ctx.engine.replay, rid, ctx.uid)
+
+
+class StepAct(BaseModel):
+    reason: str | None = None
+
+
+@app.post("/api/requests/{rid}/steps/{pos}/run")
+def step_run(rid: int, pos: int, ctx: Ctx = Depends(auth)):
+    _get_visible(ctx, rid)
+    return guard(ctx.engine.stepper.confirm, rid, pos, ctx.uid)
+
+
+@app.post("/api/requests/{rid}/steps/{pos}/again")
+def step_again(rid: int, pos: int, ctx: Ctx = Depends(auth)):
+    _get_visible(ctx, rid)
+    return guard(ctx.engine.stepper.replay, rid, ctx.uid, pos, "again")
+
+
+@app.post("/api/requests/{rid}/steps/{pos}/mark-done")
+def step_mark_done(rid: int, pos: int, b: StepAct, ctx: Ctx = Depends(auth)):
+    _get_visible(ctx, rid)
+    return guard(ctx.engine.stepper.replay, rid, ctx.uid, pos, "mark_done", b.reason or "")
 
 
 @app.get("/api/inbox")
@@ -954,6 +976,11 @@ class StepOn(BaseModel):
     enabled: bool
 
 
+class StepTest(BaseModel):
+    confirm: bool = False
+    typed: str | None = None
+
+
 class FormState(BaseModel):
     type_code: str
     app: str
@@ -1019,6 +1046,16 @@ def setup_step_enabled(code: str, step_id: int, b: StepOn, ctx: Ctx = Depends(re
     changes = _setup(sp.set_enabled, ctx.engine.s, code, step_id, b.enabled)
     _setup_changed(ctx, "steps", code, changes)
     return _steps_view(ctx, code)
+
+
+@app.post("/api/setup/steps/{code}/{step_id}/test")
+def setup_step_test(code: str, step_id: int, b: StepTest, ctx: Ctx = Depends(real_admin)):
+    """The only real call before a company goes live: it runs this step once in the app, with made-up request details."""
+    if not b.confirm:
+        raise HTTPException(422, "Confirm that this really runs in the app.")
+    _limit(f"steptest:{ctx.org['id']}", 10, 600)
+    result = _setup(ctx.engine.stepper.test, code, step_id, ctx.uid, b.typed)
+    return {**result, "view": _steps_view(ctx, code)}
 
 
 @app.get("/api/steps/apps")
@@ -1398,19 +1435,25 @@ def me_test(ctx: Ctx = Depends(auth)):
 
 
 # ---------------- Background worker: delivery for every company, reminders and escalations for real ones ----------------
+def _worker_pass(tick):
+    """One round of background work for every company: deliver messages, run queued steps in other apps, and (for real companies, every sixth round) reminders and escalations."""
+    for eng in registry.all_engines():
+        try:
+            eng.live.deliver_pending()
+            eng.stepper.run_pending()  # live companies only, a few per round
+            if tick % 6 == 0 and not eng.is_demo:  # the demo company moves only when the presenter moves its clock
+                eng.sweep()
+        except Exception as ex:  # the worker must never die; the log gets the kind of error and the company, never message text
+            log.warning("worker round failed for %s: %s", getattr(eng, "org_id", "?"), type(ex).__name__)
+
+
 def _worker():
     def loop():
         tick = 0
         while True:
             time.sleep(10)
             tick += 1
-            for eng in registry.all_engines():
-                try:
-                    eng.live.deliver_pending()
-                    if tick % 6 == 0 and not eng.is_demo:  # the demo company moves only when the presenter moves its clock
-                        eng.sweep()
-                except Exception:  # the worker must never die or log message text
-                    pass
+            _worker_pass(tick)
 
     threading.Thread(target=loop, daemon=True, name="worker").start()
 

@@ -15,7 +15,7 @@ APP = os.path.join(os.path.dirname(__file__), "..", "app")
 def notify_kinds_in_source():
     """Every message kind any code passes to _notify, read from the source so a new kind cannot be forgotten."""
     found = set()
-    for name in ("engine.py", "delivery.py", "slack_decisions.py", "chaos.py", "main.py", "setup.py"):
+    for name in ("engine.py", "delivery.py", "slack_decisions.py", "chaos.py", "main.py", "setup.py", "step_runner.py"):
         tree = ast.parse(open(os.path.join(APP, name)).read())
         for n in ast.walk(tree):
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_notify":

@@ -368,6 +368,9 @@ class Integration:
     def gmail_send(self, to, subject, body):
         raise NotImplementedError
 
+    def run_step(self, app, version_id, input_data, expect=None):
+        raise NotImplementedError
+
 
 def _slack_sent_ok(body):
     return "" if isinstance(body, dict) and body.get("ts") else "Slack did not return a message timestamp"
@@ -392,6 +395,17 @@ class ViaSocketIntegration(Integration):
         if err:
             return err
         r = self.client.run(c["script_id"], APPS[app]["actions"][action][0], input_data, expect)
+        r.error = redact(r.error, self.conns.secrets())
+        r.data = scrub(r.data, self.conns.secrets())
+        return r
+
+    def run_step(self, app, version_id, input_data, expect=None):
+        """One action of any app an admin chose for a step (rule 21): the app and action come from the saved step, never from message text. Errors and answers are redacted and
+        scrubbed before they leave this method (rule 8); `expect` is the check learned from the admin's test run (rule 10)."""
+        c = self.conns.get(app)
+        if not c or not c["script_id"]:
+            return Result(PERMANENT, error="This app is not connected any more. An admin reconnects it on the Setup page.", code="not_connected")
+        r = self.client.run(c["script_id"], version_id, input_data, expect)
         r.error = redact(r.error, self.conns.secrets())
         r.data = scrub(r.data, self.conns.secrets())
         return r
