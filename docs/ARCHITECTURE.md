@@ -87,6 +87,16 @@ Invalid transitions raise an error and are never applied silently.
 - Secrets: never store, log or forward passwords, keys or tokens. Redact obvious secret patterns in logs.
 - Sensitive: payroll, salary, health and legal topics are blocked (sensitive=true) and redirected to HR.
 
+## After-approval steps (Phase 5)
+An admin chooses, per request type, up to three steps in other apps from viaSocket's public catalog (`app/viasocket_catalog.py`: apps, actions, each action's form definition). `app/steps.py` validates a step: a closed list
+of request fields (never the raw message), the form definition's own rules (visibility conditions are evaluated by a small safe evaluator, never `eval`), bounds, neutralising of request text. The tables are
+`type_steps` (the setup) and `step_runs` (one row per step of a request); `requests.steps_json` keeps the snapshot a request was routed with.
+
+`app/step_runner.py` runs them: `snapshot` at routing, `begin` at the final approval, `run_pending` from the worker (an atomic claim, a few per round), `confirm`, `replay`, `skip_unfinished` on a mode change, `test` for the
+admin's test run. States: waiting, ready (waits for Run), pending, running, then succeeded or rehearsed, or failed / unknown / skipped, which park the request. At most once: only a rate limit is retried by itself.
+Rehearsal, the demo and chaos runs record "would have run" and carry on. The engine hooks are `_route` (snapshot), `_start_fulfilment` (begin, or the old hand-over to a person), `done` (refused while steps run),
+`cancel`, `replay` and `inbox`.
+
 ## AI usage
 Function: classify(message, employee_context) returns strict JSON:
 ```

@@ -39,6 +39,12 @@ Spend boldness in one place: everything else is flat and quiet (hairlines only w
 
 **Not in emails.** Mail clients block remote images and strip data: SVG, and an image link would sit behind the shared password, so emails keep the text header "Deskhand".
 
+## Steps in other apps
+A step after approval is one more station on the request's route, between the approvals and "Done by". It is drawn before the approval as a planned station (dashed ahead, as everything not yet travelled), then takes
+the status shapes like any station, with its own words: Queued, Running, Waits for Run, Done, Not sent (rehearsal or demo), Check the app (outcome unknown), Needs attention, Skipped. The people who may act get a
+bar under the route (Run; Run again and Mark as done) and nothing else changes in the decision bar. The admin editor is a dialog on the request-type card: a list of steps, and one editor that reveals app, action,
+connection and form in order, with the form drawn from the app's own definition.
+
 ## What was tried and dropped
 - A different line colour for every request type (a rainbow): reads like a children's map and fights the status colours. Four lines only.
 - A transit-map menu with named interchanges: too cute. A plain line with dots and one "you are here".

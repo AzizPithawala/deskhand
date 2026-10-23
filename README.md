@@ -44,17 +44,22 @@ Admins open **Setup** (and **Integrations**, **People**) from the sidebar; on a 
 - **Checklist.** Six steps that tick themselves from the data: invite people, set managers, choose role holders, review the request types ("Looks right"), connect Slack and Gmail, send a test request.
 - The **demo company** shows its prepared rules read-only. Under the hood: tables `roles`, `type_rules`, `policies` in each company's own database file, merged over the template by `Directory.for_company`; `tests/test_setup_directory.py` runs the old hard-coded router against the new data-driven one for over 50,000 combinations.
 
-## After-approval steps (Phase 5, in progress)
-An admin will be able to say, per request type, what happens in another app once a request is approved ("add a row in Google Sheets", "create a ticket"), using any app from viaSocket's public catalog.
-**Built so far (5A.1 and 5A.2; the admin screens and the ticket view come next):** the catalog adapter (`app/viasocket_catalog.py`, with a recorded fixture for tests and offline work:
-`DESKHAND_STEPS_CATALOG=fixture`), the validated step data (`app/steps.py`: a closed list of request fields a step may use, the form-definition reader, a safe evaluator for the apps' visibility
-conditions, bounds, neutralising of request text), the admin routes (`/api/setup/steps/{type}`, `/api/steps/...`: browse apps and actions, check a form, connect an app, load pickers, **test run**),
-and the run engine (`app/step_runner.py`). A step starts untested and off; an admin's test run (the only real call before going live, and it says so) learns what a good answer looks like and is
-what lets the step be switched on. When a request is routed it keeps a snapshot of the type's steps, so a later edit never changes it. After the final approval the steps run in order: **in rehearsal
-(and in the demo) nothing is sent to the app** and the rehearsing admin is told what would have run; **live**, the worker runs them a few at a time. A call is repeated by itself only when it provably
-did not leave (a rate limit); a timeout or any doubt parks the request as "outcome unknown", and an admin chooses Run again or Mark as done (with a reason). A step set to "approver presses Run" waits
-for the approver, the person who completes that kind of request, or an admin. Never for leave or payroll. What viaSocket really does in a real app is in `docs/VIASOCKET_FACTS.md` ("PHASE 5 SPIKE
-5A.0"). Tests never read your `.env` or reach viaSocket.
+## After-approval steps (Phase 5)
+An admin decides, per request type, what happens in another app once a request is approved: add a row in Google Sheets, create a ticket, and so on, using any app from viaSocket's public catalog.
+**Setup, Request types, After approval** (software seat, equipment, accessories, IT help, access; never leave or payroll): add up to three steps. For each, search the app, choose an action, connect the app
+(viaSocket's own sign-in popup; Deskhand never sees a password), and fill the form drawn from the action's own definition. Texts can use request fields (requester, summary, the type's details, ...) from a closed
+list, never the raw message. Choose whether the step runs by itself right after the final approval or when the approver presses Run; an action that deletes or removes things can only be run by a person.
+A step starts untested and off. **Test run** really runs it once with made-up details (it says so, and a destructive action needs its name typed); that teaches Deskhand what a good answer looks like and lets you switch
+the step on.
+
+What happens to a request: it keeps the steps it was routed with, whatever is edited later. After the final approval the steps run in order. **In rehearsal and in the demo nothing is sent to the app**: the step is
+recorded as "not sent" and the rehearsing admin is told what it would have done. Live, the worker runs them within seconds. Only a rate limit is retried by itself; a timeout or any doubt parks the request as
+"outcome unknown" and an admin chooses **Run again** or **Mark as done** (with what they checked). The request page shows each step as a station on its route; a step waiting for Run appears under Needs you for the
+approver, the person who completes that kind of request, and admins. By default a person still clicks Done afterwards; a type can close by itself when all steps succeed.
+
+Code: `app/viasocket_catalog.py` (the catalog; a recorded fixture for tests and offline work: `DESKHAND_STEPS_CATALOG=fixture`), `app/steps.py` (validation), `app/step_runner.py` (running). Rule 21 in `CLAUDE.md`.
+What viaSocket really does in a real app is in `docs/VIASOCKET_FACTS.md` ("PHASE 5 SPIKE 5A.0"). **Proven:** Google Sheets, add a row. **Not proven:** other apps (the catalog says what each needs; the test run
+proves it for your setup), apps that sign in with an API key, an app's answer feeding the next step. Tests never read your `.env` or reach viaSocket.
 
 ## Leave record (Phase 3, step 1)
 A real company keeps leave in its own **append-only ledger** (database triggers forbid editing or deleting a line). Each person gets the yearly allowance (default casual 12, sick 8, editable under Setup, Leave) the first time leave is looked at in a calendar year; leave taken
