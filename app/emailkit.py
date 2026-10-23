@@ -94,6 +94,15 @@ def facts_text(p):
     return " ".join(str(x) for x in [p.get("requester"), p.get("department"), p.get("type_name"), p.get("summary")] + [f.get(k) for k in FACT_KEYS] if x not in (None, ""))
 
 
+def ai_facts(p):
+    """What the AI writer is given: the structured facts only. Never the original message, never an address or an id."""
+    f = p.get("facts") or {}
+    out = {"requester": p.get("requester"), "department": p.get("department"), "request_type": p.get("type_name"), "summary": p.get("summary"), "dates": f.get("dates_text"),
+           "leave_type": f.get("leave_type"), "working_days": f.get("days"), "balance_before": f.get("balance"), "balance_after": f.get("after"), "reason_given": f.get("reason"),
+           "tool": f.get("tool"), "project": f.get("project"), "item": f.get("item"), "resource": f.get("resource"), "issue": f.get("issue")}
+    return {k: v for k, v in out.items() if v is not None and v != ""}
+
+
 FUNCTION_WORDS = {"a", "an", "the", "this", "it", "they", "their", "request", "is", "are", "for", "of", "on", "to", "from", "and", "with", "in", "at", "by"}
 DENY = ("approv", "reject", "declin", "click", "link", "password", "passcode", "credential", "urgent", "immediate", "must", "should", "please", "recommend", "safe", "ignore",
         "instruction", "verify", "login", "log in", "payment", "bank", "wire ", "gift", "guarantee", "confirm your", "reply")

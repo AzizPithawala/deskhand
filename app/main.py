@@ -1020,7 +1020,7 @@ class AISet(BaseModel):
 def ai_status(ctx: Ctx = Depends(admin)):
     return {"enabled": ctx.engine.vs_ai.enabled(), "switch": vs.ConnectionStore(ctx.engine.s, ctx.org["id"]).ai_enabled(),
             "configured": vs.VsClient(ctx.org["id"]).configured() and not ctx.is_demo,
-            "calls_today": int(ctx.engine.s.get_setting("ai_calls_today", 0)), "budget": int(ctx.engine.s.get_setting("ai_budget_per_day", 0)), "timeout_s": vsai.TIMEOUT_S}
+            "calls_today": ctx.engine.ai_usage()[0], "budget": ctx.engine.ai_usage()[1], "timeout_s": vsai.TIMEOUT_S}
 
 
 @app.post("/api/ai")

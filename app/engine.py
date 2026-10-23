@@ -94,13 +94,14 @@ class Engine:
         self.model = os.environ.get("DESKHAND_MODEL", "claude-haiku-5-5")
         self.ai_classify = ai_classify
         self.ai_enabled = ai_enabled  # optional switch consulted before each AI call; None means always on when an AI classifier is given
+        self.ai_write = None  # optional: drafts the one sentence of an approval email (app/viasocket_ai.py); shares ai_enabled and the daily budget
         self.live = None  # set by the web app: outbound delivery (app/delivery.py). None (engine tests) means rows are only ever written to the outbox.
         self._mock_depth = 0
         self._defaults()
 
     def _defaults(self):
         for k, v in {"clock_offset": 0, "ai_budget_per_day": os.environ.get("DESKHAND_AI_BUDGET_PER_DAY", 200),
-                     "ai_calls_today": 0, "rate_limit_per_min": os.environ.get("DESKHAND_RATE_LIMIT_PER_MIN", 20),
+                     "ai_calls_today": 0, "ai_calls_day": "", "rate_limit_per_min": os.environ.get("DESKHAND_RATE_LIMIT_PER_MIN", 20),
                      "breaker_open": ""}.items():
             if self.s.get_setting(k) is None:
                 self.s.set_setting(k, v)
@@ -329,8 +330,23 @@ class Engine:
     def _reply(self, emp, channel, body, rid=None):
         self._notify(rid, emp["id"], body, "reply", n=self.s.one("SELECT COUNT(*) c FROM outbox")["c"], subject="Deskhand", channel=channel)
 
+    def ai_usage(self):
+        """(AI calls made today, the daily budget). The budget is per day: the counter and its two warnings start again when the date changes."""
+        day = self.today().isoformat()
+        if self.s.get_setting("ai_calls_day") != day:
+            for k, v in (("ai_calls_day", day), ("ai_calls_today", 0), ("ai_budget_warned", ""), ("ai_budget_exhausted_logged", "")):
+                self.s.set_setting(k, v)
+        return int(self.s.get_setting("ai_calls_today")), int(self.s.get_setting("ai_budget_per_day"))
+
+    def ai_counted(self, calls, budget):
+        """Record that `calls` AI calls have now been made today; warn once at 80% of the budget."""
+        self.s.set_setting("ai_calls_today", calls)
+        if calls >= int(budget * 0.8) and self.s.get_setting("ai_budget_warned") != "1":
+            self.audit(None, "system", "ai_budget_warning", {"used": calls, "budget": budget})
+            self.s.set_setting("ai_budget_warned", "1")
+
     def _classify(self, text):
-        calls, budget = int(self.s.get_setting("ai_calls_today")), int(self.s.get_setting("ai_budget_per_day"))
+        calls, budget = self.ai_usage()
         use_ai = bool(self.api_key) or bool(self.ai_classify and (self.ai_enabled() if self.ai_enabled else True))
         if use_ai and classifier.PAYROLL.search(text):  # salary and payroll text is never sent to any AI: the rules classify it and the HR redirect follows
             self.audit(None, "system", "ai_skipped_sensitive", {})
@@ -344,10 +360,7 @@ class Engine:
             try:
                 fn = self.ai_classify or (lambda t, today: classifier.classify_anthropic(t, self.api_key, self.model, today))
                 res = fn(text, self.today())
-                self.s.set_setting("ai_calls_today", calls + 1)
-                if calls + 1 >= int(budget * 0.8) and self.s.get_setting("ai_budget_warned") != "1":
-                    self.audit(None, "system", "ai_budget_warning", {"used": calls + 1, "budget": budget})
-                    self.s.set_setting("ai_budget_warned", "1")
+                self.ai_counted(calls + 1, budget)
                 res = classifier.validate_ai_result(res) if not isinstance(res, dict) or "provider" not in res else res
                 rules = classifier.classify_rules(text, self.today())
                 res["suspected_injection"] = res["suspected_injection"] or rules["suspected_injection"]
@@ -701,7 +714,7 @@ class Engine:
         return {"by_status": by_status, "total": sum(by_status.values()), "avg_decision_minutes": round(dec / 60, 1) if dec else None,
                 "guard": {k: guard.get(k, 0) for k in keys}, "classified_by": prov,
                 "delivery": self.live.summary() if self.live else {"used_today": 0, "cap": 150, "capped": False, "counts": {}, "ready": {"slack": False, "email": False}, "problems": []},
-                "ai_calls_today": int(self.s.get_setting("ai_calls_today")), "ai_budget": int(self.s.get_setting("ai_budget_per_day")),
+                "ai_calls_today": self.ai_usage()[0], "ai_budget": self.ai_usage()[1],
                 "breaker_open": [c for c in self.s.get_setting("breaker_open", "").split(",") if c], "hr_effects": len(self.hr.leaves)}
 
     def digest(self, person_id):
