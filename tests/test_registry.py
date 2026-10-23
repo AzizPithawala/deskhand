@@ -44,7 +44,7 @@ def test_directory_comes_from_the_companys_people_and_follows_changes(env):
     acc.accept_invite(acc.create_reset_link(org["id"], emp["id"], owner["id"]), "a-long-password")
     reg.refresh_directory(org["id"])
     assert eng.d.emp(emp["id"])["manager_id"] == boss["id"] and eng.d.resolve_sender("EMP@one.test")["id"] == emp["id"]
-    rid = eng.ingest("chat", emp["id"], "I need leave tomorrow, family function")["request_ids"][0]
+    rid = eng.ingest("chat", emp["id"], "I need Tuesday off, family function")["request_ids"][0]
     assert eng.req(rid)["chain"] == [boss["id"]]  # manager from the reporting line
     rid2 = eng.ingest("chat", emp["id"], "Need a Claude seat for my research project")["request_ids"][0]
     assert eng.req(rid2)["chain"] == [owner["id"]]  # no IT role holder yet: falls back to an admin

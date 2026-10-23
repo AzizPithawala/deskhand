@@ -1,12 +1,16 @@
 """The 7-minute demo script from docs/BUILD_PLAN.md as one test, plus the polish fixes."""
+from datetime import date
+
 from app import chaos
+from app.engine import Engine
 
 
 def bodies(e, to):
     return [r["body"] for r in e.s.all("SELECT body FROM outbox WHERE to_person=? ORDER BY id", (to,))]
 
 
-def test_demo_script_runs_end_to_end(e):
+def test_demo_script_runs_end_to_end(e, monkeypatch):
+    monkeypatch.setattr(Engine, "today", lambda self: date(2026, 10, 22))  # the script's dates are written for this Thursday, whatever day the suite runs on
     # 1 leave: extraction is shown to the employee, manager approves, HR applies once
     rid = e.ingest("chat", "e01", "I need Friday and Monday off, family function.")["request_ids"][0]
     assert "Casual leave: Fri 23 Oct, Mon 26 Oct" in bodies(e, "e01")[0]
@@ -34,7 +38,7 @@ def test_demo_script_runs_end_to_end(e):
     reply = e.s.all("SELECT subject, body FROM outbox WHERE to_person='e01' AND channel='email' ORDER BY id DESC")[0]
     assert reply["subject"] == "Re: Equipment" and reply["body"].startswith("Hi Priya")
     # 4 pending, clock, reminder and escalation
-    p = e.ingest("chat", "e02", "Need sick leave tomorrow, fever.")["request_ids"][0]
+    p = e.ingest("chat", "e02", "Need sick leave Wednesday, fever.")["request_ids"][0]
     e.advance_hours(9)
     assert e.sweep()["reminders"] == 1
     e.advance_hours(25)

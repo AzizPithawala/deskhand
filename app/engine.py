@@ -5,7 +5,7 @@ import os
 import sqlite3
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from . import classifier, delivery as dl
 from .adapters import ActionError, MockHR
@@ -49,7 +49,7 @@ def details_view(d):
     """Readable (label, value) pairs for people. No Python reprs, no empty values."""
     rows = []
     for k, v in d.items():
-        if k in ("date_range", "leave_check") or v in (None, "", [], False) or (k == "balance" and d.get("leave_check")):
+        if k in ("date_range", "leave_check", "includes_today", "has_past_dates") or v in (None, "", [], False) or (k == "balance" and d.get("leave_check")):
             continue
         label = LABELS.get(k, k.replace("_", " ").capitalize())
         if k == "dates":
@@ -66,6 +66,10 @@ def details_view(d):
         rows.append(("Working days", str(chk["days"])))
         rows.append(("Balance", f"{chk['type']} {chk['balance']} → {chk['after']}"))
         rows += [("Check", w) for w in chk.get("warnings", [])]
+    if d.get("includes_today"):
+        rows.append(("Note", "Includes today"))
+    if d.get("has_past_dates"):
+        rows.append(("Note", "Some dates are in the past"))
     return rows
 
 
@@ -343,6 +347,20 @@ class Engine:
         lines.append("Options: Approve, Reject (a reason is required), or Mark pending.")
         return "\n".join(lines)
 
+    def _date_notes(self, r):
+        """Facts about the dates for the approver: the leave includes today, or some dates are already past. A note on the card, never a block."""
+        try:
+            days = sorted(date.fromisoformat(x) for x in r["details"].get("dates") or [])
+        except (TypeError, ValueError):
+            return
+        if not days:
+            return
+        today = self.today()
+        span = r["details"].get("date_range") and len(days) == 2
+        r["details"]["includes_today"] = (days[0] <= today <= days[-1]) if span else today in days
+        r["details"]["has_past_dates"] = days[0] < today
+        self.s.q("UPDATE requests SET details_json=? WHERE id=?", (dumps(r["details"]), r["id"]))
+
     def _route(self, rid):
         r = self.req(rid)
         emp = self.d.emp(r["employee_id"])
@@ -354,6 +372,8 @@ class Engine:
             self._notify(rid, emp["id"], self._answer_policy(emp, r["raw_text"]), "answer")
             self._set_status(rid, "CLOSED", "system")
             return
+        if r["type_code"] == "leave":
+            self._date_notes(r)
         if r["type_code"] == "leave" and getattr(self.hr, "records_balances", False):  # a company: the balance comes from its own ledger
             chk = self.hr.check(emp["id"], r["details"])
             r["details"]["balance"], r["details"]["leave_check"] = self.hr.list_leave_balances(emp["id"]), chk
