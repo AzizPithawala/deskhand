@@ -209,6 +209,17 @@ function miniHTML(r) {
   return `<div class="mini" aria-hidden="true">${st.map((s, i) => `${i ? `<span class="seg ${st[i - 1].state === 'done' ? 'done' : ''}"></span>` : ''}${icon(NODE[s.state], 'n ' + s.state)}`).join('')}</div>`;
 }
 
+/* ---------- a request's line (presentation only): the colour its route is drawn in; the type's name is always written beside it ---------- */
+const LINE = { leave: 'time', software_seat: 'tools', access: 'tools', equipment: 'gear', accessories: 'gear', it_help: 'help', policy_question: 'help' };
+const lineOf = r => 'line-' + (LINE[r.type_code] || 'help');
+const typeName = r => (TYPE[r.type_code] && TYPE[r.type_code].name) || nice(r.type_code);
+const waitText = s => (s < 45 ? 'just now' : dur(s));
+function holding(r) {  // who has a request that is waiting for a decision, and for how long: the two facts a board leads with
+  if (r.status !== 'PENDING_APPROVAL') return null;
+  const holder = r.escalated_to || (r.chain || [])[r.chain_index];
+  return { who: nm(holder), wait: waitText(NOW - ((r.escalated_to && r.escalated_at) || r.assigned_at || r.created_at)) };
+}
+
 /* ---------- small ui pieces ---------- */
 function toast(msg, ms = 4000) {
   const t = document.createElement('div');
@@ -333,7 +344,7 @@ const SAMPLES = ['I need Friday and Monday off, family function.', 'Need a Claud
   'VPN is not connecting since morning.', 'Why is my salary lower this month?', 'New joiner Rohan starts Monday. Needs a laptop and a Slack account.'];
 
 function reqCard(r) {
-  return `<div class="reqcard" data-req="${r.id}"><div class="h"><b>${esc(r.summary)}</b>${chip(r)}</div>${miniHTML(r)}<div class="meta">${esc(sentence(r))}</div><div style="margin-top:6px"><a href="#request/${r.id}">Open request ${r.id}</a></div></div>`;
+  return `<div class="reqcard ${lineOf(r)}" data-req="${r.id}"><div class="h"><b>${esc(r.summary)}</b>${chip(r)}</div>${miniHTML(r)}<div class="meta">${esc(typeName(r))}, request ${r.id}. ${esc(sentence(r))}</div><div style="margin-top:6px"><a href="#request/${r.id}">Open request ${r.id}</a></div></div>`;
 }
 
 async function pageAsk() {
@@ -380,10 +391,12 @@ async function sendMsg() {
   await updateAsk();
 }
 
-function listRow(r, hrefBase, selected, extra = '') {
-  return `<a class="item" href="#${hrefBase}/${r.id}" data-req="${r.id}" ${selected ? 'aria-current="true"' : ''}>
-    <div class="t"><span class="id num">${r.id}</span><span>${esc(r.summary)}</span></div>
-    <div class="s">${chip(r)}</div>${miniHTML(r)}<div class="meta">${esc(extra || sentence(r))}</div></a>`;
+function listRow(r, hrefBase, selected) {
+  const h = holding(r);
+  return `<a class="item board ${lineOf(r)}" href="#${hrefBase}/${r.id}" data-req="${r.id}" ${selected ? 'aria-current="true"' : ''}>
+    <span class="id num"><span class="sr">Request </span>${r.id}</span>
+    <span class="what"><b>${esc(r.summary)}</b><span class="meta">${esc(typeName(r))}</span></span>${miniHTML(r)}
+    <span class="who">${h ? `<span class="meta">With ${esc(h.who)}</span><span class="wait num">${esc(h.wait)}</span>` : chip(r)}</span></a>`;
 }
 
 async function pageMine(id) {
@@ -409,9 +422,13 @@ async function pageNeeds(id) {
 const KIND = { approval: 'Needs your decision', task: 'Needs you to finish it', parked: 'Parked: needs an admin' };
 function paintNeeds(id, changed) {
   const lst = $('#lst'); if (!lst) return;
-  lst.innerHTML = INBOX.length ? INBOX.map(r => `<a class="item" href="#needs/${r.id}" data-req="${r.id}" ${r.id === id ? 'aria-current="true"' : ''}>
-      <div class="t"><span class="id num">${r.id}</span><span>${esc(r.summary)}</span></div>
-      <div class="s meta">${esc(r.employee_name)} · ${esc(KIND[r.inbox_kind] || '')}</div><div class="meta">${esc(sentence(r))}</div></a>`).join('')
+  lst.innerHTML = INBOX.length ? INBOX.map(r => {
+    const h = holding(r);
+    return `<a class="item board ${lineOf(r)}" href="#needs/${r.id}" data-req="${r.id}" ${r.id === id ? 'aria-current="true"' : ''}>
+      <span class="id num"><span class="sr">Request </span>${r.id}</span>
+      <span class="what"><b>${esc(r.summary)}</b><span class="meta">${esc(r.employee_name)} asked. ${esc(KIND[r.inbox_kind] || '')}.</span></span>${miniHTML(r)}
+      <span class="who">${h ? `<span class="meta">Waiting</span><span class="wait num">${esc(h.wait)}</span>` : chip(r)}</span></a>`;
+  }).join('')
     : `<div class="list-empty">${emptyState('Nothing waiting for you', 'New requests assigned to you appear here within a few seconds.')}</div>`;
   flash(changed);
 }
@@ -439,15 +456,16 @@ async function paintDetail(id, base) {
   diffStatuses([r]);
   const act = INBOX.find(x => x.id === id);
   det.dataset.id = id;
-  det.innerHTML = `<div data-req="${r.id}">
+  det.innerHTML = `<div class="ticket ${lineOf(r)}" data-req="${r.id}">
     <a class="back" href="#${base}">Back to the list</a>
-    <div class="page-head" style="margin-top:12px"><h1>${esc(r.summary)}</h1>${chip(r)}</div>
-    <p class="meta">Request ${r.id} · ${esc(nm(r.employee_id))}${EMP[r.employee_id] ? ', ' + esc(EMP[r.employee_id].department) : ''} · via ${esc(r.channel)} · asked ${stamp(r.created_at)}</p>
+    <p class="ticket-kind">${esc(typeName(r))}, request ${r.id}</p>
+    <div class="page-head" style="margin-bottom:var(--s-2)"><h1>${esc(r.summary)}</h1>${chip(r)}</div>
+    <p class="meta ticket-sub">Asked by ${esc(nm(r.employee_id))}${EMP[r.employee_id] && EMP[r.employee_id].department ? ' (' + esc(EMP[r.employee_id].department) + ')' : ''} in ${esc(r.channel)} on ${stamp(r.created_at)}.</p>
     <section aria-label="Journey of this request">${journeyHTML(r, d.timeline)}</section>
     ${act ? decisionHTML(act) : ''}
     <section class="sec"><h3>What Deskhand understood</h3>${whatWasUnderstood(r)}</section>
     <section class="sec"><h3>${r.email_subject ? 'Original email' : 'Original message'}</h3>${r.email_subject ? `<p class="meta">Subject: ${esc(r.email_subject)}</p>` : ''}<div class="quote">${esc(r.message)}</div></section>
-    <section class="sec"><h3>Record</h3><p class="meta">Every change is written once and never edited.</p><ul class="record">${d.timeline.map(e => `<li><span class="meta">${new Date(e.ts * 1000).toLocaleTimeString('en-GB', { timeZone: 'UTC' })}</span><span>${esc(recLine(e))} <span class="meta">· ${esc(nm(e.actor))}</span></span></li>`).join('')}</ul></section></div>`;
+    <section class="sec"><h3>Record</h3><p class="meta">Every change is written once and never edited.</p><ul class="record">${d.timeline.map(e => `<li><span class="meta">${new Date(e.ts * 1000).toLocaleTimeString('en-GB', { timeZone: 'UTC' })}</span><span>${esc(recLine(e))} <span class="meta">by ${esc(nm(e.actor))}</span></span></li>`).join('')}</ul></section></div>`;
   wireDecision(r);
   if (NUNREAD > 0 && current.id === id) api('/notifications/read', { request_id: id }).then(j => { NUNREAD = NSTATE.painted = j.unread; paintBadge(); }).catch(() => {});  // opening a request is reading what was said about it; the list's own first pick is not
 }
@@ -726,7 +744,7 @@ function submitForm(form, errId, work) {
 function journeyArt() {  // a drawn example of the real request journey, not live data
   const stage = (cls, ic, title, meta, note) => `<li class="stage ${cls}"><div class="rail">${icon(ic, 'node')}<span class="thread"></span></div>
     <div><div class="what"><span>${title}</span>${meta ? `<span class="meta">${meta}</span>` : ''}</div>${note ? `<div class="note">${note}</div>` : ''}</div></li>`;
-  return `<figure class="art" aria-label="Example: a leave request and where it is now">
+  return `<figure class="art line-time" aria-label="Example: a leave request and where it is now">
     <div class="msg me"><div class="tx">I need Tuesday off, personal errand.</div></div>
     <p class="art-read meta">Deskhand read: casual leave, 1 working day. Balance 12 to 11.</p>
     <ol class="journey" style="list-style:none;padding:0">
