@@ -144,6 +144,7 @@ nav.nav {
 .badge { position: absolute; top: 4px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: 11px; line-height: 18px; text-align: center; font-weight: 650; box-shadow: 0 0 0 2px var(--surface); }
 .badge[hidden] { display: none; }
 main { padding: var(--s-5) var(--s-4) calc(var(--navh) + 32px + env(safe-area-inset-bottom)); min-width: 0; outline: none; width: 100%; max-width: 1240px; }
+main:focus, main:focus-visible { outline: none; }  /* the page region is a focus target for the skip link and page changes, not a control */
 .page-head { display: flex; align-items: baseline; gap: var(--s-3); margin-bottom: var(--s-5); flex-wrap: wrap; }
 .page-head .meta { margin-left: auto; }
 
@@ -243,11 +244,11 @@ main { padding: var(--s-5) var(--s-4) calc(var(--navh) + 32px + env(safe-area-in
 /* ---------- decision bar: the one raised surface ---------- */
 .decide {
   position: sticky; bottom: calc(var(--navh) + env(safe-area-inset-bottom)); background: var(--raised); border-top: 1px solid var(--rule);
-  padding: var(--s-4) var(--s-4) var(--s-3); margin: var(--s-6) calc(-1 * var(--s-4)) 0; z-index: 10; box-shadow: 0 -12px 32px rgba(0, 0, 0, .18);
+  padding: var(--s-3) var(--s-4) var(--s-2); margin: var(--s-6) calc(-1 * var(--s-4)) 0; z-index: 10; box-shadow: 0 -12px 32px rgba(0, 0, 0, .18);
 }
 .decide .row2 { display: grid; grid-template-columns: 1fr 1.6fr; gap: var(--s-4); }
-.decide .btn { min-height: 56px; font-size: 16px; }
-.decide .alt { display: flex; gap: var(--s-2); margin-top: var(--s-3); align-items: center; flex-wrap: wrap; }
+.decide .btn { min-height: 52px; font-size: 16px; }
+.decide .alt { display: flex; gap: var(--s-2); margin-top: var(--s-2); align-items: center; flex-wrap: wrap; }
 .decide .reason { margin-bottom: var(--s-3); }
 .decide[data-mode="reject"] .alt, .decide[data-mode="pend"] .alt { display: grid; grid-template-columns: 1fr 1.6fr; gap: var(--s-4); margin-top: 0; }
 .decide[data-mode="reject"] [data-do="send"] { background: var(--rejected); border-color: var(--rejected); color: var(--bg); }
@@ -430,7 +431,7 @@ table.roles select.field { min-width: 200px; }
 .nfilters { display: none; grid-template-columns: 1fr; gap: var(--s-3); padding: var(--s-4); margin-bottom: var(--s-4); border: 1px solid var(--rule); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-1); }
 .nfilters.open { display: grid; }
 @media (min-width: 560px) { .nfilters.open { grid-template-columns: 1fr 1fr; } }
-@media (min-width: 900px) { .nfilters, .nfilters.open { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); align-items: end; } #nfilterbtn, #dfilterbtn { display: none; } }
+@media (min-width: 900px) { .nfilters, .nfilters.open { display: grid; grid-template-columns: repeat(auto-fill, minmax(138px, 1fr)); gap: var(--s-3) var(--s-3); align-items: end; padding: var(--s-3) var(--s-4); } #nfilterbtn, #dfilterbtn { display: none; } }
 .nfilters .nsearch { grid-column: 1 / -1; }
 @media (min-width: 900px) { .nfilters .nsearch { grid-column: span 2; } }
 .nav .short { display: none; }
@@ -462,8 +463,9 @@ table.prefs input[type=checkbox] { width: 22px; height: 22px; }
 .dstat button:hover { color: var(--ink); background: var(--wash); }
 .dstat button[aria-pressed="true"] { background: var(--accent-weak); border-color: color-mix(in srgb, var(--accent) 50%, var(--rule)); color: var(--ink); font-weight: 600; }
 .dtop { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
-table.cards td { overflow-wrap: normal; }
-table.cards td.meta { overflow-wrap: anywhere; min-width: 160px; }
+table.cards { font-size: 13px; }
+table.cards td { overflow-wrap: normal; padding-right: var(--s-3); }
+table.cards td.meta { overflow-wrap: anywhere; min-width: 150px; }
 table.cards td[data-l="Via"], table.cards td[data-l="Status"], table.cards td[data-l="Tries"] { white-space: nowrap; }
 table.cards td.dact { white-space: normal; }
 @media (max-width: 699px) {
