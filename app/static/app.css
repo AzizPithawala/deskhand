@@ -619,3 +619,5 @@ main:has(.landing), .body.solo main:has(.landing) { max-width: none; padding: 0;
 .nmeta { display: flex; flex-wrap: wrap; gap: 0 var(--s-4); }
 .dline { display: block; }
 .dline + .dline { margin-top: 2px; }
+.l-top .btn { white-space: nowrap; }
+@media (max-width: 479px) { .l-top { gap: var(--s-2); } .l-top .btn.quiet { padding: 0 var(--s-2); } .l-top .btn.small { padding: 0 var(--s-3); } }
