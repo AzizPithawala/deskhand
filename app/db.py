@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS outbox(
   id INTEGER PRIMARY KEY AUTOINCREMENT, request_id INTEGER, channel TEXT, to_person TEXT, subject TEXT, body TEXT,
   kind TEXT, idempotency_key TEXT UNIQUE, status TEXT DEFAULT 'sent', created_at REAL,
   delivery_status TEXT DEFAULT 'skipped', delivery_attempts INTEGER DEFAULT 0, delivery_error TEXT, delivery_next_at REAL,
-  delivered_at REAL, delivery_note TEXT, from_person TEXT, read_at REAL, sent_to TEXT);
+  delivered_at REAL, delivery_note TEXT, from_person TEXT, read_at REAL, sent_to TEXT, email_json TEXT);
 CREATE INDEX IF NOT EXISTS outbox_person ON outbox(to_person, id);
 CREATE TABLE IF NOT EXISTS connections(
   tenant TEXT NOT NULL, app TEXT NOT NULL, auth_id TEXT, script_id TEXT, settings_json TEXT DEFAULT '{}', updated_at REAL,
@@ -61,7 +61,7 @@ CREATE TRIGGER IF NOT EXISTS leave_ledger_no_delete BEFORE DELETE ON leave_ledge
   BEGIN SELECT RAISE(ABORT, 'leave records are append-only'); END;
 """
 OUTBOX_MIGRATION = {"delivery_status": "TEXT DEFAULT 'skipped'", "delivery_attempts": "INTEGER DEFAULT 0", "delivery_error": "TEXT",
-                    "delivery_next_at": "REAL", "delivered_at": "REAL", "delivery_note": "TEXT", "from_person": "TEXT", "read_at": "REAL", "sent_to": "TEXT"}
+                    "delivery_next_at": "REAL", "delivered_at": "REAL", "delivery_note": "TEXT", "from_person": "TEXT", "read_at": "REAL", "sent_to": "TEXT", "email_json": "TEXT"}
 # "connections", "delivery_ledger", "roles", "type_rules", "policies", "leave_types", "leave_ledger", "slack_decisions" and "notification_prefs" are deliberately NOT here: a demo reset must not disconnect apps, reset the daily live-delivery cap or undo company setup
 TABLES = ["settings", "inbound_events", "requests", "events", "action_runs", "outbox"]
 

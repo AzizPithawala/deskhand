@@ -150,9 +150,9 @@ def render(p, *, link, rehearsal_for=None, ai_sentence=None):
     out.append(f'<tr><td style="padding:0 0 10px;font-size:13px;color:{MUTED};letter-spacing:.2px">Deskhand</td></tr>')
     out.append(f'<tr><td style="background:{CARD};border:1px solid {RULE};border-radius:12px;padding:24px">')
     out.append(f'<p style="margin:0 0 14px;font-size:15px">Hi {esc(p.get("to_first") or "there")},</p>')
-    chip = f'{p["type_name"]} #{p["rid"]}' if p.get("type_name") else f'Request #{p["rid"]}'
-    out.append(f'<p style="margin:0 0 16px;font-size:20px;font-weight:700;line-height:1.3">{esc(HEADLINE.get(kind, "A message from Deskhand"))} '
-               f'<span style="display:inline-block;margin-left:6px;padding:1px 9px;border:1px solid {RULE};border-radius:999px;font-size:12px;font-weight:600;color:{MUTED};vertical-align:middle">{esc(chip)}</span></p>')
+    chip = (f'{p["type_name"]} #{p["rid"]}' if p.get("type_name") else f'Request #{p["rid"]}') if p.get("rid") else ""
+    out.append(f'<p style="margin:0 0 16px;font-size:20px;font-weight:700;line-height:1.3">{esc(HEADLINE.get(kind, "A message from Deskhand"))}'
+               + (f' <span style="display:inline-block;margin-left:6px;padding:1px 9px;border:1px solid {RULE};border-radius:999px;font-size:12px;font-weight:600;color:{MUTED};vertical-align:middle">{esc(chip)}</span>' if chip else "") + '</p>')
     if rich and kind != "approval_request" and p.get("line"):
         out.append(f'<p style="margin:0 0 16px;font-size:15px">{esc(p["line"])}</p>')
     if rich:

@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import date, datetime
 
-from . import classifier, delivery as dl
+from . import classifier, delivery as dl, emailkit
 from .adapters import ActionError, MockHR
 from .db import Store, dumps
 from .directory import Directory
@@ -153,6 +153,9 @@ class Engine:
     def _write_row(self, rid, req, to_id, body, kind, n, subject, ch, from_id, suffix=""):
         if not subject and rid and kind in self.SUBJECTS:
             subject = self.SUBJECTS[kind].format(rid=rid)
+        layout = None
+        if ch == "email" and kind in dl.EMAIL_KINDS and not self._mock_depth:
+            layout = emailkit.dumps(self._email_payload(rid, req, to_id, body, kind))  # the email's own layout is built from this when it is sent
         if ch == "email":
             first = (self.name(to_id) or "there").split()[0]
             body = f"Hi {first},\n\n{body}\n\n— Deskhand"
@@ -160,8 +163,45 @@ class Engine:
                 subject = "Re: " + (req["email_subject"] or f"Request #{rid}")
         key = f"{rid}:{kind}:{to_id}:{n}{suffix}"
         dstatus, dnote = self.live.status_for(kind, ch, to_id) if self.live and not self._mock_depth else ("skipped", "no delivery for this run")
-        self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at,delivery_status,delivery_note,from_person) "
-                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now(), dstatus, dnote, from_id))
+        self.s.q("INSERT OR IGNORE INTO outbox(request_id,channel,to_person,subject,body,kind,idempotency_key,created_at,delivery_status,delivery_note,from_person,email_json) "
+                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (rid, ch, to_id, subject or f"Request #{rid}" if rid else subject, body, kind, key, self.now(), dstatus, dnote, from_id, layout))
+
+    def _email_payload(self, rid, req, to_id, body, kind):
+        """What the email layout needs, written once with the message so that a retry sends exactly the same email. Plain facts only; the chat text of the message is unchanged."""
+        emp = self.d.emp(req["employee_id"]) if req else None
+        t = self.d.type(req["type_code"]) if req else None
+        facts, rich = {}, kind in emailkit.RICH
+        if req:
+            d, chk = req["details"], req["details"].get("leave_check") or {}
+            facts = {"type_code": req["type_code"], "dates_text": dict(req["details_view"]).get("Dates"), "leave_type": d.get("leave_type"), "days": chk.get("days"), "balance": chk.get("balance"),
+                     "after": chk.get("after"), "reason": d.get("reason"), "item": d.get("item"), "tool": d.get("tool"), "project": d.get("project"), "resource": d.get("resource"), "issue": d.get("issue")}
+        return emailkit.build_payload(kind, rid=rid, to_first=(self.name(to_id) or "there").split()[0], type_name=t["name"] if t else "", type_code=req["type_code"] if req else "",
+                                      summary=req["summary"] if req else "", requester=emp["name"] if emp else "", department=(emp or {}).get("department") or "",
+                                      details_rows=req["details_view"] if (req and rich) else [], facts=facts, message=req["message"] if (req and rich) else "",
+                                      line="" if kind == "approval_request" else body, why=self._why_you(kind, req, t, emp, to_id))
+
+    def _why_you(self, kind, req, t, emp, to_id):
+        """One line saying why this person got the email, from the same rules that routed the request."""
+        if kind in ("approved", "rejected", "fulfilled", "escalated") or not (req and t and emp):
+            return ""
+        fixed = {"task": "You are the person who completes this kind of request.", "parked": "You are receiving this as an admin of the company.",
+                 "escalation_1": "You are the backup for this kind of request: it was not decided in time.", "escalation_2": "You are receiving this as an admin: the request was not decided in time."}
+        if kind in fixed:
+            return fixed[kind]
+
+        def phrase(rule):
+            if rule == "manager":
+                return f"You are {emp['name'].split()[0]}'s manager."
+            if rule.startswith("role:"):
+                code = rule[5:]
+                return f"You hold the {(self.d.roles.get(code) or {}).get('name') or code.replace('_', ' ')} role."
+            return "You are named as the approver for this kind of request."
+        rules = [t.get("approver_rule") or "manager"] + [x.get("rule") for x in t.get("extra_approvers") or [] if x.get("rule") and self.d.condition_holds(x.get("when"), req["details"])]
+        for rule in rules:
+            who = self.d.resolve_rule(rule, emp)
+            if who and who["id"] == to_id:
+                return phrase(rule)
+        return "Deskhand routed this to you as the backup."
 
     # ---------- request helpers ----------
     def req(self, rid):

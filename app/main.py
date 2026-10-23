@@ -422,7 +422,8 @@ def inbox(ctx: Ctx = Depends(auth)):
 
 @app.get("/api/outbox")
 def outbox(limit: int = 100, ctx: Ctx = Depends(auth)):
-    return ctx.engine.s.all("SELECT * FROM outbox WHERE to_person=? ORDER BY id DESC LIMIT ?", (ctx.uid, min(max(limit, 1), 500)))
+    cols = "id, request_id, channel, to_person, subject, body, kind, idempotency_key, status, created_at, delivery_status, delivery_attempts, delivery_error, delivery_next_at, delivered_at, delivery_note, from_person, read_at, sent_to"  # not email_json: the stored layout data is for the sender
+    return ctx.engine.s.all(f"SELECT {cols} FROM outbox WHERE to_person=? ORDER BY id DESC LIMIT ?", (ctx.uid, min(max(limit, 1), 500)))
 
 
 @app.get("/api/audit")

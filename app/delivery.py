@@ -4,6 +4,7 @@ Delivery starts by itself once an admin has connected Slack and chosen a channel
 Slack or Gmail can never block or undo a decision. Safeguards: a daily backstop cap, exactly-once per outbox idempotency_key (atomic claim, single-flight
 sweep), no automatic resend when the outcome is unknown, escaped message text, and email only ever to the one stored notification address."""
 import html
+import json
 import os
 import re
 import threading
@@ -11,7 +12,7 @@ import time
 from urllib.parse import urlsplit
 from contextlib import contextmanager
 
-from . import notifications, viasocket_adapter as vs
+from . import emailkit, notifications, viasocket_adapter as vs
 
 # The system notice about a failed delivery is never delivered: if Slack is down, delivering that notice through Slack would fail and create the next notice,
 # forever. It stays in the outbox (and on Integrations and the dashboard).
@@ -288,6 +289,13 @@ class Delivery:
                 return vs.Result(vs.PERMANENT, error=f"{rec['name']} has no email address", code="no_address")
             intro = f"Rehearsal: this is the message {e.name(row['to_person'])} would get once Deskhand is live." if rehearsal else ""
             html_body = ("<p><i>" + html.escape(intro) + "</i></p>" if intro else "") + "<p>" + html.escape(body).replace("\n", "<br>") + f'</p><p><a href="{html.escape(link)}">Open it in Deskhand</a></p>'
+            layout = emailkit.loads(row.get("email_json"))
+            if layout:  # the email's own layout; a row from before it existed, or an address that is not a web address, keeps the plain wrapper above
+                try:
+                    layout = json.loads(vs.redact(emailkit.dumps(layout)))  # a secret-shaped value never reaches an email
+                    html_body = emailkit.render(layout, link=link, rehearsal_for=e.name(row["to_person"]) if rehearsal else None, ai_sentence=layout.get("ai"))
+                except ValueError:
+                    pass
             mailbox = row.get("from_person")
             if self._personal_gmail(mailbox):  # their own mailbox; if it cannot send (nothing was sent), the company mailbox does
                 res = self.personal_factory(vs.personal_tenant(self.tenant, mailbox)).gmail_send(rec["email"], tag + subject, html_body)
