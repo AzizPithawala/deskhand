@@ -647,7 +647,12 @@ def setup_role_delete(code: str, ctx: Ctx = Depends(real_admin)):
 
 @app.get("/api/setup/types")
 def setup_types(ctx: Ctx = Depends(admin)):
-    return {"types": st.list_types(ctx.engine.d, ctx.engine.s), **_pickable(ctx), "demo": ctx.is_demo}
+    types = st.list_types(ctx.engine.d, ctx.engine.s)
+    counts = {r["type_code"]: r for r in ctx.engine.s.all("SELECT type_code, COUNT(*) n, SUM(enabled) on_ FROM type_steps GROUP BY type_code")}
+    for t in types:  # whether a type can have steps in other apps, and how many it has
+        c = counts.get(t["code"]) or {"n": 0, "on_": 0}
+        t["steps"] = {"eligible": sp.eligible(ctx.engine.d, t["code"])[0], "count": c["n"], "on": int(c["on_"] or 0)}
+    return {"types": types, **_pickable(ctx), "demo": ctx.is_demo}
 
 
 @app.post("/api/setup/types/{code}")
@@ -1093,7 +1098,8 @@ def steps_form_state(b: FormState, ctx: Ctx = Depends(real_admin)):
         raise HTTPException(422, why)
     _, a = _step_action(b.app, b.action_id)
     cleaned, errors, dropped, unreadable = sp.validate_values(a["schema"], b.values, sp.tokens_for(b.type_code))
-    return {"visible": sp.visible_keys(a["schema"], b.values if isinstance(b.values, dict) else {}), "errors": errors, "dropped": dropped, "unreadable": unreadable, "cleaned": cleaned}
+    return {"visible": sp.visible_keys(a["schema"], b.values if isinstance(b.values, dict) else {}), "errors": errors, "dropped": dropped, "unreadable": unreadable, "cleaned": cleaned,
+            "preview": sp.render(cleaned, sp.sample_context(b.type_code))}  # what a made-up request would send: the same code that fills a real one
 
 
 @app.post("/api/steps/options")
@@ -1124,7 +1130,7 @@ def steps_connect(slug: str, actions: str = "", ctx: Ctx = Depends(real_admin)):
     if not wanted or any(x not in known for x in wanted):
         raise HTTPException(422, "Choose which actions you will use before connecting.")
     client, _ = _real(ctx)
-    return {"token": client.token(), "service_id": app_["service_id"], "action_ids": wanted}
+    return {"token": client.token(), "service_id": app_["service_id"], "action_ids": wanted, "connect_js": vs.CONNECT_JS}
 
 
 @app.post("/api/steps/apps/{slug}/connected")

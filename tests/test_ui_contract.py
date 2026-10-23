@@ -165,3 +165,18 @@ def test_the_logo_is_one_drawing_in_the_icon_and_the_page_and_it_follows_the_the
     assert f'<a class="brand" href="#ask">{mark}Deskhand<span>request desk</span></a>' in HTML  # the app header
     assert f'<a class="brand" href="#welcome">{mark}Deskhand</a>' in JS  # the landing header
     assert ".brand .mark {" in css and ".brand::before" not in css  # the CSS-drawn stand-in is gone
+
+
+def test_the_steps_screens_only_draw_what_the_server_says_and_never_run_text_from_an_app():
+    block = JS[JS.index("/* ---------- after-approval steps (admin)"):JS.index("/* ---------- leave: balances")]
+    assert "eval(" not in JS and "new Function" not in JS and "document.write" not in JS  # a form definition from the catalog is data: conditions are evaluated by the server
+    assert "actor" not in block and "sender" not in block and "script_id" not in block and "auth_id" not in block.replace("auth_id: d.data", "")  # no identity and no connection id in the page
+    assert all(f'id="{i}"' in HTML for i in ("sdlg", "sd-title", "sd-intro", "sd-body", "sd-err", "sd-actions"))
+    assert "CONN.pending = 'steps:'" in block and "startsWith('steps:')" in JS  # the one Connect popup handler tells a step's connection from the Integrations page's
+    prompt = JS[JS.index("function dialogPrompt"):JS.index("/* ---------- routing")]
+    assert "$('#dlg-title').textContent = title" in prompt and "$('#dlg-body').textContent = body" in prompt and "$('#dlg-label').textContent = label" in prompt  # a confirmation shows its words as text, never as HTML
+    for catalog_text in ("n.label", "n.help", "a.name", "a.description", "it.label", "o.label", "t.label", "s.label", "s.app_name", "s.action_name"):
+        for m in re.finditer(r"\$\{([^}]*" + re.escape(catalog_text) + r"[^}]*)\}", block):
+            line = block[block.rfind("\n", 0, m.start()) + 1:block.find("\n", m.end())]
+            assert "esc(" in m.group(1) or "dialogPrompt(" in line or "label: s.destructive" in line, m.group(0)  # whatever an app or the catalog calls things is escaped before it is drawn as HTML
+

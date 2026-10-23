@@ -379,3 +379,24 @@ def test_a_failing_round_is_logged_without_message_text_and_does_not_stop_the_wo
     with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
         owner.main._worker_pass(1)
     assert "RuntimeError" in caplog.text and "secret text" not in caplog.text and "Priya" not in caplog.text
+
+
+# ---------------- 5A.3: what the admin screens need from the server ----------------
+def test_the_connect_popup_gets_the_script_address_the_token_and_only_the_chosen_actions(owner, fake):
+    r = owner.get(f"/api/steps/apps/google-sheets/connect?actions={ADD_ID}").json()
+    assert r["connect_js"] == vs.CONNECT_JS and r["action_ids"] == [ADD_ID] and set(r) == {"token", "service_id", "action_ids", "connect_js"}
+
+
+def test_the_form_state_carries_a_preview_made_by_the_same_code_that_fills_a_real_request(owner):
+    r = owner.post("/api/steps/form-state", {"type_code": "software_seat", "app": "google-sheets", "action_id": ADD_ID, "values": {**ROW, "column_name": {"Name": "{requester.name} ({detail.tool})", "Email": "{requester.email}"}}}).json()
+    assert r["errors"] == {} and r["preview"]["column_name"] == {"Name": "Priya Sharma (Claude)", "Email": "priya.sharma@example.com"}
+    assert r["cleaned"]["column_name"]["Name"] == "{requester.name} ({detail.tool})"  # what is saved keeps the fields; only the preview is filled
+
+
+def test_the_request_type_list_says_which_types_can_have_steps_and_how_many_they_have(owner):
+    types = {t["code"]: t["steps"] for t in owner.get("/api/setup/types").json()["types"]}
+    assert {c for c, s in types.items() if s["eligible"]} == {"software_seat", "equipment", "accessories", "it_help", "access"}
+    assert types["software_seat"] == {"eligible": True, "count": 0, "on": 0} and types["leave"]["eligible"] is False
+    sid = seed_step(owner)
+    enable(owner, sid)
+    assert owner.get("/api/setup/types").json()["types"][[t["code"] for t in owner.get("/api/setup/types").json()["types"]].index("software_seat")]["steps"] == {"eligible": True, "count": 1, "on": 1}
