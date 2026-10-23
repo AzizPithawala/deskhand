@@ -394,7 +394,7 @@ async function pageMine(id) {
 }
 function paintMine(id, changed) {
   const lst = $('#lst'); if (!lst) return;
-  lst.innerHTML = REQS.length ? REQS.map(r => listRow(r, 'mine', r.id === id)).join('') : `<div style="padding-top:16px">${emptyState('No requests yet', 'Ask for something in Ask. Each request you make is listed here with who has it.')}</div>`;
+  lst.innerHTML = REQS.length ? REQS.map(r => listRow(r, 'mine', r.id === id)).join('') : `<div class="list-empty">${emptyState('No requests yet', 'Ask for something in Ask. Each request you make is listed here with who has it.')}</div>`;
   flash(changed);
 }
 
@@ -412,7 +412,7 @@ function paintNeeds(id, changed) {
   lst.innerHTML = INBOX.length ? INBOX.map(r => `<a class="item" href="#needs/${r.id}" data-req="${r.id}" ${r.id === id ? 'aria-current="true"' : ''}>
       <div class="t"><span class="id num">${r.id}</span><span>${esc(r.summary)}</span></div>
       <div class="s meta">${esc(r.employee_name)} · ${esc(KIND[r.inbox_kind] || '')}</div><div class="meta">${esc(sentence(r))}</div></a>`).join('')
-    : `<div style="padding-top:16px">${emptyState('Nothing waiting for you', 'New requests assigned to you appear here within a few seconds.')}</div>`;
+    : `<div class="list-empty">${emptyState('Nothing waiting for you', 'New requests assigned to you appear here within a few seconds.')}</div>`;
   flash(changed);
 }
 
@@ -879,6 +879,7 @@ async function personLink(id) {
 const ADMIN_LINKS = [['setup', 'Setup', 'Roles, request types, policies and a routing test.'], ['people', 'People', 'Invite people, set managers and access.'],
   ['integrations', 'Integrations', 'Connect Slack and Gmail; switch viaSocket AI.'], ['health', 'Health', 'Is everything working, and can it be proven?'],
   ['deliverylog', 'Delivery log', 'Every message Deskhand sent: to whom, by Slack or email, and how it ended.'], ['audit', 'Audit', 'Every change, who made it, when.']];
+const HUBICON = { setup: 'i-setup', people: 'i-people', integrations: 'i-plug', health: 'i-health', deliverylog: 'i-log', audit: 'i-audit' };  // presentation only: the icon beside each admin card
 const amount = n => `₹${Number(n).toLocaleString('en-IN')}`;
 const afterSetup = async () => { try { await loadCore(); } catch { /* the page shows its own errors */ } };  // people, roles and rules feed the journeys and the status bar
 
@@ -888,7 +889,7 @@ async function pageAdmin() {
     try { const c = await api('/setup/checklist'); if (!c.dismissed && c.done < c.total) note = `<div class="state" style="margin-bottom:16px"><b>Company setup: ${c.done} of ${c.total} steps done</b><a href="#setup">Continue setting up</a></div>`; } catch { /* the hub still works without it */ }
   }
   $('#main').innerHTML = `<div class="page-head"><h1>Admin</h1><span class="meta">${esc(ME.org.name)}</span></div>${note}
-    <div class="hub">${ADMIN_LINKS.map(([k, t, d]) => `<a href="#${k}"><b>${esc(t)}</b><span class="meta">${esc(d)}</span></a>`).join('')}</div>`;
+    <div class="hub">${ADMIN_LINKS.map(([k, t, d]) => `<a href="#${k}"><span class="hubicon">${icon(HUBICON[k] || 'i-admin')}</span><b>${esc(t)}</b><span class="meta">${esc(d)}</span></a>`).join('')}</div>`;
 }
 
 async function pageIntegrations() {
