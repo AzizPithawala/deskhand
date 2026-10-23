@@ -160,8 +160,11 @@ def client(tmp_path, monkeypatch):
     return owner, main
 
 
-def test_connections_are_admin_only_and_list_every_setting(client):
+def test_connections_are_admin_only_and_list_every_setting(client, monkeypatch):
     owner, main = client
+    t = FakeTransport(ok({"success": True, "data": []}))
+    real = vs.VsClient
+    monkeypatch.setattr(vs, "VsClient", lambda tenant: real(tenant, t))  # the page asks viaSocket which connections exist; no network (rule 7)
     mia = apiutil.add_person(owner, "mia@acme.test", "Mia")
     assert mia.get("/api/connections").status_code == 403
     r = owner.get("/api/connections").json()

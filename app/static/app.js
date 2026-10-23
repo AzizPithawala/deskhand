@@ -84,7 +84,22 @@ function resolveRule(rule, emp) {
 }
 const adminPerson = () => S.employees.find(e => e.role === 'admin') || null;
 
-function stagesFor(r, tl) {
+function stepStage(s, app) {  // one step in another app, drawn as a station on the request's route
+  const base = { k: 'step' + s.position, title: s.label }, where = s.app_name || 'the app';
+  switch (s.status) {
+    case 'succeeded': return { ...base, state: 'done', word: 'Done', note: `Done in ${where}${s.result && s.result.ref ? ` (${s.result.ref})` : ''}.` };
+    case 'rehearsed': return { ...base, state: 'done', word: 'Not sent', note: isDemo() ? 'Not sent: the demo never calls other apps.' : 'Not sent: this company is still in rehearsal.' };
+    case 'running': return { ...base, state: 'current', word: 'Running', note: `Running in ${where} now.` };
+    case 'pending': return { ...base, state: 'current', word: 'Queued', note: `Queued: Deskhand runs it within a few seconds.${s.error ? ' Trying again: ' + s.error : ''}` };
+    case 'ready': return { ...base, state: 'current', word: 'Waits for Run', note: 'Waiting for someone to press Run.' };
+    case 'failed': return { ...base, state: 'parked', word: 'Needs attention', note: `${s.error || 'The app refused it.'} Nothing was lost. An admin decides what happens next.` };
+    case 'unknown': return { ...base, state: 'parked', word: 'Check the app', note: `It may or may not have happened in ${where}: check there first. ${s.error || ''}`.trim() };
+    case 'skipped': return { ...base, state: 'parked', word: 'Skipped', note: s.error || 'It was skipped. An admin can run it again.' };
+    default: return { ...base, state: 'upcoming', word: 'Upcoming', note: s.status === 'planned' ? `Runs in ${where} after the final approval${s.run_mode === 'confirm' ? ', when someone presses Run' : ''}.` : 'Starts after the step before it.' };
+  }
+}
+
+function stagesFor(r, tl, runs) {
   const t = TYPE[r.type_code] || {};
   const ev = (type) => (tl || []).filter(e => e.type === type);
   const out = [{ k: 'asked', state: 'done', title: 'Asked', who: r.employee_id, time: r.created_at }];
@@ -124,6 +139,8 @@ function stagesFor(r, tl) {
     out.push(st);
   });
   if (['REJECTED', 'CANCELLED'].includes(r.status)) return out;
+  const stepsOpen = (runs || []).some(s => !['succeeded', 'rehearsed'].includes(s.status));
+  (runs || []).forEach(s => out.push(stepStage(s)));
   const auto = t.fulfilment_kind === 'auto_action';
   const ful = r.fulfiller_id || (resolveRule(t.fulfiller_rule, EMP[r.employee_id]) || {}).id;
   if (r.type_code !== 'policy_question') {
@@ -132,6 +149,7 @@ function stagesFor(r, tl) {
     else if (r.status === 'PARKED') state = 'parked';
     else if (['FULFILLED', 'CLOSED'].includes(r.status)) state = 'done';
     const st = { k: 'ful', state, title: auto ? cap(hrApplied()) : `Done by ${ful ? nm(ful) : 'the fulfiller'}` };
+    if (stepsOpen && state !== 'done') state = st.state = 'upcoming';  // the steps in other apps come first
     if (state === 'current') st.note = auto ? 'Deskhand is applying it now.' : `${nm(ful)} grants access, then clicks Done.`;
     if (state === 'parked') {
       const f = ev('action_failed').slice(-1)[0];
@@ -144,8 +162,9 @@ function stagesFor(r, tl) {
   return out;
 }
 
-function nextSentence(r) {
+function nextSentence(r, runs) {
   const t = TYPE[r.type_code] || {};
+  if (r.status === 'FULFILLING' && (runs || []).some(s => !['succeeded', 'rehearsed'].includes(s.status))) return 'Next: Deskhand works through the steps in other apps, then the fulfiller clicks Done.';
   if (r.status === 'PENDING_APPROVAL') {
     const holder = r.escalated_to || (r.chain || [])[r.chain_index];
     const age = (NOW - (r.assigned_at || r.created_at)) / 3600;
@@ -186,21 +205,21 @@ function sentence(r) {
 const NODE = { done: 's-done', current: 's-pending', upcoming: 's-upcoming', rejected: 's-rejected', parked: 's-parked', cancelled: 's-cancelled' };
 const WORD = { done: 'Done', current: 'In progress', upcoming: 'Upcoming', rejected: 'Rejected', parked: 'Parked', cancelled: 'Cancelled' };
 
-function journeyHTML(r, tl) {
-  const st = stagesFor(r, tl);
+function journeyHTML(r, tl, runs) {
+  const st = stagesFor(r, tl, runs);
   const prev = PREV[r.id];
   const states = st.map(s => s.k + ':' + s.state);
   const html = st.map((s, i) => {
     const changed = prev && prev[i] !== states[i];
-    return `<li class="stage ${s.state}" aria-label="${esc(s.title)}: ${WORD[s.state]}">
+    return `<li class="stage ${s.state}" aria-label="${esc(s.title)}: ${esc(s.word || WORD[s.state])}">
       <div class="rail">${icon(NODE[s.state], 'node' + (changed ? ' pop' : ''))}<span class="thread${changed ? ' draw' : ''}"></span></div>
-      <div><div class="what"><span>${esc(s.title)}</span><span class="meta">${s.because ? esc(s.because) : (s.state === 'current' ? '' : esc(WORD[s.state]))}</span></div>
+      <div><div class="what"><span>${esc(s.title)}</span><span class="meta">${s.because ? esc(s.because) : (s.state === 'current' && !s.word ? '' : esc(s.word || WORD[s.state]))}</span></div>
         ${s.wait ? `<div class="note"><span class="wait">${esc(s.wait)}</span></div>` : ''}
         ${s.who && !s.wait && s.time ? `<div class="meta">${esc(nm(s.who))}, ${stamp(s.time)}</div>` : (s.time ? `<div class="meta">${stamp(s.time)}</div>` : '')}
         ${s.note ? `<div class="note meta">${esc(s.note)}</div>` : ''}</div></li>`;
   }).join('');
   PREV[r.id] = states;
-  const nx = nextSentence(r);
+  const nx = nextSentence(r, runs);
   return `<ol class="journey" style="list-style:none;padding:0">${html}</ol>${nx ? `<div class="next fade">${esc(nx)}</div>` : ''}`;
 }
 
@@ -419,7 +438,7 @@ async function pageNeeds(id) {
   if (pick) await paintDetail(pick, 'needs');
   else if ($('#det')) $('#det').innerHTML = '';
 }
-const KIND = { approval: 'Needs your decision', task: 'Needs you to finish it', parked: 'Parked: needs an admin' };
+const KIND = { approval: 'Needs your decision', task: 'Needs you to finish it', run: 'Needs you to press Run', parked: 'Parked: needs an admin' };
 function paintNeeds(id, changed) {
   const lst = $('#lst'); if (!lst) return;
   lst.innerHTML = INBOX.length ? INBOX.map(r => {
@@ -438,8 +457,11 @@ function whatWasUnderstood(r) {
   return rows.length ? `<dl class="kv">${rows.map(([a, b]) => `<dt>${esc(a)}</dt><dd>${esc(b)}</dd>`).join('')}</dl>` : '<p class="meta">Deskhand found no structured details in the message. The original is below.</p>';
 }
 const REC = {
+  step_planned: d => `Steps planned: ${(d.steps || []).join(', ')}`, step_rehearsed: d => `Step "${d.label}" would have run (nothing was sent)`, step_started: d => `Step "${d.label}" started`,
+  step_succeeded: d => `Step "${d.label}" done`, step_retry: d => `Step "${d.label}" tried again (attempt ${d.attempt})`, step_confirmed: d => `Run pressed for "${d.label}"`,
+  step_replayed: d => `Step "${d.label}" run again by an admin`, step_marked_done: d => `Step "${d.label}" marked done by an admin after checking: ${d.reason}`, step_skipped: d => `Step "${d.label}" skipped`, steps_finished: 'All steps finished',
   request_created: 'Request created', approved_stage: d => `Approved (step ${d.stage} of ${d.of})`, reminder_sent: 'Reminder sent',
-  escalated: d => `Escalated to ${nm(d.to)}`, action_succeeded: 'HR action succeeded', action_retry: 'HR action retried', action_failed: 'HR action failed',
+  escalated: d => `Escalated to ${nm(d.to)}`, action_succeeded: 'HR action succeeded', action_retry: 'HR action retried', action_failed: d => (d.outcome ? `Step "${d.step}" ${d.outcome === 'unknown' ? 'may or may not have run' : 'did not finish'}` : 'HR action failed'),
   marked_pending: d => `Marked pending${d.note ? ': ' + d.note : ''}`, injection_suspected: 'Instructions inside the message were ignored',
   duplicate_suppressed: 'Duplicate delivery ignored', delivery_succeeded: 'Notification delivered', delivery_failed: 'Notification could not be delivered',
   delivery_retry: 'Notification delivery retried', delivery_replayed: 'Notification retried by an admin', replayed: 'Replayed by an admin',
@@ -461,13 +483,36 @@ async function paintDetail(id, base) {
     <p class="ticket-kind">${esc(typeName(r))}, request ${r.id}</p>
     <div class="page-head" style="margin-bottom:var(--s-2)"><h1>${esc(r.summary)}</h1>${chip(r)}</div>
     <p class="meta ticket-sub">Asked by ${esc(nm(r.employee_id))}${EMP[r.employee_id] && EMP[r.employee_id].department ? ' (' + esc(EMP[r.employee_id].department) + ')' : ''} in ${esc(r.channel)} on ${stamp(r.created_at)}.</p>
-    <section aria-label="Journey of this request">${journeyHTML(r, d.timeline)}</section>
-    ${act ? decisionHTML(act) : ''}
+    <section aria-label="Journey of this request">${journeyHTML(r, d.timeline, d.steps)}</section>
+    ${stepBarHTML(r, d.steps)}${act && !(act.inbox_kind === 'run' || (act.inbox_kind === 'parked' && (d.steps || []).length)) ? decisionHTML(act) : ''}
     <section class="sec"><h3>What Deskhand understood</h3>${whatWasUnderstood(r)}</section>
     <section class="sec"><h3>${r.email_subject ? 'Original email' : 'Original message'}</h3>${r.email_subject ? `<p class="meta">Subject: ${esc(r.email_subject)}</p>` : ''}<div class="quote">${esc(r.message)}</div></section>
     <section class="sec"><h3>Record</h3><p class="meta">Every change is written once and never edited.</p><ul class="record">${d.timeline.map(e => `<li><span class="meta">${new Date(e.ts * 1000).toLocaleTimeString('en-GB', { timeZone: 'UTC' })}</span><span>${esc(recLine(e))} <span class="meta">by ${esc(nm(e.actor))}</span></span></li>`).join('')}</ul></section></div>`;
-  wireDecision(r);
+  wireDecision(r); wireStepBar(r);
   if (NUNREAD > 0 && current.id === id) api('/notifications/read', { request_id: id }).then(j => { NUNREAD = NSTATE.painted = j.unread; paintBadge(); }).catch(() => {});  // opening a request is reading what was said about it; the list's own first pick is not
+}
+
+function stepBarHTML(r, runs) {  // what a person can do about a step: press Run, or decide what happens to one that did not finish
+  const items = (runs || []).filter(s => s.can_run || s.can_decide);
+  if (!items.length) return '';
+  return `<div class="stepbar" data-id="${r.id}">${items.map(s => s.can_run
+    ? `<div class="sb"><b>${esc(s.label)}</b><span class="meta">This step waits for you to press Run.${isDemo() ? ' The demo sends nothing.' : ''}</span><div class="btns"><button class="btn primary" data-sdo="run" data-pos="${s.position}">Run this step</button></div></div>`
+    : `<div class="sb"><b>${esc(s.label)}</b><span class="meta">${s.status === 'unknown' ? 'Check the app first: it may already have happened, and running it again could repeat it.' : 'Nothing was lost.'}</span><div class="btns"><button class="btn primary" data-sdo="again" data-pos="${s.position}">Run again</button><button class="btn" data-sdo="done" data-pos="${s.position}">Mark as done</button></div></div>`).join('')}</div>`;
+}
+function wireStepBar(r) {
+  $$('.stepbar [data-sdo]').forEach(b => {
+    b.onclick = async () => {
+      const what = b.dataset.sdo, pos = b.dataset.pos; let extra = {};
+      if (what === 'done') {
+        if (!await dialogPrompt({ title: 'Mark this step as done?', body: 'Do this only after checking in the app that it really happened. Deskhand will not run it.', label: 'What did you check?', confirm: 'Mark as done' })) return;
+        extra = { reason: $('#dlg-input').value.trim() };
+      }
+      $$('.stepbar button').forEach(x => { x.disabled = true; });
+      const path = what === 'run' ? `/requests/${r.id}/steps/${pos}/run` : (what === 'again' ? `/requests/${r.id}/steps/${pos}/again` : `/requests/${r.id}/steps/${pos}/mark-done`);
+      try { await api(path, extra); toast({ run: 'Run. Deskhand goes on with the next step.', again: 'Queued to run again.', done: 'Marked as done. Deskhand goes on.' }[what]); } catch (e) { toast(e.message, 6000); }
+      await refreshAll(false, true);
+    };
+  });
 }
 
 function decisionHTML(it) {
@@ -645,6 +690,11 @@ function connectApp(key) {
 }
 window.addEventListener('message', async ev => {
   const d = ev.data; if (!d || typeof d !== 'object') return;
+  if (d.type === 'viasocket_connection_success' && String(CONN.pending).startsWith('steps:')) {  // an app chosen for a step on the Setup page
+    const slug = CONN.pending.slice(6); CONN.pending = null;
+    try { await api(`/steps/apps/${enc(slug)}/connected`, { auth_id: d.data && d.data.id }); toast('Connected.'); await stepsConnected(slug); } catch (e) { toast(e.message, 6000); }
+    return;
+  }
   if (d.type === 'viasocket_connection_success') {
     const key = CONN.pending || Object.keys(CONN.info).find(k => CONN.info[k].service_id === d.serviceId);
     try { await api(key === 'mine' ? '/me/connections/connected' : '/connections/connected', key === 'mine' ? { auth_id: d.data && d.data.id } : { app: key, auth_id: d.data && d.data.id }); toast('Connected.'); } catch (e) { toast(e.message, 6000); }
@@ -1078,9 +1128,10 @@ async function setupTypes() {
     ${TD.types.map(t => `<div class="typecard" data-type="${esc(t.code)}"><div class="h"><b>${esc(t.name)}</b>
       <span class="chip ${t.enabled ? 'approved' : 'neutral'}">${icon(t.enabled ? 's-done' : 's-cancelled')}${t.enabled ? 'On' : 'Off'}</span>
       ${t.changed.length ? '<span class="meta">edited</span>' : ''}${ro ? '' : `<span class="meta">${t.reviewed_at ? 'reviewed' : 'not reviewed yet'}</span>`}</div>
-      ${typeLines(t).map(l => `<p class="sub">${l}</p>`).join('')}${typeWarnings(t).map(w => `<div class="warnrow">${icon('s-alert')}<span>${esc(w)}</span></div>`).join('')}
-      ${ro ? '' : `<div class="btns"><button class="btn small" data-edit="${esc(t.code)}">Edit</button>${t.reviewed_at ? '' : `<button class="btn small" data-ok="${esc(t.code)}">Looks right</button>`}</div>`}</div>`).join('')}`;
+      ${typeLines(t).map(l => `<p class="sub">${l}</p>`).join('')}${t.steps && t.steps.eligible && (!ro || t.steps.count) ? `<p class="sub">After approval: ${t.steps.count ? `${plural(t.steps.count, 'step')} in other apps (${t.steps.on} switched on)${ro ? ', shown as an example: the demo never calls other apps' : ''}.` : 'nothing in other apps.'}</p>` : ''}${typeWarnings(t).map(w => `<div class="warnrow">${icon('s-alert')}<span>${esc(w)}</span></div>`).join('')}
+      ${ro ? '' : `<div class="btns"><button class="btn small" data-edit="${esc(t.code)}">Edit</button>${t.steps && t.steps.eligible ? `<button class="btn small" data-steps="${esc(t.code)}">After approval</button>` : ''}${t.reviewed_at ? '' : `<button class="btn small" data-ok="${esc(t.code)}">Looks right</button>`}</div>`}</div>`).join('')}`;
   $$('[data-edit]').forEach(b => b.onclick = () => editType(b.dataset.edit));
+  $$('[data-steps]').forEach(b => b.onclick = () => openSteps(b.dataset.steps));
   $$('[data-ok]').forEach(b => b.onclick = async () => { try { await api(`/setup/types/${encodeURIComponent(b.dataset.ok)}/reviewed`, {}); toast('Marked as reviewed.'); } catch (e) { toast(e.message, 6000); } setupTypes(); });
 }
 
@@ -1202,6 +1253,310 @@ async function setupTest() {
         ${r.warnings.map(w => `<div class="warnrow">${icon('s-alert')}<span>${esc(w)}</span></div>`).join('')}</div>`;
     } catch (err) { $('#sim_err').textContent = err.message; $('#simres').innerHTML = ''; }
   };
+}
+
+/* ---------- after-approval steps (admin): choose an app and what to do in it once a request type is approved ---------- */
+// SD.e is the step being built; SD.act is the action's form (read and checked by the server: it also says which fields are visible and what is wrong).
+const SD = { code: '', view: { steps: [], tokens: [], max_steps: 3 }, e: null, act: null, appInfo: null, state: null, opts: {}, sigs: {}, fg: {}, touched: new Set(), vis: '', tick: 0, seq: 0, connect: null, showAll: false, lastTest: null };
+const enc = encodeURIComponent;
+const pathGet = (o, k) => k.split('.').reduce((c, p) => (c && typeof c === 'object' ? c[p] : undefined), o);
+const pathSet = (o, k, v) => { const ps = k.split('.'); let c = o; ps.slice(0, -1).forEach(p => { if (!c[p] || typeof c[p] !== 'object') c[p] = {}; c = c[p]; }); if (v === undefined) delete c[ps[ps.length - 1]]; else c[ps[ps.length - 1]] = v; };
+const hasVal = v => !(v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length) || (v && typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length));
+const sdErr = m => { $('#sd-err').textContent = m || ''; };
+const sdFields = nodes => nodes.flatMap(n => [n, ...(n.children ? sdFields(n.children) : [])]);
+const flatPairs = (v, p = '') => (v && typeof v === 'object' && !Array.isArray(v) ? Object.entries(v).flatMap(([k, x]) => flatPairs(x, p + k + '.')) : [[p.replace(/\.$/, ''), Array.isArray(v) ? v.join(', ') : v]]);
+const flatText = v => flatPairs(v).map(([k, x]) => `${k}: ${x}`).join('; ');
+
+async function openSteps(code) {
+  SD.code = code; SD.e = null; SD.lastTest = null; sdErr('');
+  try { SD.view = await api('/setup/steps/' + enc(code)); } catch (e) { toast(e.message, 6000); return; }
+  $('#sd-title').textContent = `After approval: ${TD.types.find(x => x.code === code).name}`;
+  const d = $('#sdlg'); d.onclose = () => { SD.e = null; setupTypes(); };
+  paintStepList();
+  if (!d.open) d.showModal();
+  d.scrollTop = 0;
+}
+const stepPayload = s => ({ id: s.id, app: s.app, action_id: s.action_id, label: s.label, run_mode: s.run_mode, input: s.input });
+async function saveSteps(list, close, done) {
+  sdErr('');
+  try { SD.view = await api('/setup/steps/' + enc(SD.code), { steps: list, close_when_done: close === undefined ? SD.view.close_when_done : close }); if (done) toast(done); return true; }
+  catch (e) { sdErr(e.message); return false; }
+}
+const stepChips = s => `<span class="chip ${s.enabled ? 'approved' : 'neutral'}">${icon(s.enabled ? 's-done' : 's-cancelled')}${s.enabled ? 'On' : 'Off'}</span>
+  <span class="chip ${s.tested ? 'approved' : 'pending'}">${icon(s.tested ? 's-done' : 's-pending')}${s.tested ? 'Tested' : 'Not tested yet'}</span>`;
+function paintStepList() {
+  const v = SD.view, n = v.steps.length;
+  $('#sd-intro').textContent = v.eligible ? 'What Deskhand does in other apps once a request of this type is approved, one step after the other. A step runs only after a test of exactly that step. In rehearsal nothing is sent: you are told what it would have done.' : v.reason;
+  $('#sd-body').innerHTML = (n ? v.steps.map((s, i) => `<div class="stepcard" data-i="${i}"><div class="h"><b>${i + 1}. ${esc(s.label)}</b><span class="meta">${esc(s.app_name)}: ${esc(s.action_name)}</span>${stepChips(s)}</div>
+      <p class="sub">${s.run_mode === 'auto' ? 'Runs by itself right after the final approval.' : 'Runs when the approver presses Run.'}${s.destructive ? ' It deletes or removes things.' : ''}</p>
+      ${s.connected ? '' : `<div class="warnrow">${icon('s-alert')}<span>${esc(s.app_name)} is not connected. Connect it to test or run this step.</span></div>`}
+      <div class="btns"><button class="btn small" data-do="edit">Edit</button><button class="btn small" data-do="test" ${s.connected ? '' : 'disabled'}>Test run</button>
+        <button class="btn small" data-do="toggle" ${s.enabled || s.tested ? '' : 'disabled'} title="${s.tested || s.enabled ? '' : 'Run a test first'}">${s.enabled ? 'Switch off' : 'Switch on'}</button>
+        <button class="btn small quiet" data-do="up" ${i ? '' : 'disabled'}>Move up</button><button class="btn small quiet" data-do="down" ${i < n - 1 ? '' : 'disabled'}>Move down</button><button class="btn small danger" data-do="remove">Remove</button></div>
+      <div data-result aria-live="polite"></div></div>`).join('') : emptyState('No steps yet', 'Nothing happens in other apps for this kind of request. A person still completes it and clicks Done.'))
+    + (v.eligible ? `<label class="switch"><input type="checkbox" id="sd-close" ${v.close_when_done ? 'checked' : ''}> Close the request by itself when all steps are done (otherwise the person who completes this kind of request still clicks Done)</label>` : '');
+  $('#sdlg').scrollTop = 0;
+  $('#sd-actions').innerHTML = `${v.eligible && n < v.max_steps ? '<button class="btn" id="sd-add">Add a step</button>' : ''}<button class="btn primary" id="sd-done">Close</button>`;
+  $('#sd-done').onclick = () => $('#sdlg').close();
+  const add = $('#sd-add'); if (add) add.onclick = () => editStep(-1);
+  const close = $('#sd-close'); if (close) close.onchange = async () => { await saveSteps(SD.view.steps.map(stepPayload), close.checked, 'Saved.'); paintStepList(); };
+  $$('.stepcard').forEach(card => $$('[data-do]', card).forEach(b => { b.onclick = () => stepDo(+card.dataset.i, b.dataset.do, card); }));
+  if (SD.lastTest) { const card = $$('.stepcard').find(c => SD.view.steps[+c.dataset.i].id === SD.lastTest.id); if (card) $('[data-result]', card).innerHTML = SD.lastTest.html; }
+}
+async function stepDo(i, what, card) {
+  const s = SD.view.steps[i], list = SD.view.steps.map(stepPayload);
+  SD.lastTest = null; sdErr('');
+  if (what === 'edit') return editStep(i);
+  if (what === 'test') return testStep(i, card);
+  if (what === 'up' || what === 'down') { const j = what === 'up' ? i - 1 : i + 1; [list[i], list[j]] = [list[j], list[i]]; await saveSteps(list); return paintStepList(); }
+  if (what === 'remove') {
+    if (!await dialogPrompt({ title: `Remove "${s.label}"?`, body: 'Requests that were routed before now keep the steps they were routed with.', confirm: 'Remove', danger: true })) return;
+    list.splice(i, 1); await saveSteps(list, undefined, 'Removed.'); return paintStepList();
+  }
+  if (what === 'toggle') {
+    try { SD.view = await api(`/setup/steps/${enc(SD.code)}/${s.id}/enabled`, { enabled: !s.enabled }); toast(s.enabled ? 'Switched off.' : 'Switched on. New requests use it.'); } catch (e) { sdErr(e.message); }
+    paintStepList();
+  }
+}
+async function testStep(i, card) {
+  const s = SD.view.steps[i], box = $('[data-result]', card);
+  const ok = await dialogPrompt({ title: `Test "${s.label}" for real?`, body: `This really runs in ${s.app_name} (${s.action_name}). It uses made-up request details such as Priya Sharma, and Deskhand cannot undo it in your app.`,
+    label: s.destructive ? `Type "${s.action_name}" to confirm` : '', confirm: 'Run the test', match: s.destructive ? s.action_name.toLowerCase() : null, danger: s.destructive });
+  if (!ok) return;
+  const typed = s.destructive ? $('#dlg-input').value.trim() : null;
+  box.innerHTML = '<p class="meta">Running the test</p>';
+  try {
+    const r = await api(`/setup/steps/${enc(SD.code)}/${s.id}/test`, { confirm: true, typed });
+    SD.view = r.view; const good = r.outcome === 'success';
+    SD.lastTest = { id: s.id, html: `<ul class="verdict"><li class="${good ? 'ok' : 'no'}">${icon(good ? 's-check' : 's-cross')}<b>${good ? 'It worked. This step can now be switched on.' : 'It did not work.'}</b></li>${r.error ? `<li class="meta" style="margin-left:24px">${esc(r.error)}</li>` : ''}</ul>
+      <p class="meta">Sent: ${esc(flatText(r.sent))}</p>${good ? '<p class="meta">Deskhand now knows what a good answer looks like, and will not call this step done unless the answer looks the same.</p>' : ''}` };
+    paintStepList();
+  } catch (e) { box.innerHTML = `<p class="bad" role="alert">${esc(e.message)}</p>`; }
+}
+
+/* the step editor: app, action, connection, then the form */
+async function editStep(i) {
+  const s = i >= 0 ? SD.view.steps[i] : null;
+  SD.e = { index: i, id: s ? s.id : null, app: s ? s.app : '', appName: s ? s.app_name : '', actionId: s ? s.action_id : '', label: s ? s.label : '', mode: s ? s.run_mode : 'auto', values: s ? JSON.parse(JSON.stringify(s.input)) : {} };
+  Object.assign(SD, { act: null, appInfo: null, state: null, opts: {}, sigs: {}, fg: {}, touched: new Set(), vis: '', connect: null, showAll: false });
+  sdErr('');
+  $('#sd-intro').textContent = i >= 0 ? 'Change what this step does.' : 'Choose an app, what to do in it, and what to put in it.';
+  $('#sd-body').innerHTML = '<div class="sdsec" id="sd-s-app"></div><div class="sdsec" id="sd-s-action" hidden></div><div class="sdsec" id="sd-s-connect" hidden></div><div class="sdsec" id="sd-s-form" hidden></div>';
+  $('#sd-actions').innerHTML = '<button class="btn" type="button" id="sd-back">Back</button><button class="btn primary" type="button" id="sd-save" disabled>Save step</button>';
+  $('#sd-back').onclick = () => { SD.e = null; paintStepList(); };
+  $('#sd-save').onclick = saveStep;
+  $('#sdlg').scrollTop = 0; paintAppSection();
+  if (s) { try { await loadApp(s.app); await pickAction(s.action_id, true); } catch (e) { sdErr(e.message); } }
+}
+function paintAppSection() {
+  const e = SD.e, box = $('#sd-s-app'); if (!e) return;
+  if (e.app) {
+    box.innerHTML = `<h3>App</h3><p><b>${esc(e.appName)}</b> ${SD.appInfo ? `<span class="chip ${SD.appInfo.connected ? 'approved' : 'neutral'}">${icon(SD.appInfo.connected ? 's-done' : 's-upcoming')}${SD.appInfo.connected ? 'Connected' : 'Not connected yet'}</span>` : ''} ${e.index < 0 ? '<button class="btn small quiet" type="button" id="sd-chg">Change app</button>' : ''}</p>`;
+    const c = $('#sd-chg'); if (c) c.onclick = () => { Object.assign(e, { app: '', appName: '', actionId: '', values: {} }); Object.assign(SD, { act: null, appInfo: null, state: null }); paintAppSection(); paintActionSection(); paintConnectSection(); paintFormSection(); };
+    return;
+  }
+  box.innerHTML = '<h3>App</h3><label class="l" for="sd-q">Search the app you want to use, for example Google Sheets</label><input class="field" id="sd-q" autocomplete="off"><div class="picklist" id="sd-apps"></div>';
+  let t; $('#sd-q').oninput = () => { clearTimeout(t); t = setTimeout(searchApps, 250); };
+  $('#sd-q').focus();
+}
+async function searchApps() {
+  const q = ($('#sd-q') || { value: '' }).value.trim(), box = $('#sd-apps'); if (!box) return;
+  if (!q) { box.innerHTML = ''; return; }
+  try {
+    const r = await api('/steps/apps?q=' + enc(q));
+    box.innerHTML = r.apps.length ? r.apps.map(a => `<button type="button" data-slug="${esc(a.slug)}"><b>${esc(a.name)}</b>${a.connected ? '<span class="meta">Connected</span>' : ''}</button>`).join('') : '<p class="meta">No app found. Try the first word of its name.</p>';
+    $$('[data-slug]', box).forEach(b => { b.onclick = async () => { try { await loadApp(b.dataset.slug); } catch (err) { sdErr(err.message); } }; });
+  } catch (err) { box.innerHTML = `<p class="bad" role="alert">${esc(err.message)}</p>`; }
+}
+async function loadApp(slug) {
+  SD.appInfo = await api('/steps/apps/' + enc(slug));
+  Object.assign(SD.e, { app: slug, appName: SD.appInfo.name });
+  paintAppSection(); paintActionSection();
+}
+function paintActionSection() {
+  const e = SD.e, box = $('#sd-s-action'); if (!e) return;
+  box.hidden = !SD.appInfo; if (!SD.appInfo) return;
+  const acts = SD.appInfo.actions;
+  box.innerHTML = `<h3>What to do in ${esc(SD.appInfo.name)}</h3>${SD.appInfo.requires_auth ? '' : '<p class="bad">Apps that need no sign-in are not supported yet.</p>'}
+    ${acts.length > 8 ? '<input class="field" id="sd-aq" placeholder="Filter the actions" aria-label="Filter the actions" autocomplete="off">' : ''}<div class="picklist" id="sd-acts"></div>`;
+  const draw = () => {
+    const q = ($('#sd-aq') || { value: '' }).value.trim().toLowerCase();
+    $('#sd-acts').innerHTML = acts.filter(a => !q || (a.name + ' ' + a.description).toLowerCase().includes(q)).map(a => `<button type="button" data-act="${esc(a.action_id)}" aria-pressed="${a.action_id === e.actionId}" ${a.supported && SD.appInfo.requires_auth ? '' : 'disabled'}><b>${esc(a.name)}</b>${a.destructive ? '<span class="meta">Deletes or removes things: it can only run when the approver presses Run.</span>' : ''}${a.supported ? `<span class="meta">${esc(a.description)}</span>` : `<span class="meta">Not supported yet: ${esc((a.reasons || [])[0] || 'a field Deskhand cannot draw')}</span>`}</button>`).join('');
+    $$('[data-act]', box).forEach(b => { b.onclick = async () => { try { await pickAction(b.dataset.act); } catch (err) { sdErr(err.message); } }; });
+  };
+  draw(); const aq = $('#sd-aq'); if (aq) aq.oninput = draw;
+}
+async function pickAction(id, keep) {
+  const e = SD.e, r = await api(`/steps/apps/${enc(e.app)}/actions/${enc(id)}`);
+  if (!keep) { e.values = {}; e.label = ''; }
+  e.actionId = id; SD.act = r; if (!e.label) e.label = r.action.name;
+  if (r.action.destructive) e.mode = 'confirm';
+  Object.assign(SD, { opts: {}, sigs: {}, fg: {}, touched: new Set(), vis: '', state: null, showAll: false });
+  paintActionSection(); paintConnectSection(); paintFormSection();
+  refreshState(true); prepStepConnect();
+}
+function paintConnectSection() {
+  const box = $('#sd-s-connect'), info = SD.appInfo; if (!box) return;
+  box.hidden = !(SD.act && info && !info.connected && info.requires_auth); if (box.hidden) return;
+  box.innerHTML = `<h3>Connect ${esc(info.name)}</h3><p class="meta">Deskhand asks ${esc(info.name)} only for what this action needs. You sign in on ${esc(info.name)}'s own page; Deskhand never sees your password.</p>
+    <div><button class="btn primary" type="button" id="sd-conn" ${SD.connect ? '' : 'disabled'}>${SD.connect ? `Connect ${esc(info.name)}` : 'Getting ready'}</button></div>`;
+  $('#sd-conn').onclick = () => {  // the popup must open from the click itself, so everything it needs was fetched before
+    if (!SD.connect || !window.openViasocketConnection) { toast('Connecting is not ready yet. Try again in a moment.'); return; }
+    CONN.pending = 'steps:' + SD.e.app;
+    window.openViasocketConnection(SD.connect.token, SD.connect.service_id, { filteredActions: SD.connect.action_ids, skipActionSelection: true });
+  };
+}
+async function prepStepConnect() {
+  const e = SD.e, info = SD.appInfo; SD.connect = null;
+  if (!e || !info || info.connected || !info.requires_auth || !SD.act) return;
+  paintConnectSection();
+  try { SD.connect = await api(`/steps/apps/${enc(e.app)}/connect?actions=${enc(e.actionId)}`); await loadConnectScript(SD.connect.connect_js); } catch (err) { sdErr(err.message); SD.connect = null; }
+  paintConnectSection();
+}
+async function stepsConnected(slug) {  // the Connect popup finished (see the message handler)
+  if (!SD.e || SD.e.app !== slug) return;
+  SD.appInfo = await api('/steps/apps/' + enc(slug));
+  Object.assign(SD, { opts: {}, sigs: {}, fg: {} });
+  paintAppSection(); paintConnectSection(); paintFormSection(); refreshState(true);
+}
+
+/* the form, drawn from the action's own definition. The server says which fields are visible and what is wrong; the page only draws and sends. */
+const tokensFor = kind => SD.view.tokens.filter(t => kind === 'text' || t.kind === kind);
+const inserter = (key, kind, sub) => { const ts = tokensFor(kind); return ts.length ? `<select class="field ins" data-ins="${esc(key)}" ${sub ? `data-sub="${esc(sub)}"` : ''} aria-label="Insert a request field">
+  <option value="">Insert a request field</option>${ts.map(t => `<option value="${esc(t.token)}">${esc(t.label)}</option>`).join('')}</select>` : ''; };
+const optList = n => (n.options || SD.opts[n.key] || []);
+function fieldHTML(n, vis, idx) {
+  if (!vis.has(n.key)) return '';
+  const id = `sf-${idx.n++}`, k = esc(n.key), cur = pathGet(SD.e.values, n.key);
+  const head = `<label class="l" for="${id}"><b>${esc(n.label)}</b>${n.required ? ' (required)' : ''}</label>`;
+  const tail = `${n.help ? `<div class="help">${esc(n.help)}</div>` : ''}<div class="bad" data-err="${k}" role="alert"></div>`;
+  let ctl = '';
+  if (n.type === 'group') return `<fieldset class="sgroup" data-field="${k}"><legend>${esc(n.label)}</legend>${n.children.map(c => fieldHTML(c, vis, idx)).join('')}</fieldset>`;
+  if (n.type === 'text' || n.type === 'number' || n.type === 'date') ctl = `<div class="row"><input class="field" id="${id}" data-key="${k}" data-t="${n.type}" ${n.type === 'number' ? 'inputmode="decimal"' : ''} placeholder="${esc(n.placeholder || (n.type === 'date' ? 'YYYY-MM-DD, or a request field' : ''))}" autocomplete="off" value="${esc(cur ?? (n.default ?? ''))}">${inserter(n.key, n.type)}</div>`;
+  else if (n.type === 'boolean') { const v = cur ?? n.default; ctl = `<select class="field" id="${id}" data-key="${k}" data-t="boolean"><option value="">Not set</option><option value="yes" ${v === true ? 'selected' : ''}>Yes</option><option value="no" ${v === false ? 'selected' : ''}>No</option></select>`; }
+  else if (n.type === 'dropdown') ctl = `${n.dynamic && n.search ? `<input class="field" data-filter="${k}" placeholder="Type to filter the choices" aria-label="Filter the choices" autocomplete="off">` : ''}<select class="field" id="${id}" data-key="${k}" data-t="dropdown"></select>`;
+  else if (n.type === 'multiselect') ctl = `<div class="sdchoices" id="${id}" data-key="${k}" data-t="multiselect"></div>`;
+  else if (n.type === 'fetched_group') ctl = `<div class="stack" data-fg="${k}"></div>`;
+  else if (n.type === 'dictionary') ctl = `<textarea class="field" id="${id}" rows="3" data-key="${k}" data-t="dictionary" placeholder="One per line: name: value">${esc(Object.entries(cur || {}).map(([a, b]) => `${a}: ${b}`).join('\n'))}</textarea>`;
+  else ctl = '<p class="meta">This field cannot be set here.</p>';
+  return `<div class="sfield" data-field="${k}">${head}${ctl}${tail}</div>`;
+}
+function paintFormSection() {
+  const box = $('#sd-s-form'), e = SD.e; if (!box || !e) return;
+  box.hidden = !SD.act; $('#sd-save').disabled = !SD.act; if (!SD.act) return;
+  const conn = SD.appInfo && SD.appInfo.connected, ro = SD.act.action.destructive;
+  box.innerHTML = `<h3>What to put in it</h3>${conn ? '' : '<p class="meta">Connect the app first: the choices come from your own account in it.</p>'}<div class="stack" id="sd-form"><p class="meta">Loading the form</p></div>
+    <div class="sfield"><span class="l"><b>When it runs</b></span><div class="sdchoices">
+      <label><input type="radio" name="sd-mode" value="auto" ${e.mode === 'auto' ? 'checked' : ''} ${ro ? 'disabled' : ''}><span>By itself, right after the final approval</span></label>
+      <label><input type="radio" name="sd-mode" value="confirm" ${e.mode === 'confirm' ? 'checked' : ''}><span>When the approver presses Run${ro ? ' (the only choice for an action that deletes or removes things)' : ''}</span></label></div></div>
+    <div class="sfield"><label class="l" for="sd-label"><b>Name of this step</b></label><input class="field" id="sd-label" value="${esc(e.label)}" maxlength="60" autocomplete="off"></div>
+    <div class="sfield"><span class="l"><b>What a made-up request would send</b></span><pre class="sdprev" id="sd-prev">Fill in the fields above.</pre></div>`;
+  $$('input[name="sd-mode"]', box).forEach(r => { r.onchange = () => { e.mode = r.value; }; });
+  $('#sd-label').oninput = ev => { e.label = ev.target.value; };
+  SD.vis = '';
+  if (SD.state) { SD.vis = SD.state.visible.join('|'); paintForm(); }
+}
+function paintForm() {
+  const host = $('#sd-form'); if (!host || !SD.state) return;
+  const vis = new Set(SD.state.visible), idx = { n: 0 };
+  host.innerHTML = SD.act.schema.fields.map(n => fieldHTML(n, vis, idx)).join('') || '<p class="meta">This action needs nothing more.</p>';
+  sdFields(SD.act.schema.fields).forEach(n => { if (vis.has(n.key)) fillControl(n); });
+  host.oninput = host.onchange = ev => formEvent(ev);
+  showErrors(); showPreview();
+}
+function fillControl(n) {
+  const host = $('#sd-form'), wrap = $(`[data-field="${CSS.escape(n.key)}"]`, host); if (!wrap) return;
+  const cur = pathGet(SD.e.values, n.key);
+  if (n.type === 'dropdown') {
+    const sel = $('select[data-key]', wrap), f = $('[data-filter]', wrap), q = f ? f.value.trim().toLowerCase() : '', list = optList(n);
+    const want = hasVal(cur) || cur === false ? cur : (n.default ?? undefined);
+    const shown = list.map((o, i) => [o, i]).filter(([o]) => !q || String(o.label).toLowerCase().includes(q) || (hasVal(want) && o.value === want));
+    sel.innerHTML = `<option value="">${n.dynamic && !list.length ? (SD.appInfo && SD.appInfo.connected ? 'Loading the choices' : 'Connect the app first') : 'Choose one'}</option>` + shown.map(([o, i]) => `<option value="${i}" ${hasVal(want) && o.value === want ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
+  } else if (n.type === 'multiselect') {
+    const box = $('[data-t="multiselect"]', wrap), list = optList(n), have = Array.isArray(cur) ? cur : (Array.isArray(n.default) ? n.default : []);
+    box.innerHTML = list.length ? list.map((o, i) => `<label><input type="checkbox" value="${i}" ${have.includes(o.value) ? 'checked' : ''}><span>${esc(o.label)}</span></label>`).join('') : `<p class="meta">${n.dynamic && !(SD.appInfo && SD.appInfo.connected) ? 'Connect the app first' : 'Loading the choices'}</p>`;
+  } else if (n.type === 'fetched_group') {
+    const box = $('[data-fg]', wrap), items = SD.fg[n.key], vals = cur && typeof cur === 'object' ? cur : {};
+    if (!items) { box.innerHTML = `<p class="meta">${SD.appInfo && SD.appInfo.connected ? 'Loading the fields' : 'Connect the app first'}</p>`; return; }
+    box.innerHTML = items.length ? items.map((it, i) => `<div class="sfield"><label class="l" for="sg-${i}"><b>${esc(it.label)}</b>${it.required ? ' (required)' : ''}</label><div class="row"><input class="field" id="sg-${i}" data-fg-in="${esc(n.key)}" data-sub="${esc(it.key)}" value="${esc(vals[it.key] ?? '')}" autocomplete="off">${inserter(n.key, 'text', it.key)}</div>${it.help ? `<div class="help">${esc(it.help)}</div>` : ''}</div>`).join('') : '<p class="meta">Choose the columns above first.</p>';
+  }
+}
+function setField(key, v) {
+  const e = SD.e; pathSet(e.values, key, v); SD.touched.add(key);
+  const nodes = sdFields(SD.act.schema.fields), gone = new Set([key]);
+  for (let again = true; again;) { again = false; for (const n of nodes) if (!gone.has(n.key) && n.depends_on.some(d => gone.has(d))) { gone.add(n.key); again = true; } }
+  gone.delete(key);
+  for (const k of gone) { const n = nodes.find(x => x.key === k); if (n.type !== 'fetched_group') pathSet(e.values, k, undefined); delete SD.opts[k]; delete SD.sigs[k]; }  // what depends on a choice starts again; the column values already typed stay
+  refreshState();
+}
+function formEvent(ev) {
+  const el = ev.target, nodes = sdFields(SD.act.schema.fields);
+  if (el.matches('[data-ins]')) {  // put a request field into the text next to it
+    if (!el.value) return;
+    const wrap = el.closest('.row'), input = $('input.field:not([data-ins])', wrap), at = input.selectionStart ?? input.value.length;
+    input.value = input.value.slice(0, at) + `{${el.value}}` + input.value.slice(input.selectionEnd ?? at); el.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); return;
+  }
+  if (el.matches('[data-filter]')) { const n = nodes.find(x => x.key === el.dataset.filter); fillControl(n); return; }
+  if (el.matches('[data-fg-in]')) {
+    const key = el.dataset.fgIn, cur = pathGet(SD.e.values, key), o = cur && typeof cur === 'object' ? cur : {};
+    if (el.value === '') delete o[el.dataset.sub]; else o[el.dataset.sub] = el.value;
+    pathSet(SD.e.values, key, Object.keys(o).length ? o : undefined); SD.touched.add(key); refreshState(); return;
+  }
+  const holder = el.closest('[data-key]'); if (!holder) return;
+  const n = nodes.find(x => x.key === holder.dataset.key), t = holder.dataset.t;
+  if (t === 'text' || t === 'date') setField(n.key, el.value === '' ? undefined : el.value);
+  else if (t === 'number') { const s = el.value.trim(); setField(n.key, s === '' ? undefined : (/^\{[a-z0-9_.]+\}$/.test(s) || Number.isNaN(Number(s)) ? s : Number(s))); }
+  else if (t === 'boolean') setField(n.key, el.value === '' ? undefined : el.value === 'yes');
+  else if (t === 'dropdown') { const o = optList(n)[Number(el.value)]; setField(n.key, el.value === '' || !o ? undefined : o.value); }
+  else if (t === 'multiselect') setField(n.key, $$('input:checked', holder).map(c => optList(n)[Number(c.value)].value));
+  else if (t === 'dictionary') setField(n.key, Object.fromEntries(el.value.split('\n').map(l => l.split(/:(.*)/s)).filter(p => p[0].trim()).map(p => [p[0].trim(), (p[1] || '').trim()])));
+}
+let sdTimer;
+function refreshState(now) {
+  clearTimeout(sdTimer);
+  const run = async () => {
+    const e = SD.e; if (!e || !SD.act) return; const mine = ++SD.seq;
+    try {
+      const r = await api('/steps/form-state', { type_code: SD.code, app: e.app, action_id: e.actionId, values: e.values });
+      if (mine !== SD.seq || SD.e !== e) return;
+      SD.state = r; const sig = r.visible.join('|');
+      if (sig !== SD.vis) { SD.vis = sig; paintForm(); } else { showErrors(); showPreview(); }
+      loadDynamic();
+    } catch (err) { sdErr(err.message); }
+  };
+  if (now) run(); else sdTimer = setTimeout(run, 250);
+}
+function showErrors() {
+  if (!SD.state) return;
+  $$('[data-err]', $('#sd-form')).forEach(b => { const k = b.dataset.err; b.textContent = (SD.showAll || SD.touched.has(k)) ? (SD.state.errors[k] || '') : ''; });
+}
+function showPreview() { const p = $('#sd-prev'); if (p && SD.state) p.textContent = Object.keys(SD.state.preview || {}).length ? flatPairs(SD.state.preview).map(([k, x]) => `${k}: ${x}`).join('\n') : 'Fill in the fields above.'; }
+async function loadDynamic() {  // the choices that come from the app itself (spreadsheets, sheets, columns, projects)
+  const e = SD.e; if (!e || !SD.state || !SD.appInfo || !SD.appInfo.connected) return;
+  const vis = new Set(SD.state.visible);
+  for (const n of sdFields(SD.act.schema.fields)) {
+    if (!vis.has(n.key) || !(n.dynamic || n.type === 'fetched_group')) continue;
+    const sig = JSON.stringify(n.depends_on.map(d => pathGet(e.values, d)));
+    if (SD.sigs[n.key] === sig && (SD.opts[n.key] || SD.fg[n.key])) continue;
+    SD.sigs[n.key] = sig;
+    try {
+      const r = await api('/steps/options', { app: e.app, action_id: e.actionId, field_key: n.key, existing: e.values });
+      if (SD.e !== e || SD.sigs[n.key] !== sig) continue;  // a newer choice came in while this answer was on its way
+      if (n.type === 'fetched_group') {
+        SD.fg[n.key] = r.items.filter(i => i.key);
+        const cur = pathGet(e.values, n.key); if (cur && typeof cur === 'object') { const keep = Object.fromEntries(Object.entries(cur).filter(([k]) => SD.fg[n.key].some(i => i.key === k))); pathSet(e.values, n.key, Object.keys(keep).length ? keep : undefined); }
+      } else SD.opts[n.key] = r.items.filter(i => 'value' in i);
+      fillControl(n);
+    } catch (err) { delete SD.sigs[n.key]; const b = $(`[data-err="${CSS.escape(n.key)}"]`, $('#sd-form')); if (b) b.textContent = err.message; }
+  }
+}
+async function saveStep() {
+  const e = SD.e; if (!e) return; SD.showAll = true; showErrors();
+  const list = SD.view.steps.map(stepPayload), step = { id: e.id, app: e.app, action_id: e.actionId, label: (e.label || '').trim(), run_mode: e.mode, input: e.values };
+  if (e.index >= 0) list[e.index] = step; else list.push(step);
+  $('#sd-save').disabled = true;
+  if (await saveSteps(list, undefined, 'Saved. Run a test, then switch it on.')) { SD.e = null; paintStepList(); } else $('#sd-save').disabled = false;
 }
 
 /* ---------- leave: balances, history, allowances and corrections ---------- */

@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from . import accounts as ac, chaos, delivery as dl, setup as st, viasocket_adapter as vs, viasocket_ai as vsai
-from . import notifications as nt, slack_decisions as sd
+from . import notifications as nt, slack_decisions as sd, steps as sp, viasocket_catalog as vcat
 from .ledger import num
 from .engine import InvalidTransition, NotAuthorized, Refused
 from .registry import DEMO_ORG_ID, open_platform
@@ -376,7 +376,7 @@ def requests(status: str | None = None, employee: str | None = None, ctx: Ctx = 
 def request_detail(rid: int, ctx: Ctx = Depends(auth)):
     r = _get_visible(ctx, rid)
     r["status_text"] = ctx.engine.status_text(r)
-    return {"request": r, "timeline": ctx.engine.timeline(rid)}
+    return {"request": r, "timeline": ctx.engine.timeline(rid), "steps": ctx.engine.stepper.view(rid, with_input=ctx.is_admin, actor=ctx.uid)}
 
 
 @app.post("/api/requests/{rid}/approve")
@@ -413,6 +413,28 @@ def cancel(rid: int, ctx: Ctx = Depends(auth)):
 def replay(rid: int, ctx: Ctx = Depends(auth)):
     _get_visible(ctx, rid)
     return guard(ctx.engine.replay, rid, ctx.uid)
+
+
+class StepAct(BaseModel):
+    reason: str | None = None
+
+
+@app.post("/api/requests/{rid}/steps/{pos}/run")
+def step_run(rid: int, pos: int, ctx: Ctx = Depends(auth)):
+    _get_visible(ctx, rid)
+    return guard(ctx.engine.stepper.confirm, rid, pos, ctx.uid)
+
+
+@app.post("/api/requests/{rid}/steps/{pos}/again")
+def step_again(rid: int, pos: int, ctx: Ctx = Depends(auth)):
+    _get_visible(ctx, rid)
+    return guard(ctx.engine.stepper.replay, rid, ctx.uid, pos, "again")
+
+
+@app.post("/api/requests/{rid}/steps/{pos}/mark-done")
+def step_mark_done(rid: int, pos: int, b: StepAct, ctx: Ctx = Depends(auth)):
+    _get_visible(ctx, rid)
+    return guard(ctx.engine.stepper.replay, rid, ctx.uid, pos, "mark_done", b.reason or "")
 
 
 @app.get("/api/inbox")
@@ -625,7 +647,12 @@ def setup_role_delete(code: str, ctx: Ctx = Depends(real_admin)):
 
 @app.get("/api/setup/types")
 def setup_types(ctx: Ctx = Depends(admin)):
-    return {"types": st.list_types(ctx.engine.d, ctx.engine.s), **_pickable(ctx), "demo": ctx.is_demo}
+    types = st.list_types(ctx.engine.d, ctx.engine.s)
+    counts = {r["type_code"]: r for r in ctx.engine.s.all("SELECT type_code, COUNT(*) n, SUM(enabled) on_ FROM type_steps GROUP BY type_code")}
+    for t in types:  # whether a type can have steps in other apps, and how many it has
+        c = counts.get(t["code"]) or {"n": 0, "on_": 0}
+        t["steps"] = {"eligible": sp.eligible(ctx.engine.d, t["code"])[0], "count": c["n"], "on": int(c["on_"] or 0)}
+    return {"types": types, **_pickable(ctx), "demo": ctx.is_demo}
 
 
 @app.post("/api/setup/types/{code}")
@@ -933,6 +960,217 @@ def connection_test(b: ConnAct, ctx: Ctx = Depends(real_admin)):
     return {"outcome": r.kind, "code": r.code, "error": vs.redact(r.error), "data": vs.scrub(r.data)}
 
 
+# ---------------- After-approval steps (admin). The owner picks any app from viaSocket's catalog and what to do in it once a request type is approved (rule 21). ----------------
+class StepIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int | None = None
+    app: str
+    action_id: str
+    label: str | None = None
+    run_mode: str
+    input: dict = {}
+
+
+class StepsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    steps: list[StepIn]
+    close_when_done: bool | None = None
+
+
+class StepOn(BaseModel):
+    enabled: bool
+
+
+class StepTest(BaseModel):
+    confirm: bool = False
+    typed: str | None = None
+
+
+class FormState(BaseModel):
+    type_code: str
+    app: str
+    action_id: str
+    values: dict = {}
+
+
+class PickerIn(BaseModel):
+    app: str
+    action_id: str
+    field_key: str
+    existing: dict = {}
+    search: str | None = None
+
+
+def _step_action(slug, action_id):
+    """The catalog's app and a described action, or an HTTP error the admin can read."""
+    try:
+        return sp.find_action(vcat.get_catalog(), slug, action_id)
+    except sp.StepError as e:
+        raise HTTPException(e.status, str(e))
+
+
+def _step_app(slug):
+    try:
+        app_ = vcat.get_catalog().app(slug)
+    except vcat.CatalogError as e:
+        raise HTTPException(e.status, str(e))
+    if not app_:
+        raise HTTPException(404, "That app is not in the catalog.")
+    return app_
+
+
+def _connected(ctx, slug):
+    row = vs.ConnectionStore(ctx.engine.s, ctx.org["id"]).get(slug)
+    return bool(row and row["script_id"])
+
+
+def _steps_view(ctx, code):
+    v = sp.view(ctx.engine.d, ctx.engine.s, code)
+    if not v["eligible"] and v["reason"].startswith("No such"):
+        raise HTTPException(404, v["reason"])
+    for s_ in v["steps"]:
+        s_["connected"] = _connected(ctx, s_["app"])
+    return {**v, "demo": ctx.is_demo}
+
+
+@app.get("/api/setup/steps/{code}")
+def setup_steps(code: str, ctx: Ctx = Depends(admin)):
+    return _steps_view(ctx, code)
+
+
+@app.post("/api/setup/steps/{code}")
+def setup_steps_save(code: str, b: StepsIn, ctx: Ctx = Depends(real_admin)):
+    changes = _setup(sp.save_steps, ctx.engine.s, ctx.engine.d, code, [x.model_dump() for x in b.steps], vcat.get_catalog(), ctx.uid, b.close_when_done)
+    if changes:
+        _setup_changed(ctx, "steps", code, changes)
+    return _steps_view(ctx, code)
+
+
+@app.post("/api/setup/steps/{code}/{step_id}/enabled")
+def setup_step_enabled(code: str, step_id: int, b: StepOn, ctx: Ctx = Depends(real_admin)):
+    changes = _setup(sp.set_enabled, ctx.engine.s, code, step_id, b.enabled)
+    _setup_changed(ctx, "steps", code, changes)
+    return _steps_view(ctx, code)
+
+
+@app.post("/api/setup/steps/{code}/{step_id}/test")
+def setup_step_test(code: str, step_id: int, b: StepTest, ctx: Ctx = Depends(real_admin)):
+    """The only real call before a company goes live: it runs this step once in the app, with made-up request details."""
+    if not b.confirm:
+        raise HTTPException(422, "Confirm that this really runs in the app.")
+    _limit(f"steptest:{ctx.org['id']}", 10, 600)
+    result = _setup(ctx.engine.stepper.test, code, step_id, ctx.uid, b.typed)
+    return {**result, "view": _steps_view(ctx, code)}
+
+
+@app.get("/api/steps/apps")
+def steps_apps(q: str = "", ctx: Ctx = Depends(real_admin)):
+    try:
+        found = vcat.get_catalog().search(q)
+    except vcat.CatalogError as e:
+        raise HTTPException(e.status, str(e))
+    return {"apps": [{**a, "connected": _connected(ctx, a["slug"])} for a in found]}
+
+
+@app.get("/api/steps/apps/{slug}")
+def steps_app(slug: str, ctx: Ctx = Depends(real_admin)):
+    app_ = _step_app(slug)
+    actions = []
+    for raw in app_["actions"]:
+        d_ = sp.describe_action(raw)
+        actions.append({k: d_[k] for k in ("action_id", "name", "description", "destructive", "supported", "reasons")})
+    return {"slug": slug, "name": app_["name"], "auth_type": app_["auth_type"], "requires_auth": app_["requires_auth"], "connected": _connected(ctx, slug), "actions": actions}
+
+
+@app.get("/api/steps/apps/{slug}/actions/{action_id}")
+def steps_action(slug: str, action_id: str, ctx: Ctx = Depends(real_admin)):
+    app_, a = _step_action(slug, action_id)
+    raw = next(x for x in app_["actions"] if x["action_id"] == action_id)
+    sample = vs.scrub(raw.get("sample_output"))
+    return {"app": {"slug": slug, "name": app_["name"]}, "action": {k: a[k] for k in ("action_id", "name", "description", "destructive", "supported", "reasons", "version")},
+            "schema": a["schema"], "sample": sample if len(json.dumps(sample, default=str)) <= 3000 else None}
+
+
+@app.post("/api/steps/form-state")
+def steps_form_state(b: FormState, ctx: Ctx = Depends(real_admin)):
+    ok, why = sp.eligible(ctx.engine.d, b.type_code)
+    if not ok:
+        raise HTTPException(422, why)
+    _, a = _step_action(b.app, b.action_id)
+    cleaned, errors, dropped, unreadable = sp.validate_values(a["schema"], b.values, sp.tokens_for(b.type_code))
+    return {"visible": sp.visible_keys(a["schema"], b.values if isinstance(b.values, dict) else {}), "errors": errors, "dropped": dropped, "unreadable": unreadable, "cleaned": cleaned,
+            "preview": sp.render(cleaned, sp.sample_context(b.type_code))}  # what a made-up request would send: the same code that fills a real one
+
+
+@app.post("/api/steps/options")
+def steps_options(b: PickerIn, ctx: Ctx = Depends(real_admin)):
+    app_, a = _step_action(b.app, b.action_id)
+    if b.field_key not in sp.field_keys(a["schema"]):
+        raise HTTPException(404, "That field is not part of the action's form.")
+    if len(json.dumps(b.existing, default=str)) > 8000:
+        raise HTTPException(422, "Too many values were sent.")
+    client, store = _real(ctx)
+    row = store.get(app_["slug"])
+    if not row or not row["auth_id"]:
+        raise HTTPException(409, f"{app_['name']} is not connected yet.")
+    r = client.picker(a["action_version_id"], b.field_key, row["auth_id"], b.existing, (b.search or "")[:80])
+    if not r.ok:
+        raise HTTPException(422 if r.kind == vs.PERMANENT else 503, vs.redact(r.error, store.secrets()))
+    return r.data
+
+
+@app.get("/api/steps/apps/{slug}/connect")
+def steps_connect(slug: str, actions: str = "", ctx: Ctx = Depends(real_admin)):
+    """Everything the Connect popup needs for this app. The popup asks consent only for the actions named here."""
+    app_ = _step_app(slug)
+    if not app_["requires_auth"]:
+        raise HTTPException(422, "Apps that need no sign-in are not supported yet.")
+    known = {a["action_id"] for a in app_["actions"]}
+    wanted = [x for x in actions.split(",") if x][:20]
+    if not wanted or any(x not in known for x in wanted):
+        raise HTTPException(422, "Choose which actions you will use before connecting.")
+    client, _ = _real(ctx)
+    return {"token": client.token(), "service_id": app_["service_id"], "action_ids": wanted, "connect_js": vs.CONNECT_JS}
+
+
+@app.post("/api/steps/apps/{slug}/connected")
+def steps_connected(slug: str, b: ConnAct, ctx: Ctx = Depends(real_admin)):
+    app_ = _step_app(slug)
+    client, store = _real(ctx)
+    if not b.auth_id:
+        raise HTTPException(422, "no connection id was returned")
+    r = client.connections()
+    if not r.ok:
+        _vfail(r)
+    if str(b.auth_id) not in {str(c.get("id")) for c in r.data if isinstance(c, dict)}:
+        raise HTTPException(422, "that connection does not belong to this company")  # a forged or stale id
+    en = client.enable(app_["service_id"], b.auth_id)
+    if not en.ok:
+        _vfail(en)
+    store.save(slug, b.auth_id, en.data)
+    ctx.engine.audit(None, ctx.uid, "connection_added", {"app": slug, "reused_runner": en.meta.get("reused")})
+    return {"ok": True}
+
+
+@app.post("/api/steps/apps/{slug}/disconnect")
+def steps_disconnect(slug: str, ctx: Ctx = Depends(real_admin)):
+    if slug in vs.APPS:
+        raise HTTPException(422, "Slack and Gmail are disconnected on the Integrations page.")
+    _step_app(slug)
+    client, store = _real(ctx)
+    row = store.get(slug)
+    switched_off = 0
+    if row:
+        client.api("PUT", f"/embed/updatestatus/{row['script_id']}?status=0")  # remove the runner first, then the connection
+        r = client.revoke(row["auth_id"])
+        if not r.ok:
+            raise HTTPException(422, vs.redact(r.error, store.secrets()))
+        store.delete(slug)
+        switched_off = ctx.engine.s.q("UPDATE type_steps SET enabled=0 WHERE app_slug=? AND enabled=1", (slug,)).rowcount
+        ctx.engine.audit(None, ctx.uid, "connection_removed", {"app": slug, "steps_switched_off": switched_off})
+    return {"ok": True, "steps_switched_off": switched_off}
+
+
 # ---------------- Delivery status ----------------
 @app.get("/api/delivery")
 def delivery_status(ctx: Ctx = Depends(admin)):
@@ -1203,19 +1441,25 @@ def me_test(ctx: Ctx = Depends(auth)):
 
 
 # ---------------- Background worker: delivery for every company, reminders and escalations for real ones ----------------
+def _worker_pass(tick):
+    """One round of background work for every company: deliver messages, run queued steps in other apps, and (for real companies, every sixth round) reminders and escalations."""
+    for eng in registry.all_engines():
+        try:
+            eng.live.deliver_pending()
+            eng.stepper.run_pending()  # live companies only, a few per round
+            if tick % 6 == 0 and not eng.is_demo:  # the demo company moves only when the presenter moves its clock
+                eng.sweep()
+        except Exception as ex:  # the worker must never die; the log gets the kind of error and the company, never message text
+            log.warning("worker round failed for %s: %s", getattr(eng, "org_id", "?"), type(ex).__name__)
+
+
 def _worker():
     def loop():
         tick = 0
         while True:
             time.sleep(10)
             tick += 1
-            for eng in registry.all_engines():
-                try:
-                    eng.live.deliver_pending()
-                    if tick % 6 == 0 and not eng.is_demo:  # the demo company moves only when the presenter moves its clock
-                        eng.sweep()
-                except Exception:  # the worker must never die or log message text
-                    pass
+            _worker_pass(tick)
 
     threading.Thread(target=loop, daemon=True, name="worker").start()
 

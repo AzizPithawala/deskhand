@@ -21,7 +21,7 @@ NOT_DELIVERED_KINDS = {"delivery_failed"}
 # Who gets what (docs/AGENT_PLATFORM_PLAN.md). Chat replies, policy answers and "request received" stay in the Deskhand chat; everything that needs someone's attention
 # or tells them a decision goes to their Slack DM, and the important ones also by email.
 SLACK_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "escalated", "stage_approved", "approved", "rejected", "pending_update", "task", "assigned", "fulfilled",
-               "parked", "delay", "breaker", "approval_fallback", "reject_link", "decision_ack"}
+               "parked", "delay", "breaker", "approval_fallback", "reject_link", "decision_ack", "step_rehearsed"}
 EMAIL_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "escalated", "approved", "rejected", "fulfilled", "task", "parked"}
 NEEDS_LINK_KINDS = {"approval_request", "reminder", "escalation_1", "escalation_2", "task", "parked", "approval_fallback", "reject_link"}  # addressed to someone who acts: link to the decision page
 FROM_REQUESTER_KINDS = {"approval_request"}  # the request email comes from the requester's own mailbox when they connected one
@@ -81,7 +81,8 @@ class Delivery:
             dropped = self.e.s.q("UPDATE outbox SET delivery_status='skipped', delivery_note='written before the mode changed, not sent' WHERE delivery_status IN ('pending','failed')").rowcount
         self.e.s.set_setting("delivery_mode", mode)
         self.e.s.set_setting("rehearsal_person", who["id"])
-        self.e.audit(None, actor, "delivery_mode_changed", {"mode": mode, "rehearsal_person": who["id"], "was": list(old), "unsent_messages_dropped": dropped})
+        skipped = self.e.stepper.skip_unfinished("the delivery mode changed") if mode != old[0] else 0  # steps prepared under the other mode do not run now either
+        self.e.audit(None, actor, "delivery_mode_changed", {"mode": mode, "rehearsal_person": who["id"], "was": list(old), "unsent_messages_dropped": dropped, "unfinished_steps_skipped": skipped})
 
     # ---------- readiness: configuration lives in the database, set on the Integrations page ----------
     def _conn(self, app):

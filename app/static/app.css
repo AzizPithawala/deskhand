@@ -523,6 +523,37 @@ table.cards td.dact { white-space: normal; }
   table.cards td[data-l]::before { content: attr(data-l) ": "; color: var(--muted); }
 }
 
+/* ---------- after-approval steps: the list of a type's steps, and a form drawn from the app's own form definition ---------- */
+dialog.wide { max-width: min(780px, 96vw); max-height: 92vh; overflow: auto; }
+.stepcard { display: grid; gap: 6px; border: 1px solid var(--rule); border-radius: var(--radius); padding: var(--s-3) var(--s-4); background: var(--surface); }
+.stepcard .h { display: flex; gap: var(--s-2) var(--s-3); align-items: baseline; flex-wrap: wrap; }
+.stepcard .btns { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-1); }
+.sdsec { border-top: 1px solid var(--rule); padding-top: var(--s-3); display: grid; gap: var(--s-2); }
+.sdsec > h3 { font-size: 15px; margin: 0; letter-spacing: -.01em; }
+.picklist { display: grid; gap: var(--s-1); max-height: 260px; overflow: auto; }
+.picklist button { text-align: left; display: grid; gap: 2px; min-height: 44px; padding: 8px var(--s-3); border: 1px solid var(--field-border); border-radius: var(--radius); background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+.picklist button:hover:not([disabled]) { border-color: var(--accent); }
+.picklist button[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.picklist button[disabled] { cursor: not-allowed; color: var(--muted); }
+.picklist .meta { font-size: var(--t-sm); }
+.sfield { display: grid; gap: 4px; }
+.sfield > .l b { font-weight: 600; }
+.sfield .row { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+.sfield .row > .field { width: auto; }
+.sfield .row > .field:first-child { flex: 3 1 220px; min-width: 0; }
+.sfield .row > .ins { flex: 1 1 170px; min-width: 0; }
+.sfield .help { color: var(--muted); font-size: var(--t-sm); }
+.sfield .bad { color: var(--rejected); font-size: var(--t-sm); }
+.sgroup { border: 1px solid var(--rule); border-radius: var(--radius); padding: var(--s-3); display: grid; gap: var(--s-3); margin: 0; min-width: 0; }
+.sgroup > legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
+.sdprev { background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); padding: var(--s-3); font: var(--t-sm)/1.5 inherit; white-space: pre-wrap; word-break: break-word; max-height: 170px; overflow: auto; margin: 0; }
+.stepbar { display: grid; gap: var(--s-3); margin: var(--s-4) 0; }
+.stepbar .sb { display: grid; gap: var(--s-2); padding: var(--s-3) var(--s-4); border: 1px solid var(--accent); border-radius: var(--radius); background: var(--raised); }
+.stepbar .btns { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+.sdchoices { display: grid; gap: var(--s-1); }
+.sdchoices label { display: flex; gap: 10px; align-items: flex-start; min-height: 36px; cursor: pointer; }
+.sdchoices input { width: 20px; height: 20px; margin-top: 2px; }
+
 /* ---------- the illustration shared by the landing page and the sign-in pages ---------- */
 .art { margin: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-xl); padding: var(--s-6); box-shadow: var(--shadow-2); }
 .art .msg { max-width: 100%; }

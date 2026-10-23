@@ -40,6 +40,9 @@ def report(db_path=None, tenant=None):
                   ("delivery is working (all of the above)", yn(working)), ("cap used today", f"{used}/{dl.DAILY_CAP}" + (" (CAP REACHED)" if used >= dl.DAILY_CAP else "")),
                   ("outbox delivery status", ", ".join(f"{k} {v}" for k, v in sorted(pend.items())) or "empty"),
                   ("business roles with a holder", f"{roles['h'] or 0} of {roles['n']}")]
+        st = s.one("SELECT COUNT(*) n, COALESCE(SUM(enabled), 0) e FROM type_steps")
+        runs = {r["status"]: r["c"] for r in s.all("SELECT status, COUNT(*) c FROM step_runs GROUP BY status")}
+        lines += [("steps in other apps", f"{st['n']} set up, {st['e']} switched on"), ("step runs", ", ".join(f"{k} {v}" for k, v in sorted(runs.items())) or "none")]
     lines.append(("commit checked out", _git()))
     return lines
 

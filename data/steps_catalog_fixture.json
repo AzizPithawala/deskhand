@@ -1,0 +1,2347 @@
+{
+ "_about": "Fixture for FakeCatalog (tests and offline dev). Keys are viaSocket app slugs.",
+ "apps": {
+  "google-sheets": {
+   "name": "Google Sheets",
+   "service_id": "fixture-google-sheets",
+   "auth_type": "Auth2.0",
+   "requires_auth": true,
+   "real": true,
+   "note": "Recorded from viaSocket's public catalog on 2026-10-23 (spike 5A.0) and trimmed to 8 of 23 actions. Public data; ids are catalog ids, not credentials.",
+   "actions": [
+    {
+     "action_id": "row1qvdf0nuc",
+     "action_version_id": "rowvmy1uc9yo",
+     "name": "Update Spreadsheet Row",
+     "description": "Update columns in sheet row",
+     "input_schema": {
+      "steps": {
+       "root": [
+        "spreadsheet_Id",
+        "grid_Id",
+        "record",
+        "column_key",
+        "valueInputOption",
+        "column_selected",
+        "column_name"
+       ],
+       "column_name": []
+      },
+      "blocks": {
+       "record": {
+        "key": "record",
+        "help": "Enter the row number you want to update.",
+        "type": "number",
+        "label": "Row Number",
+        "required": true,
+        "dependsOn": [],
+        "placeholder": "5",
+        "visibilityCondition": "context?.inputData?.grid_Id"
+       },
+       "grid_Id": {
+        "key": "grid_Id",
+        "help": "Select the Sheet or Enter Sheet ID.",
+        "type": "dropdown",
+        "label": "Sheet",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id"
+        ],
+        "customHelp": "You will find the sheet ID on the spreadsheet URL gid=, or you can use the action like search sheet or list sheet.",
+        "placeholder": "Choose Sheet",
+        "customInputLabel": "Enter Sheet ID",
+        "customPlaceholder": "38470421"
+       },
+       "column_key": {
+        "key": "column_key",
+        "help": "Determines how the data columns are labelled.",
+        "type": "boolean",
+        "label": "Does your first row contain column name?",
+        "options": [
+         {
+          "label": "Yes",
+          "value": true
+         },
+         {
+          "label": "No",
+          "value": false
+         }
+        ],
+        "children": [
+         {
+          "label": "Yes",
+          "value": true
+         },
+         {
+          "label": "No",
+          "value": false
+         }
+        ],
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "Enter \"true\" if the first row contains the column name, else \"false\".",
+        "placeholder": "Choose Option",
+        "defaultValue": {
+         "label": "Yes",
+         "value": true
+        },
+        "customPlaceholder": "E.g., true ",
+        "visibilityCondition": "context?.inputData?.spreadsheet_Id && context?.inputData?.grid_Id"
+       },
+       "column_name": {
+        "key": "column_name",
+        "help": "Enter the Column Values.",
+        "type": "input groups",
+        "label": "Column Values",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id",
+         "grid_Id",
+         "column_key",
+         "column_selected"
+        ]
+       },
+       "spreadsheet_Id": {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet .",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet ",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": " 1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       },
+       "column_selected": {
+        "key": "column_selected",
+        "help": "Select the columns for entering the values.",
+        "type": "multiselect",
+        "label": "Columns",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id",
+         "grid_Id",
+         "column_key"
+        ],
+        "placeholder": "Select Columns to Insert Data",
+        "customInputLabel": "Enter Column name in array.",
+        "customPlaceholder": "[\"Title\", \"Status\"]"
+       },
+       "valueInputOption": {
+        "key": "valueInputOption",
+        "help": "Choose how the entered values should be interpreted by Google Sheets. Default is RAW",
+        "type": "dropdown",
+        "label": "Value Input Option",
+        "options": [
+         {
+          "label": "Raw (store value exactly as entered)",
+          "value": "RAW"
+         },
+         {
+          "label": "User Entered (interpret as if typed by a user, e.g. formulas, dates)",
+          "value": "USER_ENTERED"
+         }
+        ],
+        "children": [
+         {
+          "label": "Raw (store value exactly as entered)",
+          "value": "RAW"
+         },
+         {
+          "label": "User Entered (interpret as if typed by a user, e.g. formulas, dates)",
+          "value": "USER_ENTERED"
+         }
+        ],
+        "required": false,
+        "dependsOn": [],
+        "customInputLabel": "Enter value input option",
+        "customPlaceholder": "RAW or USER_ENTERED"
+       }
+      },
+      "inputFields": [
+       {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet .",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet ",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": " 1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       },
+       {
+        "key": "grid_Id",
+        "help": "Select the Sheet or Enter Sheet ID.",
+        "type": "dropdown",
+        "label": "Sheet",
+        "required": true,
+        "customHelp": "You will find the sheet ID on the spreadsheet URL gid=, or you can use the action like search sheet or list sheet.",
+        "placeholder": "Choose Sheet",
+        "customInputLabel": "Enter Sheet ID",
+        "customPlaceholder": "38470421"
+       },
+       {
+        "key": "record",
+        "help": "Enter the row number you want to update.",
+        "type": "number",
+        "label": "Row Number",
+        "required": true,
+        "placeholder": "5",
+        "visibilityCondition": "context?.inputData?.grid_Id"
+       },
+       {
+        "key": "column_key",
+        "help": "Determines how the data columns are labelled.",
+        "type": "boolean",
+        "label": "Does your first row contain column name?",
+        "options": [
+         {
+          "label": "Yes",
+          "value": true
+         },
+         {
+          "label": "No",
+          "value": false
+         }
+        ],
+        "required": true,
+        "customHelp": "Enter \"true\" if the first row contains the column name, else \"false\".",
+        "placeholder": "Choose Option",
+        "defaultValue": {
+         "label": "Yes",
+         "value": true
+        },
+        "customPlaceholder": "E.g., true ",
+        "visibilityCondition": "context?.inputData?.spreadsheet_Id && context?.inputData?.grid_Id"
+       },
+       {
+        "key": "valueInputOption",
+        "help": "Choose how the entered values should be interpreted by Google Sheets. Default is RAW",
+        "type": "dropdown",
+        "label": "Value Input Option",
+        "options": [
+         {
+          "label": "Raw (store value exactly as entered)",
+          "value": "RAW"
+         },
+         {
+          "label": "User Entered (interpret as if typed by a user, e.g. formulas, dates)",
+          "value": "USER_ENTERED"
+         }
+        ],
+        "required": false,
+        "customInputLabel": "Enter value input option",
+        "customPlaceholder": "RAW or USER_ENTERED"
+       },
+       {
+        "key": "column_selected",
+        "help": "Select the columns for entering the values.",
+        "type": "multiselect",
+        "label": "Columns",
+        "required": true,
+        "placeholder": "Select Columns to Insert Data",
+        "customInputLabel": "Enter Column name in array.",
+        "customPlaceholder": "[\"Title\", \"Status\"]"
+       },
+       {
+        "key": "column_name",
+        "help": "Enter the Column Values.",
+        "type": "input groups",
+        "label": "Column Values",
+        "required": true
+       }
+      ]
+     },
+     "sample_output": {
+      "data": {
+       "_sheet_id": "0",
+       "_rowNumber": 1,
+       "_sheet_title": "S1",
+       "_spreadsheet_id": "sheet_1"
+      }
+     },
+     "updated_at": "2026-06-24T05:27:22.000Z",
+     "versionid": "V26"
+    },
+    {
+     "action_id": "rowe4xn7u0ek",
+     "action_version_id": "rowu9y915b4h",
+     "name": "Delete Rows",
+     "description": "Delete one or more rows from a specific sheet in a Google Spreadsheet using a row range or row numbers.",
+     "input_schema": {
+      "steps": {
+       "root": [
+        "spreadsheet_Id",
+        "grid_Id",
+        "deletion_mode",
+        "start_row",
+        "end_row",
+        "row_numbers"
+       ]
+      },
+      "blocks": {
+       "end_row": {
+        "key": "end_row",
+        "help": "Enter the last row number to delete (inclusive). Example: entering 10 will delete up to and including row 10.",
+        "type": "number",
+        "label": "End Row Number",
+        "required": true,
+        "dependsOn": [],
+        "placeholder": "10",
+        "visibilityCondition": "context.inputData.deletion_mode === 'range'"
+       },
+       "grid_Id": {
+        "key": "grid_Id",
+        "help": "Select the Sheet or Enter Sheet ID.",
+        "type": "dropdown",
+        "label": "Sheet",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id"
+        ],
+        "customHelp": "You will find the sheet ID on the spreadsheet URL gid=, or you can use the action like search sheet or list sheet.",
+        "placeholder": "Choose Sheet",
+        "customInputLabel": "Enter Sheet ID",
+        "customPlaceholder": "38470421"
+       },
+       "start_row": {
+        "key": "start_row",
+        "help": "Enter the first row number to delete. Row numbers are 1-based (row 1 is the first row of the sheet). If your sheet has a header, row 2 is typically the first data row.",
+        "type": "number",
+        "label": "Start Row Number",
+        "required": true,
+        "dependsOn": [],
+        "placeholder": "2",
+        "visibilityCondition": "context.inputData.deletion_mode === 'range'"
+       },
+       "row_numbers": {
+        "key": "row_numbers",
+        "help": "Enter the row numbers to delete, separated by commas. ",
+        "type": "string",
+        "label": "Row Numbers to Delete",
+        "required": true,
+        "dependsOn": [],
+        "placeholder": "3, 7, 12, 15",
+        "visibilityCondition": "context.inputData.deletion_mode === 'specific'"
+       },
+       "deletion_mode": {
+        "key": "deletion_mode",
+        "help": "Choose how to specify which rows to delete. Use 'Row Range' to delete a consecutive block of rows, or 'Specific Rows' to delete individual rows by number.",
+        "type": "dropdown",
+        "label": "Deletion Mode",
+        "options": [
+         {
+          "label": "Row Range (range)",
+          "value": "range"
+         },
+         {
+          "label": "Specific Rows (comma-seperated)",
+          "value": "specific"
+         }
+        ],
+        "children": [
+         {
+          "label": "Row Range (range)",
+          "value": "range"
+         },
+         {
+          "label": "Specific Rows (comma-seperated)",
+          "value": "specific"
+         }
+        ],
+        "required": true,
+        "dependsOn": [],
+        "defaultValue": {
+         "label": "Specific Rows (comma-seperated)",
+         "value": "specific"
+        }
+       },
+       "spreadsheet_Id": {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet.",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": "1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       }
+      },
+      "inputFields": [
+       {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet.",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": "1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       },
+       {
+        "key": "grid_Id",
+        "help": "Select the Sheet or Enter Sheet ID.",
+        "type": "dropdown",
+        "label": "Sheet",
+        "required": true,
+        "customHelp": "You will find the sheet ID on the spreadsheet URL gid=, or you can use the action like search sheet or list sheet.",
+        "placeholder": "Choose Sheet",
+        "customInputLabel": "Enter Sheet ID",
+        "customPlaceholder": "38470421"
+       },
+       {
+        "key": "deletion_mode",
+        "help": "Choose how to specify which rows to delete. Use 'Row Range' to delete a consecutive block of rows, or 'Specific Rows' to delete individual rows by number.",
+        "type": "dropdown",
+        "label": "Deletion Mode",
+        "options": [
+         {
+          "label": "Row Range (range)",
+          "value": "range"
+         },
+         {
+          "label": "Specific Rows (comma-seperated)",
+          "value": "specific"
+         }
+        ],
+        "required": true,
+        "defaultValue": {
+         "label": "Specific Rows (comma-seperated)",
+         "value": "specific"
+        }
+       },
+       {
+        "key": "start_row",
+        "help": "Enter the first row number to delete. Row numbers are 1-based (row 1 is the first row of the sheet). If your sheet has a header, row 2 is typically the first data row.",
+        "type": "number",
+        "label": "Start Row Number",
+        "required": true,
+        "placeholder": "2",
+        "visibilityCondition": "context.inputData.deletion_mode === 'range'"
+       },
+       {
+        "key": "end_row",
+        "help": "Enter the last row number to delete (inclusive). Example: entering 10 will delete up to and including row 10.",
+        "type": "number",
+        "label": "End Row Number",
+        "required": true,
+        "placeholder": "10",
+        "visibilityCondition": "context.inputData.deletion_mode === 'range'"
+       },
+       {
+        "key": "row_numbers",
+        "help": "Enter the row numbers to delete, separated by commas. ",
+        "type": "string",
+        "label": "Row Numbers to Delete",
+        "required": true,
+        "placeholder": "3, 7, 12, 15",
+        "visibilityCondition": "context.inputData.deletion_mode === 'specific'"
+       }
+      ]
+     },
+     "sample_output": {
+      "success": true,
+      "spreadsheetId": "sp_1"
+     },
+     "updated_at": "2026-06-24T07:04:28.000Z",
+     "versionid": "V9"
+    },
+    {
+     "action_id": "rowxsuumuqrt",
+     "action_version_id": "row5dxvkb0mr",
+     "name": "Add New Row to Sheet",
+     "description": "Conditionally require column selection only for header-based mapping and support direct column-letter value mapping when no header row is used.",
+     "input_schema": {
+      "steps": {
+       "root": [
+        "spreadsheet_Id",
+        "grid_Id",
+        "column_key",
+        "column_selected",
+        "column_name"
+       ],
+       "column_name": []
+      },
+      "blocks": {
+       "grid_Id": {
+        "key": "grid_Id",
+        "help": "Select the Sheet or Enter Sheet ID.",
+        "type": "dropdown",
+        "label": "Sheet",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id"
+        ],
+        "customHelp": "You will find the sheet ID on the spreadsheet URL gid=, or you can use the action like search sheet or list sheet.",
+        "placeholder": "Choose Sheet",
+        "customInputLabel": "Enter Sheet ID",
+        "customPlaceholder": "38470421"
+       },
+       "column_key": {
+        "key": "column_key",
+        "help": "Determines how the data columns are labelled.",
+        "type": "boolean",
+        "label": "Does your first row contain column name?",
+        "options": [
+         {
+          "label": "Yes",
+          "value": true
+         },
+         {
+          "label": "No",
+          "value": false
+         }
+        ],
+        "children": [
+         {
+          "label": "Yes",
+          "value": true
+         },
+         {
+          "label": "No",
+          "value": false
+         }
+        ],
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "Enter \"true\" if the first row contains the column name, else \"false\".",
+        "placeholder": "Choose Option",
+        "defaultValue": {
+         "label": "Yes",
+         "value": true
+        },
+        "customPlaceholder": "true ",
+        "visibilityCondition": "context?.inputData?.spreadsheet_Id && context?.inputData?.grid_Id"
+       },
+       "column_name": {
+        "key": "column_name",
+        "help": "Enter the Column Values.",
+        "type": "input groups",
+        "label": "Column Values",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id",
+         "grid_Id",
+         "column_key",
+         "column_selected"
+        ]
+       },
+       "spreadsheet_Id": {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet .",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": "1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       },
+       "column_selected": {
+        "key": "column_selected",
+        "help": "Select the columns for entering the values.",
+        "type": "multiselect",
+        "label": "Columns",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id",
+         "grid_Id",
+         "column_key"
+        ],
+        "placeholder": "Select Columns to Insert Data",
+        "customInputLabel": "Enter Column name in array.",
+        "customPlaceholder": " [\"Title\", \"Status\"]"
+       }
+      },
+      "inputFields": [
+       {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet .",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": "1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       },
+       {
+        "key": "grid_Id",
+        "help": "Select the Sheet or Enter Sheet ID.",
+        "type": "dropdown",
+        "label": "Sheet",
+        "required": true,
+        "customHelp": "You will find the sheet ID on the spreadsheet URL gid=, or you can use the action like search sheet or list sheet.",
+        "placeholder": "Choose Sheet",
+        "customInputLabel": "Enter Sheet ID",
+        "customPlaceholder": "38470421"
+       },
+       {
+        "key": "column_key",
+        "help": "Determines how the data columns are labelled.",
+        "type": "boolean",
+        "label": "Does your first row contain column name?",
+        "options": [
+         {
+          "label": "Yes",
+          "value": true
+         },
+         {
+          "label": "No",
+          "value": false
+         }
+        ],
+        "required": true,
+        "customHelp": "Enter \"true\" if the first row contains the column name, else \"false\".",
+        "placeholder": "Choose Option",
+        "defaultValue": {
+         "label": "Yes",
+         "value": true
+        },
+        "customPlaceholder": "true ",
+        "visibilityCondition": "context?.inputData?.spreadsheet_Id && context?.inputData?.grid_Id"
+       },
+       {
+        "key": "column_selected",
+        "help": "Select the columns for entering the values.",
+        "type": "multiselect",
+        "label": "Columns",
+        "required": true,
+        "placeholder": "Select Columns to Insert Data",
+        "customInputLabel": "Enter Column name in array.",
+        "customPlaceholder": " [\"Title\", \"Status\"]"
+       },
+       {
+        "key": "column_name",
+        "help": "Enter the Column Values.",
+        "type": "input groups",
+        "label": "Column Values",
+        "required": true
+       }
+      ]
+     },
+     "sample_output": {
+      "data": {
+       "email": "user@example.com",
+       "_sheet_id": "SHEET_ID",
+       "_rowNumber": 1,
+       "_sheet_title": "Sheet1",
+       "_spreadsheet_id": "SPREADSHEET_ID"
+      },
+      "success": true
+     },
+     "updated_at": "2026-09-18T12:41:07.000Z",
+     "versionid": "V66"
+    },
+    {
+     "action_id": "rowetjd2kmog",
+     "action_version_id": "rowc6kvx92xf",
+     "name": "Lookup Spreadsheet Rows",
+     "description": "Find rows in a Google Sheet that match a column value or an advanced filter.",
+     "input_schema": {
+      "steps": {
+       "root": [
+        "spreadsheet_Id",
+        "sheet_Id",
+        "search_filter",
+        "sorting"
+       ],
+       "sorting": [
+        "sorting.row_count",
+        "sorting.is_last_row",
+        "sorting.returnColumn"
+       ],
+       "search_filter": [
+        "search_filter.column_key",
+        "search_filter.type_search_filter",
+        "search_filter.lookupColumn",
+        "search_filter.lookupValue",
+        "search_filter.help_basic_filter",
+        "search_filter.ai_search",
+        "search_filter.ai_search_columns_help"
+       ]
+      },
+      "blocks": {
+       "sorting": {
+        "key": "sorting",
+        "help": "Configure how many matching rows to return and in which order.",
+        "type": "input groups",
+        "label": "Sorting and Limit",
+        "dependsOn": [],
+        "visibilityCondition": "context?.inputData?.[\"spreadsheet_Id\"] && context?.inputData?.[\"sheet_Id\"]"
+       },
+       "sheet_Id": {
+        "key": "sheet_Id",
+        "help": "Select the Sheet or Enter Sheet ID.",
+        "type": "dropdown",
+        "label": "Sheet",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id"
+        ],
+        "customHelp": "You will find the sheet ID on the spreadsheet URL gid=, or you can use the action like search sheet or list sheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Sheet",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Sheet ID",
+        "customPlaceholder": "38470421"
+       },
+       "search_filter": {
+        "key": "search_filter",
+        "help": "Filter configuration to return the sheet rows based on the condition met.",
+        "type": "input groups",
+        "label": "Search Filter",
+        "dependsOn": [],
+        "whereClause": false,
+        "visibilityCondition": "context?.inputData?.sheet_Id"
+       },
+       "spreadsheet_Id": {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet.",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": "1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       },
+       "sorting.row_count": {
+        "key": "sorting.row_count",
+        "help": "Enter the number of rows you want to retrieve. If not specified, will return all the available matching rows.",
+        "type": "number",
+        "label": "Row Count",
+        "required": false,
+        "dependsOn": [],
+        "placeholder": "10"
+       },
+       "sorting.is_last_row": {
+        "key": "sorting.is_last_row",
+        "help": "Search from the last row of the spreadsheet up. Select \u201cYes\u201d to enable.",
+        "type": "boolean",
+        "label": "Search from last row",
+        "options": [
+         {
+          "label": "Yes",
+          "value": true
+         },
+         {
+          "label": "No",
+          "value": false
+         }
+        ],
+        "children": [
+         {
+          "label": "Yes",
+          "value": true
+         },
+         {
+          "label": "No",
+          "value": false
+         }
+        ],
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "Enter \"true\" for search from the last row of the spreadsheet.",
+        "placeholder": "Select Option",
+        "defaultValue": {
+         "label": "No",
+         "value": false
+        },
+        "customInputLabel": "Search from last row",
+        "customPlaceholder": "true"
+       },
+       "sorting.returnColumn": {
+        "key": "sorting.returnColumn",
+        "help": "Select the column to return in response, If selected will return the selected columns. If left empty will return all the columns.",
+        "type": "multiselect",
+        "label": "Return Columns",
+        "required": false,
+        "dependsOn": [
+         "spreadsheet_Id",
+         "sheet_Id",
+         "search_filter.column_key"
+        ],
+        "customHelp": "To determine whether to enter a column name or letter, set 'Does your first row contain column name?'.",
+        "placeholder": "Choose Columns",
+        "customInputLabel": "Enter Column Name in Array",
+        "customPlaceholder": "[\"Name\"] or [\"A\"]"
+       },
+       "search_filter.ai_search": {
+        "key": "search_filter.ai_search",
+        "help": "Enter the prompt condition including the column names and values to return the rows which match the condition.",
+        "type": "aifield",
+        "label": "Advance Filter Condition Prompt",
+        "prompt": "Generate a JavaScript if condition using Google Sheet column names based on the user's search condition and the provided sample sheet data. You must include the || '' fallback to handle empty cells and undefined values safely. When a dynamic path is used in the condition, you MUST wrap the path in single quotes. Example: If the user gives the prompt \"Compare the sheet row's Status column with ${context.req.body.status}.\", the output should be exactly: String((row['Status'] || '').trim()).toLowerCase() === String(('${context.req.body.status}' || '').trim()).toLowerCase(). Note: The sheet can have the column name or column letters. If you can see the key name as a column name, not letters, then do not guess the column letter.",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id",
+         "sheet_Id",
+         "search_filter.column_key"
+        ],
+        "placeholder": "Email is email@domain.com or phone is..",
+        "visibilityCondition": "context?.inputData?.search_filter?.type_search_filter === 'advance'"
+       },
+       "search_filter.column_key": {
+        "key": "search_filter.column_key",
+        "help": "Determines how the data columns are labelled.",
+        "type": "boolean",
+        "label": "Does your first row contain column name?",
+        "options": [
+         {
+          "label": "Yes",
+          "value": true
+         },
+         {
+          "label": "No",
+          "value": false
+         }
+        ],
+        "children": [
+         {
+          "label": "Yes",
+          "value": true
+         },
+         {
+          "label": "No",
+          "value": false
+         }
+        ],
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "Enter \"true\" if the first row contains the column name, else \"false\".",
+        "placeholder": "Choose Option",
+        "defaultValue": {
+         "label": "Yes",
+         "value": true
+        },
+        "customInputLabel": "Does your first row contain column name?",
+        "customPlaceholder": "true"
+       },
+       "search_filter.lookupValue": {
+        "key": "search_filter.lookupValue",
+        "help": "The match is case-sensitive and exact.",
+        "type": "string",
+        "label": "Lookup Value",
+        "required": true,
+        "dependsOn": [],
+        "placeholder": "John",
+        "visibilityCondition": "context?.inputData?.search_filter?.type_search_filter === 'basic' "
+       },
+       "search_filter.lookupColumn": {
+        "key": "search_filter.lookupColumn",
+        "help": "Select the column to search in, based on header names.",
+        "type": "dropdown",
+        "label": "Lookup Column",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id",
+         "sheet_Id",
+         "search_filter.column_key"
+        ],
+        "customHelp": "To determine whether to enter a column name or letter, set 'Does your first row contain column name?'.",
+        "placeholder": "Choose Column",
+        "customInputLabel": "Enter Column Name",
+        "customPlaceholder": "Name or A",
+        "visibilityCondition": "context?.inputData?.search_filter?.type_search_filter === 'basic'"
+       },
+       "search_filter.help_basic_filter": {
+        "key": "search_filter.help_basic_filter",
+        "help": "The result rows returned will be the exact match (case sensitive) of the Lookup Value.",
+        "type": "help",
+        "label": "Basic Filter Note",
+        "dependsOn": [],
+        "visibilityCondition": "context?.inputData?.search_filter?.type_search_filter === 'basic'"
+       },
+       "search_filter.type_search_filter": {
+        "key": "search_filter.type_search_filter",
+        "help": "Select the filter type. Basic matches a single column value exactly. Advance lets you write a custom condition across multiple columns.",
+        "type": "dropdown",
+        "label": "Search Filter Type",
+        "options": [
+         {
+          "label": "Basic",
+          "value": "basic"
+         },
+         {
+          "label": "Advance",
+          "value": "advance"
+         }
+        ],
+        "children": [
+         {
+          "label": "Basic",
+          "value": "basic"
+         },
+         {
+          "label": "Advance",
+          "value": "advance"
+         }
+        ],
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "Enter \"basic\" for a single column exact match or \"advance\" for a custom multi-column condition.",
+        "placeholder": "Choose Option",
+        "defaultValue": {
+         "label": "Basic",
+         "value": "basic"
+        },
+        "customInputLabel": "Search Filter Type",
+        "customPlaceholder": "basic"
+       },
+       "search_filter.ai_search_columns_help": {
+        "key": "search_filter.ai_search_columns_help",
+        "type": "help",
+        "label": "Available Columns",
+        "dependsOn": [
+         "spreadsheet_Id",
+         "sheet_Id",
+         "search_filter.column_key"
+        ],
+        "visibilityCondition": "context?.inputData?.search_filter?.type_search_filter === 'advance'"
+       }
+      },
+      "inputFields": [
+       {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet.",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": "1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       },
+       {
+        "key": "sheet_Id",
+        "help": "Select the Sheet or Enter Sheet ID.",
+        "type": "dropdown",
+        "label": "Sheet",
+        "required": true,
+        "customHelp": "You will find the sheet ID on the spreadsheet URL gid=, or you can use the action like search sheet or list sheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Sheet",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Sheet ID",
+        "customPlaceholder": "38470421"
+       },
+       {
+        "key": "search_filter",
+        "help": "Filter configuration to return the sheet rows based on the condition met.",
+        "type": "input groups",
+        "label": "Search Filter",
+        "fields": [
+         {
+          "key": "column_key",
+          "help": "Determines how the data columns are labelled.",
+          "type": "boolean",
+          "label": "Does your first row contain column name?",
+          "options": [
+           {
+            "label": "Yes",
+            "value": true
+           },
+           {
+            "label": "No",
+            "value": false
+           }
+          ],
+          "required": true,
+          "customHelp": "Enter \"true\" if the first row contains the column name, else \"false\".",
+          "placeholder": "Choose Option",
+          "defaultValue": {
+           "label": "Yes",
+           "value": true
+          },
+          "customInputLabel": "Does your first row contain column name?",
+          "customPlaceholder": "true"
+         },
+         {
+          "key": "type_search_filter",
+          "help": "Select the filter type. Basic matches a single column value exactly. Advance lets you write a custom condition across multiple columns.",
+          "type": "dropdown",
+          "label": "Search Filter Type",
+          "options": [
+           {
+            "label": "Basic",
+            "value": "basic"
+           },
+           {
+            "label": "Advance",
+            "value": "advance"
+           }
+          ],
+          "required": true,
+          "customHelp": "Enter \"basic\" for a single column exact match or \"advance\" for a custom multi-column condition.",
+          "placeholder": "Choose Option",
+          "defaultValue": {
+           "label": "Basic",
+           "value": "basic"
+          },
+          "customInputLabel": "Search Filter Type",
+          "customPlaceholder": "basic"
+         },
+         {
+          "key": "lookupColumn",
+          "help": "Select the column to search in, based on header names.",
+          "type": "dropdown",
+          "label": "Lookup Column",
+          "required": true,
+          "customHelp": "To determine whether to enter a column name or letter, set 'Does your first row contain column name?'.",
+          "placeholder": "Choose Column",
+          "customInputLabel": "Enter Column Name",
+          "customPlaceholder": "Name or A",
+          "visibilityCondition": "context?.inputData?.search_filter?.type_search_filter === 'basic'"
+         },
+         {
+          "key": "lookupValue",
+          "help": "The match is case-sensitive and exact.",
+          "type": "string",
+          "label": "Lookup Value",
+          "required": true,
+          "placeholder": "John",
+          "visibilityCondition": "context?.inputData?.search_filter?.type_search_filter === 'basic' "
+         },
+         {
+          "key": "help_basic_filter",
+          "help": "The result rows returned will be the exact match (case sensitive) of the Lookup Value.",
+          "type": "help",
+          "label": "Basic Filter Note",
+          "visibilityCondition": "context?.inputData?.search_filter?.type_search_filter === 'basic'"
+         },
+         {
+          "key": "ai_search",
+          "help": "Enter the prompt condition including the column names and values to return the rows which match the condition.",
+          "type": "aifield",
+          "label": "Advance Filter Condition Prompt",
+          "prompt": "Generate a JavaScript if condition using Google Sheet column names based on the user's search condition and the provided sample sheet data. You must include the || '' fallback to handle empty cells and undefined values safely. When a dynamic path is used in the condition, you MUST wrap the path in single quotes. Example: If the user gives the prompt \"Compare the sheet row's Status column with ${context.req.body.status}.\", the output should be exactly: String((row['Status'] || '').trim()).toLowerCase() === String(('${context.req.body.status}' || '').trim()).toLowerCase(). Note: The sheet can have the column name or column letters. If you can see the key name as a column name, not letters, then do not guess the column letter.",
+          "required": true,
+          "placeholder": "Email is email@domain.com or phone is..",
+          "visibilityCondition": "context?.inputData?.search_filter?.type_search_filter === 'advance'"
+         },
+         {
+          "key": "ai_search_columns_help",
+          "type": "help",
+          "label": "Available Columns",
+          "visibilityCondition": "context?.inputData?.search_filter?.type_search_filter === 'advance'"
+         }
+        ],
+        "whereClause": false,
+        "visibilityCondition": "context?.inputData?.sheet_Id"
+       },
+       {
+        "key": "sorting",
+        "help": "Configure how many matching rows to return and in which order.",
+        "type": "input groups",
+        "label": "Sorting and Limit",
+        "fields": [
+         {
+          "key": "row_count",
+          "help": "Enter the number of rows you want to retrieve. If not specified, will return all the available matching rows.",
+          "type": "number",
+          "label": "Row Count",
+          "required": false,
+          "placeholder": "10"
+         },
+         {
+          "key": "is_last_row",
+          "help": "Search from the last row of the spreadsheet up. Select \u201cYes\u201d to enable.",
+          "type": "boolean",
+          "label": "Search from last row",
+          "options": [
+           {
+            "label": "Yes",
+            "value": true
+           },
+           {
+            "label": "No",
+            "value": false
+           }
+          ],
+          "required": true,
+          "customHelp": "Enter \"true\" for search from the last row of the spreadsheet.",
+          "placeholder": "Select Option",
+          "defaultValue": {
+           "label": "No",
+           "value": false
+          },
+          "customInputLabel": "Search from last row",
+          "customPlaceholder": "true"
+         },
+         {
+          "key": "returnColumn",
+          "help": "Select the column to return in response, If selected will return the selected columns. If left empty will return all the columns.",
+          "type": "multiselect",
+          "label": "Return Columns",
+          "required": false,
+          "customHelp": "To determine whether to enter a column name or letter, set 'Does your first row contain column name?'.",
+          "placeholder": "Choose Columns",
+          "customInputLabel": "Enter Column Name in Array",
+          "customPlaceholder": "[\"Name\"] or [\"A\"]"
+         }
+        ],
+        "visibilityCondition": "context?.inputData?.[\"spreadsheet_Id\"] && context?.inputData?.[\"sheet_Id\"]"
+       }
+      ]
+     },
+     "sample_output": {
+      "data": [],
+      "message": "No rows",
+      "success": false,
+      "subsheet_Id": "11",
+      "subsheet_name": "Sheet1",
+      "spreadsheet_Id": "sp_123"
+     },
+     "updated_at": "2026-09-22T04:54:09.000Z",
+     "versionid": "V19"
+    },
+    {
+     "action_id": "rowpt94c8qh3",
+     "action_version_id": "rowwy37z95y1",
+     "name": "Create a Spreadsheet",
+     "description": "create a new spreadsheet.",
+     "input_schema": {
+      "steps": {
+       "root": [
+        "spreadsheet_title"
+       ]
+      },
+      "blocks": {
+       "spreadsheet_title": {
+        "key": "spreadsheet_title",
+        "help": "Enter the title for the new spreadsheet.",
+        "type": "string",
+        "label": "Spreadsheet Title",
+        "required": true,
+        "dependsOn": [],
+        "placeholder": "New Spreadsheet"
+       }
+      },
+      "inputFields": [
+       {
+        "key": "spreadsheet_title",
+        "help": "Enter the title for the new spreadsheet.",
+        "type": "string",
+        "label": "Spreadsheet Title",
+        "required": true,
+        "placeholder": "New Spreadsheet"
+       }
+      ]
+     },
+     "sample_output": {
+      "message": "Spreadsheet created successfully.",
+      "success": true,
+      "spreadsheetId": "123",
+      "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/123/edit"
+     },
+     "updated_at": "2026-06-24T07:24:01.000Z",
+     "versionid": "V4"
+    },
+    {
+     "action_id": "rowrkz5awm6c",
+     "action_version_id": "row5gakw7s2x",
+     "name": "Clear Spreadsheet Row",
+     "description": "Clears the contents of the selected row(s) while keeping the row(s) intact in the spreadsheet.",
+     "input_schema": {
+      "steps": {
+       "root": [
+        "spreadsheet_Id",
+        "grid_Id",
+        "rows_input"
+       ]
+      },
+      "blocks": {
+       "grid_Id": {
+        "key": "grid_Id",
+        "help": "Select the Sheet or Enter Sheet ID.",
+        "type": "dropdown",
+        "label": "Sheet",
+        "required": true,
+        "dependsOn": [
+         "spreadsheet_Id"
+        ],
+        "customHelp": "You will find the sheet ID on the spreadsheet URL gid=, or you can use the action like search sheet or list sheet.",
+        "placeholder": "Choose Sheet",
+        "customInputLabel": "Enter Sheet ID",
+        "customPlaceholder": "38470421"
+       },
+       "rows_input": {
+        "key": "rows_input",
+        "help": "Specify which row(s) to clear. You can enter: a single row such as 5 to clear row 5, multiple rows separated by commas such as 1, 3, 5 to clear rows 1, 3, and 5, or a range of rows such as 1-5 to clear rows 1 through 5. You can also combine these, such as 1, 3, 7-10.",
+        "type": "string",
+        "label": "Row(s) to Clear",
+        "required": true,
+        "dependsOn": [],
+        "placeholder": "5 or 1, 3, 5 or 1-5 or 1, 3, 7-10"
+       },
+       "spreadsheet_Id": {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet.",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet ",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": "1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       }
+      },
+      "inputFields": [
+       {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet.",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet ",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": "1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       },
+       {
+        "key": "grid_Id",
+        "help": "Select the Sheet or Enter Sheet ID.",
+        "type": "dropdown",
+        "label": "Sheet",
+        "required": true,
+        "customHelp": "You will find the sheet ID on the spreadsheet URL gid=, or you can use the action like search sheet or list sheet.",
+        "placeholder": "Choose Sheet",
+        "customInputLabel": "Enter Sheet ID",
+        "customPlaceholder": "38470421"
+       },
+       {
+        "key": "rows_input",
+        "help": "Specify which row(s) to clear. You can enter: a single row such as 5 to clear row 5, multiple rows separated by commas such as 1, 3, 5 to clear rows 1, 3, and 5, or a range of rows such as 1-5 to clear rows 1 through 5. You can also combine these, such as 1, 3, 7-10.",
+        "type": "string",
+        "label": "Row(s) to Clear",
+        "required": true,
+        "placeholder": "5 or 1, 3, 5 or 1-5 or 1, 3, 7-10"
+       }
+      ]
+     },
+     "sample_output": {
+      "sheetId": 123,
+      "sheetName": "Sheet1",
+      "clearedRows": [
+       2
+      ],
+      "clearedRanges": [
+       "Sheet1!A2:Z2"
+      ],
+      "spreadsheetId": "SAMPLE_SHEET_ID",
+      "totalRowsCleared": 1
+     },
+     "updated_at": "2026-07-28T09:01:23.000Z",
+     "versionid": "V3"
+    },
+    {
+     "action_id": "rowju3dxf5ss",
+     "action_version_id": "rowvgewgzq01",
+     "name": "List Spreadsheets",
+     "description": "Fetch all spreadsheets",
+     "input_schema": {
+      "steps": {
+       "root": [
+        "fetch_mode",
+        "search_keyword",
+        "modified_after",
+        "source",
+        "shared_drive_id",
+        "owner_filter",
+        "sort_by",
+        "sort_order",
+        "max_results",
+        "response_fields",
+        "page_token"
+       ]
+      },
+      "blocks": {
+       "sort_by": {
+        "key": "sort_by",
+        "help": "Choose the field by which results are sorted. 'Last Modified' returns the most recently edited spreadsheets first.",
+        "type": "dropdown",
+        "label": "Sort By",
+        "options": [
+         {
+          "label": "Name (Alphabetical)",
+          "value": "name"
+         },
+         {
+          "label": "Last Modified",
+          "value": "modifiedTime"
+         },
+         {
+          "label": "Date Created",
+          "value": "createdTime"
+         },
+         {
+          "label": "Last Viewed by Me",
+          "value": "viewedByMeTime"
+         },
+         {
+          "label": "Shared with Me Time",
+          "value": "sharedWithMeTime"
+         }
+        ],
+        "children": [
+         {
+          "label": "Name (Alphabetical)",
+          "value": "name"
+         },
+         {
+          "label": "Last Modified",
+          "value": "modifiedTime"
+         },
+         {
+          "label": "Date Created",
+          "value": "createdTime"
+         },
+         {
+          "label": "Last Viewed by Me",
+          "value": "viewedByMeTime"
+         },
+         {
+          "label": "Shared with Me Time",
+          "value": "sharedWithMeTime"
+         }
+        ],
+        "required": false,
+        "dependsOn": [],
+        "defaultValue": {
+         "label": "Last Modified",
+         "value": "modifiedTime"
+        },
+        "customInputLabel": "Enter sort field",
+        "customPlaceholder": "modifiedTime"
+       },
+       "fetch_mode": {
+        "key": "fetch_mode",
+        "help": "Choose how you want to find your Google Sheets spreadsheets.",
+        "type": "dropdown",
+        "label": "How Do You Want to Fetch Spreadsheets?",
+        "options": [
+         {
+          "label": "All My Spreadsheets",
+          "value": "all"
+         },
+         {
+          "label": "Search by Name",
+          "value": "search"
+         },
+         {
+          "label": "Recently Modified",
+          "value": "recent"
+         },
+         {
+          "label": "Shared with Me",
+          "value": "shared"
+         },
+         {
+          "label": "Starred Spreadsheets",
+          "value": "starred"
+         }
+        ],
+        "children": [
+         {
+          "label": "All My Spreadsheets",
+          "value": "all"
+         },
+         {
+          "label": "Search by Name",
+          "value": "search"
+         },
+         {
+          "label": "Recently Modified",
+          "value": "recent"
+         },
+         {
+          "label": "Shared with Me",
+          "value": "shared"
+         },
+         {
+          "label": "Starred Spreadsheets",
+          "value": "starred"
+         }
+        ],
+        "required": true,
+        "dependsOn": [],
+        "defaultValue": {
+         "label": "All My Spreadsheets",
+         "value": "all"
+        },
+        "customInputLabel": "Enter fetch mode",
+        "customPlaceholder": "All My Spreadsheets"
+       },
+       "page_token": {
+        "key": "page_token",
+        "help": "Enter the 'nextPageToken' value from the previous run's response to fetch the next set of results. Leave empty to start from the beginning.",
+        "type": "string",
+        "label": "Page Token (For Next Page)",
+        "required": false,
+        "dependsOn": [],
+        "placeholder": "AI9FV7T8ksd..."
+       },
+       "sort_order": {
+        "key": "sort_order",
+        "help": "Choose whether results appear newest first (Descending) or oldest first (Ascending).",
+        "type": "dropdown",
+        "label": "Sort Order",
+        "options": [
+         {
+          "label": "Descending (Newest First)",
+          "value": "desc"
+         },
+         {
+          "label": "Ascending (Oldest First)",
+          "value": "asc"
+         }
+        ],
+        "children": [
+         {
+          "label": "Descending (Newest First)",
+          "value": "desc"
+         },
+         {
+          "label": "Ascending (Oldest First)",
+          "value": "asc"
+         }
+        ],
+        "required": false,
+        "dependsOn": [],
+        "defaultValue": {
+         "label": "Descending (Newest First)",
+         "value": "desc"
+        },
+        "customInputLabel": "Enter sort order",
+        "customPlaceholder": "Descending"
+       },
+       "max_results": {
+        "key": "max_results",
+        "help": "Maximum number of spreadsheets to return per run. Minimum is 1, maximum is 1000. Default is 50.",
+        "type": "number",
+        "label": "Maximum Results",
+        "required": false,
+        "dependsOn": [],
+        "placeholder": " 50"
+       },
+       "owner_filter": {
+        "key": "owner_filter",
+        "help": "Filter spreadsheets by who owns them. Select 'Owned by Me' to see only spreadsheets you created. Useful when searching across All Drives.",
+        "type": "dropdown",
+        "label": "Ownership Filter",
+        "options": [
+         {
+          "label": "All (Any Owner)",
+          "value": "any"
+         },
+         {
+          "label": "Owned by Me",
+          "value": "me"
+         },
+         {
+          "label": "Not Owned by Me",
+          "value": "not_me"
+         }
+        ],
+        "children": [
+         {
+          "label": "All (Any Owner)",
+          "value": "any"
+         },
+         {
+          "label": "Owned by Me",
+          "value": "me"
+         },
+         {
+          "label": "Not Owned by Me",
+          "value": "not_me"
+         }
+        ],
+        "required": false,
+        "dependsOn": [],
+        "defaultValue": {
+         "label": "All (Any Owner)",
+         "value": "any"
+        },
+        "customInputLabel": "Enter ownership filter",
+        "customPlaceholder": "Owned by Me"
+       },
+       "modified_after": {
+        "key": "modified_after",
+        "help": "Enter the date from which you want to filter spreadsheets. Only spreadsheets modified after this date will be returned. Format: YYYY-MM-DD (e.g., 2024-06-01).",
+        "type": "string",
+        "label": "Modified After",
+        "required": false,
+        "dependsOn": [],
+        "placeholder": "2024-06-01",
+        "visibilityCondition": "context.inputData.fetch_mode === 'recent'"
+       },
+       "search_keyword": {
+        "key": "search_keyword",
+        "help": "Enter a keyword to search spreadsheets by name. Partial matches are supported (e.g., entering 'Sales' will return 'Sales Report Q1', 'Sales Dashboard', etc.).",
+        "type": "string",
+        "label": "Search Keyword",
+        "required": true,
+        "dependsOn": [],
+        "placeholder": "Sales Report, Budget 2024, Inventory",
+        "visibilityCondition": "context.inputData.fetch_mode === 'search'"
+       },
+       "response_fields": {
+        "key": "response_fields",
+        "help": "Select the data fields to include in the response. Only selected fields are returned, keeping your automation data clean and fast. Essential fields are preselected.",
+        "type": "multiselect",
+        "label": "Fields to Include in Response",
+        "options": [
+         {
+          "label": "Spreadsheet ID",
+          "value": "id"
+         },
+         {
+          "label": "Spreadsheet Name",
+          "value": "name"
+         },
+         {
+          "label": "Web View Link (Open in Browser)",
+          "value": "webViewLink"
+         },
+         {
+          "label": "Web Content Link (Download)",
+          "value": "webContentLink"
+         },
+         {
+          "label": "Created Time",
+          "value": "createdTime"
+         },
+         {
+          "label": "Last Modified Time",
+          "value": "modifiedTime"
+         },
+         {
+          "label": "Last Modified by Me",
+          "value": "modifiedByMeTime"
+         },
+         {
+          "label": "Last Viewed by Me",
+          "value": "viewedByMeTime"
+         },
+         {
+          "label": "Shared with Me Time",
+          "value": "sharedWithMeTime"
+         },
+         {
+          "label": "Owners",
+          "value": "owners"
+         },
+         {
+          "label": "Last Modifying User",
+          "value": "lastModifyingUser"
+         },
+         {
+          "label": "Sharing User",
+          "value": "sharingUser"
+         },
+         {
+          "label": "Shared",
+          "value": "shared"
+         },
+         {
+          "label": "Starred",
+          "value": "starred"
+         },
+         {
+          "label": "Parent Folder IDs",
+          "value": "parents"
+         },
+         {
+          "label": "Drive ID (Shared Drive)",
+          "value": "driveId"
+         },
+         {
+          "label": "Thumbnail Link",
+          "value": "thumbnailLink"
+         },
+         {
+          "label": "Icon Link",
+          "value": "iconLink"
+         },
+         {
+          "label": "Description",
+          "value": "description"
+         },
+         {
+          "label": "Capabilities (Permissions)",
+          "value": "capabilities"
+         }
+        ],
+        "children": [
+         {
+          "label": "Spreadsheet ID",
+          "value": "id"
+         },
+         {
+          "label": "Spreadsheet Name",
+          "value": "name"
+         },
+         {
+          "label": "Web View Link (Open in Browser)",
+          "value": "webViewLink"
+         },
+         {
+          "label": "Web Content Link (Download)",
+          "value": "webContentLink"
+         },
+         {
+          "label": "Created Time",
+          "value": "createdTime"
+         },
+         {
+          "label": "Last Modified Time",
+          "value": "modifiedTime"
+         },
+         {
+          "label": "Last Modified by Me",
+          "value": "modifiedByMeTime"
+         },
+         {
+          "label": "Last Viewed by Me",
+          "value": "viewedByMeTime"
+         },
+         {
+          "label": "Shared with Me Time",
+          "value": "sharedWithMeTime"
+         },
+         {
+          "label": "Owners",
+          "value": "owners"
+         },
+         {
+          "label": "Last Modifying User",
+          "value": "lastModifyingUser"
+         },
+         {
+          "label": "Sharing User",
+          "value": "sharingUser"
+         },
+         {
+          "label": "Shared",
+          "value": "shared"
+         },
+         {
+          "label": "Starred",
+          "value": "starred"
+         },
+         {
+          "label": "Parent Folder IDs",
+          "value": "parents"
+         },
+         {
+          "label": "Drive ID (Shared Drive)",
+          "value": "driveId"
+         },
+         {
+          "label": "Thumbnail Link",
+          "value": "thumbnailLink"
+         },
+         {
+          "label": "Icon Link",
+          "value": "iconLink"
+         },
+         {
+          "label": "Description",
+          "value": "description"
+         },
+         {
+          "label": "Capabilities (Permissions)",
+          "value": "capabilities"
+         }
+        ],
+        "required": false,
+        "dependsOn": [],
+        "defaultValue": [
+         {
+          "label": "Spreadsheet ID",
+          "value": "id"
+         },
+         {
+          "label": "Spreadsheet Name",
+          "value": "name"
+         },
+         {
+          "label": "Web View Link (Open in Browser)",
+          "value": "webViewLink"
+         },
+         {
+          "label": "Created Time",
+          "value": "createdTime"
+         },
+         {
+          "label": "Last Modified Time",
+          "value": "modifiedTime"
+         },
+         {
+          "label": "Owners",
+          "value": "owners"
+         },
+         {
+          "label": "Shared",
+          "value": "shared"
+         }
+        ],
+        "customInputLabel": "Enter field name",
+        "customPlaceholder": "E.g., webViewLink"
+       },
+       "shared_drive_id": {
+        "key": "shared_drive_id",
+        "help": "Select the Shared Drive to search in. Only Shared Drives you have access to will appear here.",
+        "type": "dropdown",
+        "label": "Shared Drive",
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "To find your Shared Drive ID manually: Open Google Drive \u2192 Click 'Shared Drives' in the left sidebar \u2192 Open the desired Shared Drive \u2192 Copy the ID from the browser URL. Example URL: drive.google.com/drive/folders/0AHk3QkLmNopqUk9PVA \u2014 the long string after '/folders/' is your Shared Drive ID.",
+        "canPaginate": true,
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Shared Drive ID",
+        "customPlaceholder": "0AHk3QkLmNopqUk9PVA",
+        "visibilityCondition": "context.inputData.source === 'drive'"
+       },
+       "response_fields.id": {
+        "label": "Spreadsheet ID",
+        "value": "id"
+       },
+       "response_fields.name": {
+        "label": "Spreadsheet Name",
+        "value": "name"
+       },
+       "response_fields.owners": {
+        "label": "Owners",
+        "value": "owners"
+       },
+       "response_fields.shared": {
+        "label": "Shared",
+        "value": "shared"
+       },
+       "response_fields.createdTime": {
+        "label": "Created Time",
+        "value": "createdTime"
+       },
+       "response_fields.webViewLink": {
+        "label": "Web View Link (Open in Browser)",
+        "value": "webViewLink"
+       },
+       "response_fields.modifiedTime": {
+        "label": "Last Modified Time",
+        "value": "modifiedTime"
+       }
+      },
+      "inputFields": [
+       {
+        "key": "fetch_mode",
+        "help": "Choose how you want to find your Google Sheets spreadsheets.",
+        "type": "dropdown",
+        "label": "How Do You Want to Fetch Spreadsheets?",
+        "options": [
+         {
+          "label": "All My Spreadsheets",
+          "value": "all"
+         },
+         {
+          "label": "Search by Name",
+          "value": "search"
+         },
+         {
+          "label": "Recently Modified",
+          "value": "recent"
+         },
+         {
+          "label": "Shared with Me",
+          "value": "shared"
+         },
+         {
+          "label": "Starred Spreadsheets",
+          "value": "starred"
+         }
+        ],
+        "required": true,
+        "defaultValue": {
+         "label": "All My Spreadsheets",
+         "value": "all"
+        },
+        "customInputLabel": "Enter fetch mode",
+        "customPlaceholder": "All My Spreadsheets"
+       },
+       {
+        "key": "search_keyword",
+        "help": "Enter a keyword to search spreadsheets by name. Partial matches are supported (e.g., entering 'Sales' will return 'Sales Report Q1', 'Sales Dashboard', etc.).",
+        "type": "string",
+        "label": "Search Keyword",
+        "required": true,
+        "placeholder": "Sales Report, Budget 2024, Inventory",
+        "visibilityCondition": "context.inputData.fetch_mode === 'search'"
+       },
+       {
+        "key": "modified_after",
+        "help": "Enter the date from which you want to filter spreadsheets. Only spreadsheets modified after this date will be returned. Format: YYYY-MM-DD (e.g., 2024-06-01).",
+        "type": "string",
+        "label": "Modified After",
+        "required": false,
+        "placeholder": "2024-06-01",
+        "visibilityCondition": "context.inputData.fetch_mode === 'recent'"
+       },
+       {
+        "key": "source",
+        "help": "Choose where to look for spreadsheets \u2014 your personal Drive, a specific Shared Drive your team uses, or across all drives you have access to.",
+        "type": "dropdown",
+        "label": "Search Location",
+        "options": [
+         {
+          "label": "My Drive",
+          "value": "user"
+         },
+         {
+          "label": "Specific Shared Drive",
+          "value": "drive"
+         },
+         {
+          "label": "All Drives (My Drive + Shared)",
+          "value": "allDrives"
+         }
+        ],
+        "required": true,
+        "defaultValue": {
+         "label": "My Drive",
+         "value": "user"
+        },
+        "customInputLabel": "Enter search location",
+        "customPlaceholder": "E.g., My Drive"
+       },
+       {
+        "key": "shared_drive_id",
+        "help": "Select the Shared Drive to search in. Only Shared Drives you have access to will appear here.",
+        "type": "dropdown",
+        "label": "Shared Drive",
+        "required": true,
+        "customHelp": "To find your Shared Drive ID manually: Open Google Drive \u2192 Click 'Shared Drives' in the left sidebar \u2192 Open the desired Shared Drive \u2192 Copy the ID from the browser URL. Example URL: drive.google.com/drive/folders/0AHk3QkLmNopqUk9PVA \u2014 the long string after '/folders/' is your Shared Drive ID.",
+        "canPaginate": true,
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Shared Drive ID",
+        "customPlaceholder": "0AHk3QkLmNopqUk9PVA",
+        "visibilityCondition": "context.inputData.source === 'drive'"
+       },
+       {
+        "key": "owner_filter",
+        "help": "Filter spreadsheets by who owns them. Select 'Owned by Me' to see only spreadsheets you created. Useful when searching across All Drives.",
+        "type": "dropdown",
+        "label": "Ownership Filter",
+        "options": [
+         {
+          "label": "All (Any Owner)",
+          "value": "any"
+         },
+         {
+          "label": "Owned by Me",
+          "value": "me"
+         },
+         {
+          "label": "Not Owned by Me",
+          "value": "not_me"
+         }
+        ],
+        "required": false,
+        "defaultValue": {
+         "label": "All (Any Owner)",
+         "value": "any"
+        },
+        "customInputLabel": "Enter ownership filter",
+        "customPlaceholder": "Owned by Me"
+       },
+       {
+        "key": "sort_by",
+        "help": "Choose the field by which results are sorted. 'Last Modified' returns the most recently edited spreadsheets first.",
+        "type": "dropdown",
+        "label": "Sort By",
+        "options": [
+         {
+          "label": "Name (Alphabetical)",
+          "value": "name"
+         },
+         {
+          "label": "Last Modified",
+          "value": "modifiedTime"
+         },
+         {
+          "label": "Date Created",
+          "value": "createdTime"
+         },
+         {
+          "label": "Last Viewed by Me",
+          "value": "viewedByMeTime"
+         },
+         {
+          "label": "Shared with Me Time",
+          "value": "sharedWithMeTime"
+         }
+        ],
+        "required": false,
+        "defaultValue": {
+         "label": "Last Modified",
+         "value": "modifiedTime"
+        },
+        "customInputLabel": "Enter sort field",
+        "customPlaceholder": "modifiedTime"
+       },
+       {
+        "key": "sort_order",
+        "help": "Choose whether results appear newest first (Descending) or oldest first (Ascending).",
+        "type": "dropdown",
+        "label": "Sort Order",
+        "options": [
+         {
+          "label": "Descending (Newest First)",
+          "value": "desc"
+         },
+         {
+          "label": "Ascending (Oldest First)",
+          "value": "asc"
+         }
+        ],
+        "required": false,
+        "defaultValue": {
+         "label": "Descending (Newest First)",
+         "value": "desc"
+        },
+        "customInputLabel": "Enter sort order",
+        "customPlaceholder": "Descending"
+       },
+       {
+        "key": "max_results",
+        "help": "Maximum number of spreadsheets to return per run. Minimum is 1, maximum is 1000. Default is 50.",
+        "type": "number",
+        "label": "Maximum Results",
+        "required": false,
+        "placeholder": " 50"
+       },
+       {
+        "key": "response_fields",
+        "help": "Select the data fields to include in the response. Only selected fields are returned, keeping your automation data clean and fast. Essential fields are preselected.",
+        "type": "multiselect",
+        "label": "Fields to Include in Response",
+        "options": [
+         {
+          "label": "Spreadsheet ID",
+          "value": "id"
+         },
+         {
+          "label": "Spreadsheet Name",
+          "value": "name"
+         },
+         {
+          "label": "Web View Link (Open in Browser)",
+          "value": "webViewLink"
+         },
+         {
+          "label": "Web Content Link (Download)",
+          "value": "webContentLink"
+         },
+         {
+          "label": "Created Time",
+          "value": "createdTime"
+         },
+         {
+          "label": "Last Modified Time",
+          "value": "modifiedTime"
+         },
+         {
+          "label": "Last Modified by Me",
+          "value": "modifiedByMeTime"
+         },
+         {
+          "label": "Last Viewed by Me",
+          "value": "viewedByMeTime"
+         },
+         {
+          "label": "Shared with Me Time",
+          "value": "sharedWithMeTime"
+         },
+         {
+          "label": "Owners",
+          "value": "owners"
+         },
+         {
+          "label": "Last Modifying User",
+          "value": "lastModifyingUser"
+         },
+         {
+          "label": "Sharing User",
+          "value": "sharingUser"
+         },
+         {
+          "label": "Shared",
+          "value": "shared"
+         },
+         {
+          "label": "Starred",
+          "value": "starred"
+         },
+         {
+          "label": "Parent Folder IDs",
+          "value": "parents"
+         },
+         {
+          "label": "Drive ID (Shared Drive)",
+          "value": "driveId"
+         },
+         {
+          "label": "Thumbnail Link",
+          "value": "thumbnailLink"
+         },
+         {
+          "label": "Icon Link",
+          "value": "iconLink"
+         },
+         {
+          "label": "Description",
+          "value": "description"
+         },
+         {
+          "label": "Capabilities (Permissions)",
+          "value": "capabilities"
+         }
+        ],
+        "required": false,
+        "defaultValue": [
+         {
+          "label": "Spreadsheet ID",
+          "value": "id"
+         },
+         {
+          "label": "Spreadsheet Name",
+          "value": "name"
+         },
+         {
+          "label": "Web View Link (Open in Browser)",
+          "value": "webViewLink"
+         },
+         {
+          "label": "Created Time",
+          "value": "createdTime"
+         },
+         {
+          "label": "Last Modified Time",
+          "value": "modifiedTime"
+         },
+         {
+          "label": "Owners",
+          "value": "owners"
+         },
+         {
+          "label": "Shared",
+          "value": "shared"
+         }
+        ],
+        "customInputLabel": "Enter field name",
+        "customPlaceholder": "E.g., webViewLink"
+       },
+       {
+        "key": "page_token",
+        "help": "Enter the 'nextPageToken' value from the previous run's response to fetch the next set of results. Leave empty to start from the beginning.",
+        "type": "string",
+        "label": "Page Token (For Next Page)",
+        "required": false,
+        "placeholder": "AI9FV7T8ksd..."
+       }
+      ]
+     },
+     "sample_output": {
+      "hasfound": true,
+      "fetchedCount": 1,
+      "hasMorePages": false,
+      "spreadsheets": [
+       {
+        "id": "sheet_1",
+        "name": "Sales",
+        "owners": [
+         {
+          "me": true,
+          "displayName": "Alice",
+          "emailAddress": "alice@example.com",
+          "permissionId": "perm_1"
+         }
+        ],
+        "shared": false,
+        "createdTime": "2026-07-01T00:00:00Z",
+        "webViewLink": "https://docs.google.com/spreadsheets/d/sheet_1",
+        "modifiedTime": "2026-07-02T00:00:00Z"
+       }
+      ],
+      "nextPageToken": ""
+     },
+     "updated_at": "2026-06-24T09:07:08.000Z",
+     "versionid": "V3"
+    },
+    {
+     "action_id": "rowo1pd2o8yt",
+     "action_version_id": "row8qhyi9lo6",
+     "name": "Permanently Delete Spreadsheet",
+     "description": "Permanently delete a spreadsheet from Google Drive, including files on shared drives.",
+     "input_schema": {
+      "steps": {
+       "root": [
+        "delete_warning",
+        "spreadsheet_Id"
+       ]
+      },
+      "blocks": {
+       "delete_warning": {
+        "key": "delete_warning",
+        "help": "This action permanently deletes the spreadsheet and cannot be undone.",
+        "type": "help",
+        "dependsOn": []
+       },
+       "spreadsheet_Id": {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet .",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "dependsOn": [],
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": "1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       }
+      },
+      "inputFields": [
+       {
+        "key": "delete_warning",
+        "help": "This action permanently deletes the spreadsheet and cannot be undone.",
+        "type": "help"
+       },
+       {
+        "key": "spreadsheet_Id",
+        "help": "Select or enter the ID of the spreadsheet .",
+        "type": "dropdown",
+        "label": "Spreadsheet",
+        "required": true,
+        "customHelp": "You will find the Spreadsheet ID on the spreadsheet URL https://docs.google.com/spreadsheets/d/{spreadsheet_Id}/ or you can use the action like search spreadsheet or list spreadsheet.",
+        "canPaginate": true,
+        "placeholder": "Choose Spreadsheet",
+        "enableSearchApi": true,
+        "customInputLabel": "Enter Spreadsheet ID",
+        "customPlaceholder": "1PBtrnuRN_xfmilW79NgD70Z3Z0NsGs5*****"
+       }
+      ]
+     },
+     "sample_output": null,
+     "updated_at": "2026-08-19T10:27:19.000Z",
+     "versionid": "V1"
+    }
+   ]
+  },
+  "demo-tickets": {
+   "name": "Demo Tickets",
+   "service_id": "fixture-demo-tickets",
+   "auth_type": "Auth2.0",
+   "requires_auth": true,
+   "real": false,
+   "note": "SYNTHETIC app written by hand for tests and offline development. It is not in viaSocket's catalog.",
+   "actions": [
+    {
+     "action_id": "rowdemo0create",
+     "action_version_id": "rowdemo0createv1",
+     "versionid": "V1",
+     "name": "Create Ticket",
+     "description": "Creates a ticket in a project.",
+     "sample_output": {
+      "success": true,
+      "data": {
+       "id": "T-1",
+       "url": "https://tickets.example.invalid/T-1",
+       "status": "open"
+      }
+     },
+     "input_schema": {
+      "steps": {
+       "root": [
+        "project",
+        "title",
+        "description",
+        "priority",
+        "escalation_note",
+        "labels",
+        "due",
+        "notify",
+        "assignee"
+       ]
+      },
+      "blocks": {
+       "project": {
+        "type": "dropdown",
+        "label": "Project",
+        "required": true,
+        "options": [
+         {
+          "label": "IT",
+          "value": "IT"
+         },
+         {
+          "label": "Facilities",
+          "value": "FAC"
+         }
+        ]
+       },
+       "title": {
+        "type": "string",
+        "label": "Title",
+        "required": true,
+        "placeholder": "Short title"
+       },
+       "description": {
+        "type": "aifield",
+        "label": "Description",
+        "help": "What is needed."
+       },
+       "priority": {
+        "type": "dropdown",
+        "label": "Priority",
+        "options": [
+         {
+          "label": "Low",
+          "value": "low"
+         },
+         {
+          "label": "Medium",
+          "value": "medium"
+         },
+         {
+          "label": "High",
+          "value": "high"
+         }
+        ],
+        "defaultValue": {
+         "label": "Medium",
+         "value": "medium"
+        }
+       },
+       "escalation_note": {
+        "type": "string",
+        "label": "Why is it high priority?",
+        "required": true,
+        "visibilityCondition": "context?.inputData?.priority === \"high\""
+       },
+       "labels": {
+        "type": "multiselect",
+        "label": "Labels",
+        "options": [
+         {
+          "label": "Hardware",
+          "value": "hw"
+         },
+         {
+          "label": "Software",
+          "value": "sw"
+         }
+        ]
+       },
+       "due": {
+        "type": "date",
+        "label": "Due date"
+       },
+       "notify": {
+        "type": "boolean",
+        "label": "Notify the requester",
+        "defaultValue": false
+       },
+       "assignee": {
+        "type": "dropdown",
+        "label": "Assignee",
+        "dependsOn": [
+         "project"
+        ],
+        "enableSearchApi": true
+       }
+      }
+     }
+    },
+    {
+     "action_id": "rowdemo0delete",
+     "action_version_id": "rowdemo0deletev1",
+     "versionid": "V1",
+     "name": "Delete Ticket",
+     "description": "Deletes a ticket for good.",
+     "sample_output": {
+      "success": true,
+      "data": {
+       "deleted": true
+      }
+     },
+     "input_schema": {
+      "steps": {
+       "root": [
+        "ticket_id"
+       ]
+      },
+      "blocks": {
+       "ticket_id": {
+        "type": "string",
+        "label": "Ticket id",
+        "required": true
+       }
+      }
+     }
+    },
+    {
+     "action_id": "rowdemo0map",
+     "action_version_id": "rowdemo0mapv1",
+     "versionid": "V1",
+     "name": "Import From Map",
+     "description": "Needs a field type Deskhand cannot draw yet.",
+     "input_schema": {
+      "steps": {
+       "root": [
+        "mapping"
+       ]
+      },
+      "blocks": {
+       "mapping": {
+        "type": "map",
+        "label": "Mapping",
+        "required": true
+       }
+      }
+     }
+    }
+   ]
+  }
+ }
+}

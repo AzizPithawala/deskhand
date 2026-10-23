@@ -11,6 +11,7 @@ from . import classifier, delivery as dl, emailkit
 from .adapters import ActionError, MockHR
 from .db import Store, dumps
 from .directory import Directory
+from .step_runner import StepRunner
 
 BOT_SENDER = "deskhand-bot"
 FINAL = {"REJECTED", "CLOSED", "CANCELLED"}
@@ -97,6 +98,7 @@ class Engine:
         self.ai_write = None  # optional: drafts the one sentence of an approval email (app/viasocket_ai.py); shares ai_enabled and the daily budget
         self.live = None  # set by the web app: outbound delivery (app/delivery.py). None (engine tests) means rows are only ever written to the outbox.
         self._mock_depth = 0
+        self.stepper = StepRunner(self)  # after-approval steps (app/step_runner.py)
         self._defaults()
 
     def _defaults(self):
@@ -129,7 +131,7 @@ class Engine:
     SUBJECTS = {"approved": "Request #{rid} approved", "rejected": "Request #{rid} rejected", "fulfilled": "Request #{rid} is done", "stage_approved": "Request #{rid} moves on",
                 "reminder": "Reminder: request #{rid} is waiting", "escalation_1": "Escalated: request #{rid}", "escalation_2": "Escalated again: request #{rid}",
                 "escalated": "Request #{rid} was escalated", "task": "Task: request #{rid}", "parked": "Needs attention: request #{rid}", "pending_update": "Request #{rid} is still pending",
-                "assigned": "Request #{rid} has someone on it", "delay": "Request #{rid} hit a delay"}
+                "assigned": "Request #{rid} has someone on it", "delay": "Request #{rid} hit a delay", "step_rehearsed": "Rehearsal: a step for request #{rid}"}
 
     def _decider(self, rid):
         """Who last approved this request: whose mailbox a decision or completion email comes from."""
@@ -212,6 +214,7 @@ class Engine:
             return None
         r["details"] = json.loads(r["details_json"] or "{}")
         r["chain"] = json.loads(r["chain_json"] or "[]")
+        r.pop("steps_json", None)  # the snapshot of the steps is internal (app/step_runner.py); the request page gets a reduced view of the runs
         r["email_subject"], r["message"] = split_email(r["raw_text"] or "")
         r["details_view"] = details_view(r["details"])
         return r
@@ -440,6 +443,7 @@ class Engine:
             bal = self.hr.list_leave_balances(emp["id"])
             r["details"]["balance"] = bal
             self.s.q("UPDATE requests SET details_json=? WHERE id=?", (dumps(r["details"]), rid))
+        self.stepper.snapshot(rid, r["type_code"])  # the steps as they are now: a later edit never changes a request that is already routed
         chain = self.d.approver_chain(t, emp, r["details"])
         if not chain:
             self._set_status(rid, "APPROVED", "system", "policy allows without approval")
@@ -529,12 +533,15 @@ class Engine:
         if actor_id != r["employee_id"] and not self._is_admin(actor_id):
             raise NotAuthorized("only the requester or an admin can cancel")
         self._set_status(rid, "CANCELLED", actor_id, "cancelled")
+        self.stepper.on_cancel(rid)
         return self.req(rid)
 
     def done(self, rid, actor_id):
         r = self.req(rid)
         if r["status"] != "FULFILLING":
             raise InvalidTransition(f"request is {r['status']}, not being fulfilled")
+        if self.stepper.unfinished(rid):
+            raise Refused("Deskhand is still doing the steps for this request. It can be marked done after they finish.")
         if actor_id != r["fulfiller_id"] and not self._is_admin(actor_id):
             self.audit(rid, actor_id, "unauthorized_action_refused", {"action": "done"})
             raise NotAuthorized("only the assigned fulfiller or an admin can mark this done")
@@ -551,6 +558,14 @@ class Engine:
         if t["fulfilment_kind"] == "auto_action":
             self._run_leave(rid)
             return
+        if self.stepper.has_steps(rid):  # the company's steps in other apps come first; then the person who completes this kind of request (or nobody, if the type closes by itself)
+            self.stepper.begin(rid, approved_by)
+            return
+        self._hand_to_fulfiller(rid, approved_by)
+
+    def _hand_to_fulfiller(self, rid, approved_by=None):
+        r = self.req(rid)
+        t = self.d.type(r["type_code"])
         ful = self.d.resolve_rule(t.get("fulfiller_rule"), self.d.emp(r["employee_id"])) or self.d.role_holder("admin")
         self.s.q("UPDATE requests SET fulfiller_id=? WHERE id=?", (ful["id"], rid))
         emp = self.d.emp(r["employee_id"])
@@ -619,7 +634,9 @@ class Engine:
             raise InvalidTransition(f"request is {r['status']}, not parked")
         if not self._is_admin(actor_id):
             raise NotAuthorized("only an admin can replay")
-        self.s.q("UPDATE action_runs SET status='pending', attempts=0 WHERE request_id=?", (rid,))
+        if self.stepper.has_runs(rid):  # a request with steps in other apps: the admin decides step by step
+            return self.stepper.replay(rid, actor_id)
+        self.s.q("UPDATE action_runs SET status='pending', attempts=0 WHERE request_id=? AND step='apply_leave'", (rid,))  # only the leave: delivery rows of this request keep their exactly-once record
         self._set_status(rid, "FULFILLING", actor_id, "replay")
         self.audit(rid, actor_id, "replayed", {})
         self._run_leave(rid)
@@ -695,6 +712,9 @@ class Engine:
         for r in self.list_requests():
             if r["status"] == "PENDING_APPROVAL" and self.can_act(r, person_id):
                 items.append({**r, "inbox_kind": "approval"})
+            elif r["status"] == "FULFILLING" and r["type_code"] != "leave" and self.stepper.unfinished(r["id"]):  # Deskhand is working through the steps in other apps: only a step waiting for Run needs a person
+                if any(x["status"] == "ready" for x in self.stepper._rows(r["id"])) and self.stepper.can_run(r, person_id):
+                    items.append({**r, "inbox_kind": "run"})
             elif r["status"] == "FULFILLING" and (r["fulfiller_id"] == person_id or self._is_admin(person_id)) and r["type_code"] != "leave":
                 items.append({**r, "inbox_kind": "task"})
             elif r["status"] == "PARKED" and self._is_admin(person_id):

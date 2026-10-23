@@ -250,6 +250,31 @@ class VsClient:
             return Result(PERMANENT, error="picker returned an unexpected shape", code="unexpected_body")
         return Result(SUCCESS, data=[{"label": str(i.get("label", i.get("value"))), "value": i.get("value")} for i in items if isinstance(i, dict)])
 
+    def picker(self, version_id, field_key, auth_id, existing=None, search=None):
+        """What list-options answers for one field, reduced to plain items. Most pickers give choices {label, value}. A group without fixed children (Google Sheets column values)
+        gives field definitions {key, label, type, required, help}: the key is what goes in inputData. Search text is passed on but some apps ignore it, so callers filter too."""
+        fields = {**(existing or {}), **({"_searchText": search} if search else {})}
+        r = self.api("POST", f"/embed/list-options/{version_id}", {"fieldKey": field_key, "auth_id": auth_id, "existingFields": fields})
+        if not r.ok:
+            return r
+        d = r.data
+        if isinstance(d, dict) and isinstance(d.get("response"), dict) and int(d["response"].get("status") or 0) >= 400:
+            return Result(PERMANENT, error="the connection cannot be read; reconnect it", code="auth")
+        items = d if isinstance(d, list) else (d.get("data") if isinstance(d, dict) else None)
+        if not isinstance(items, list):
+            return Result(PERMANENT, error="picker returned an unexpected shape", code="unexpected_body")
+        out, kind = [], "options"
+        for i in items[:500]:
+            if not isinstance(i, dict):
+                continue
+            if "value" in i:
+                out.append({"label": str(i.get("label", i["value"]))[:120], "value": i["value"]})
+            elif isinstance(i.get("key"), str):
+                kind = "fields"
+                out.append({"key": i["key"], "label": str(i.get("label", i["key"]))[:120], "type": str(i.get("type") or "string"), "required": str(i.get("required")).lower() == "true",
+                            "help": str(i.get("help") or "")[:200]})
+        return Result(SUCCESS, data={"kind": kind, "items": out, "more": isinstance(d, dict) and d.get("offset") is not None})
+
     def revoke(self, auth_id):
         return self.api("DELETE", f"/embed/authentications/revoke/{auth_id}")
 
@@ -343,6 +368,9 @@ class Integration:
     def gmail_send(self, to, subject, body):
         raise NotImplementedError
 
+    def run_step(self, app, version_id, input_data, expect=None):
+        raise NotImplementedError
+
 
 def _slack_sent_ok(body):
     return "" if isinstance(body, dict) and body.get("ts") else "Slack did not return a message timestamp"
@@ -367,6 +395,17 @@ class ViaSocketIntegration(Integration):
         if err:
             return err
         r = self.client.run(c["script_id"], APPS[app]["actions"][action][0], input_data, expect)
+        r.error = redact(r.error, self.conns.secrets())
+        r.data = scrub(r.data, self.conns.secrets())
+        return r
+
+    def run_step(self, app, version_id, input_data, expect=None):
+        """One action of any app an admin chose for a step (rule 21): the app and action come from the saved step, never from message text. Errors and answers are redacted and
+        scrubbed before they leave this method (rule 8); `expect` is the check learned from the admin's test run (rule 10)."""
+        c = self.conns.get(app)
+        if not c or not c["script_id"]:
+            return Result(PERMANENT, error="This app is not connected any more. An admin reconnects it on the Setup page.", code="not_connected")
+        r = self.client.run(c["script_id"], version_id, input_data, expect)
         r.error = redact(r.error, self.conns.secrets())
         r.data = scrub(r.data, self.conns.secrets())
         return r

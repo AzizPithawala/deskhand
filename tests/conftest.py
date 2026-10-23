@@ -6,6 +6,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.pop("ANTHROPIC_API_KEY", None)
+from app import viasocket_adapter as _vs  # noqa: E402
+
+_vs.load_dotenv = lambda path=".env": None  # rule 7: a developer's real .env (viaSocket values) must never make a test talk to viaSocket; tests set their own fake values
 
 from app.engine import Engine  # noqa: E402
 
@@ -32,3 +35,17 @@ def _no_live_anything(monkeypatch):
     for k in ("DESKHAND_LIVE_DELIVERY", "DESKHAND_INTEGRATION", "DESKHAND_LIVE_EMAIL_OVERRIDE", "DESKHAND_DEMO_PASSWORD", "APP_NAME", "DESKHAND_REQUIRE_PASSWORD"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("DESKHAND_DELIVERY_WORKER", "off")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_network(monkeypatch):
+    """Rule 7: no test reaches viaSocket. The real transport refuses, and the app catalog is the recorded fixture unless a test brings its own."""
+    from app import viasocket_adapter as vs
+    from app import viasocket_catalog as vcat
+
+    def refuse(self, *a, **k):
+        raise AssertionError("a test tried a real network call: give it a fake transport")
+    monkeypatch.setattr(vs.HttpxTransport, "request", refuse)
+    vcat.set_catalog(vcat.FakeCatalog())
+    yield
+    vcat.set_catalog(None)
