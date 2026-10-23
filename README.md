@@ -58,8 +58,8 @@ recorded as "not sent" and the rehearsing admin is told what it would have done.
 approver, the person who completes that kind of request, and admins. By default a person still clicks Done afterwards; a type can close by itself when all steps succeed.
 
 Code: `app/viasocket_catalog.py` (the catalog; a recorded fixture for tests and offline work: `DESKHAND_STEPS_CATALOG=fixture`), `app/steps.py` (validation), `app/step_runner.py` (running). Rule 21 in `CLAUDE.md`.
-What viaSocket really does in a real app is in `docs/VIASOCKET_FACTS.md` ("PHASE 5 SPIKE 5A.0"). **Proven:** Google Sheets, add a row. **Not proven:** other apps (the catalog says what each needs; the test run
-proves it for your setup), apps that sign in with an API key, an app's answer feeding the next step. Tests never read your `.env` or reach viaSocket.
+What viaSocket really does in a real app is in `docs/VIASOCKET_FACTS.md` ("PHASE 5 SPIKE 5A.0"). **Proven with real calls (spike 5A.0, through the adapter):** the catalog, connecting Google Sheets, the pickers and one real add-row. **Not yet done: a full run of the finished screens and runner against the real
+service** (so far they are exercised with scripted answers); other apps; apps that sign in with an API key; an app's answer feeding the next step. Tests never read your `.env` or reach viaSocket.
 
 ## Leave record (Phase 3, step 1)
 A real company keeps leave in its own **append-only ledger** (database triggers forbid editing or deleting a line). Each person gets the yearly allowance (default casual 12, sick 8, editable under Setup, Leave) the first time leave is looked at in a calendar year; leave taken
