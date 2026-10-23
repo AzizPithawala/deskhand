@@ -184,6 +184,10 @@ nav.nav::before { content: ""; position: absolute; left: 0; right: 0; top: 12px;
   .navsep { display: block; height: 22px; background: none; margin: 0; }
   main { padding: var(--s-6) var(--s-7) var(--s-8); }
 }
+@media (min-width: 900px) and (max-width: 1199px) {  /* between phone and wide desktop the menu and margins give a little back to the content */
+  .body { grid-template-columns: 204px 1fr; }
+  main { padding-left: var(--s-6); padding-right: var(--s-6); }
+}
 @media (max-width: 899px) {
   .acct-name { display: none; }
   .brand span { display: none; }
@@ -349,7 +353,11 @@ table.t td { padding: 10px var(--s-2) 10px 0; border-bottom: 1px solid var(--hai
 table.t tr:hover td { background: var(--wash); }
 table.t tr:first-child:hover td { background: transparent; }
 table.t td.num, table.t th.num { white-space: nowrap; }
-.scroll { overflow-x: auto; }
+.scroll {  /* a table wider than its column scrolls sideways, and the edges say so */
+  overflow-x: auto;
+  background: linear-gradient(to right, var(--bg) 30%, transparent) left / 28px 100% no-repeat local, linear-gradient(to left, var(--bg) 30%, transparent) right / 28px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(13, 19, 33, .22), transparent) left / 10px 100% no-repeat scroll, radial-gradient(farthest-side at 100% 50%, rgba(13, 19, 33, .22), transparent) right / 10px 100% no-repeat scroll;
+}
 details > summary { cursor: pointer; color: var(--muted); padding: var(--s-2) 0; min-height: 44px; display: flex; align-items: center; }
 details > summary:hover { color: var(--ink); }
 
@@ -405,9 +413,11 @@ dialog .err { color: var(--rejected); min-height: 22px; }
 .peoplebar { display: flex; gap: var(--s-3); align-items: center; flex-wrap: wrap; margin-bottom: var(--s-4); }
 .pname b { display: block; }
 table.t td .btn.small { margin: 0 6px 6px 0; }
-table.people th, table.people td { white-space: nowrap; overflow-wrap: normal; }
-table.people td.pname { white-space: normal; min-width: 200px; overflow-wrap: anywhere; }
-table.people td.pact { white-space: normal; min-width: 210px; }
+table.people th { white-space: nowrap; }
+table.people td { white-space: normal; overflow-wrap: normal; }
+table.people td:nth-child(2), table.people td:nth-child(7) { white-space: nowrap; }  /* access and status stay on one line; names, roles and the Slack note may wrap */
+table.people td.pname { min-width: 168px; overflow-wrap: anywhere; }
+table.people td.pact { min-width: 150px; }
 @media (max-width: 699px) {
   table.people, table.people tbody, table.people tr, table.people td { display: block; }
   table.people tr:first-child { display: none; }
@@ -548,39 +558,41 @@ main:has(.landing), .body.solo main:has(.landing) { max-width: none; padding: 0;
 .l-wrap { max-width: 1160px; margin: 0 auto; padding: 0 var(--s-5); }
 @media (min-width: 900px) { .l-wrap { padding: 0 var(--s-7); } }
 .l-top { display: flex; align-items: center; gap: var(--s-3); padding-top: var(--s-4); padding-bottom: var(--s-4); }
-.l-hero { display: grid; gap: var(--s-8); padding-top: var(--s-8); padding-bottom: var(--s-9); align-items: center; }
-@media (min-width: 960px) { .l-hero { grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr); gap: var(--s-9); padding-top: var(--s-9); padding-bottom: var(--s-10); } }
-.l-hero h1 { font-size: var(--t-4xl); line-height: 1.02; font-weight: 300; letter-spacing: -.04em; max-width: 12ch; margin: 0 0 var(--s-5); }
+.l-hero { padding-top: var(--s-8); padding-bottom: var(--s-9); }
+@media (min-width: 960px) { .l-hero { padding-top: var(--s-9); padding-bottom: var(--s-10); } }
+.l-hero h1 { font-size: var(--t-4xl); line-height: 1.02; font-weight: 640; letter-spacing: -.04em; max-width: 24ch; margin: 0 0 var(--s-5); }
+.l-hero-art { margin-top: var(--s-8); }
+.l-hero .art { max-width: 1040px; }
+.l-hero .art .msg.me { margin-left: 0; text-align: left; }
+@media (min-width: 820px) {  /* the example request is one route, drawn left to right */
+  .l-hero .art { padding: var(--s-6) var(--s-7); }
+  .l-hero .art .journey { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 var(--s-5); }
+  .l-hero .art .stage { grid-template-columns: 1fr; row-gap: var(--s-3); padding-bottom: 0; }
+  .l-hero .art .stage .rail { justify-content: flex-start; }
+  .l-hero .art .stage .thread { display: block; left: 34px; right: calc(-1 * var(--s-5) + 8px); top: 11.5px; bottom: auto; width: auto; height: 3px; background: repeating-linear-gradient(to right, var(--field-border) 0 4px, transparent 4px 8px); }
+  .l-hero .art .stage:last-child .thread { display: none; }
+  .l-hero .art .stage.done .thread { background: var(--line, var(--line-help)); }
+  .l-hero .art .stage.current .thread { background: linear-gradient(to right, var(--line, var(--line-help)) 0 14px, transparent 14px), repeating-linear-gradient(to right, var(--field-border) 0 4px, transparent 4px 8px); }
+}
 .l-lede { font-size: var(--t-md); line-height: 28px; color: var(--muted); max-width: 54ch; margin: 0 0 var(--s-6); }
 .l-cta { display: flex; gap: var(--s-3); align-items: center; flex-wrap: wrap; }
 .l-cta .btn { min-height: 48px; padding: 0 var(--s-6); font-size: 16px; }
 .l-cta .btn.quiet { padding: 0 var(--s-3); }
 .l-note { margin: var(--s-4) 0 0; }
 .l-sec { border-top: 1px solid var(--rule); padding: var(--s-9) 0; }
-.l-sec h2 { font-size: var(--t-2xl); line-height: 40px; letter-spacing: -.03em; font-weight: 400; max-width: 18ch; margin: 0 0 var(--s-5); }
+.l-sec h2 { font-size: var(--t-2xl); line-height: 42px; letter-spacing: -.03em; font-weight: 640; max-width: 18ch; margin: 0 0 var(--s-5); }
 .l-sec .l-lede { margin-bottom: 0; }
 .l-split { display: grid; gap: var(--s-6) var(--s-9); }
 @media (min-width: 900px) { .l-split { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: start; } }
 
-/* how it works: the same nodes and thread as a real journey, drawn as a sequence */
-.l-steps { list-style: none; margin: var(--s-6) 0 0; padding: 0; display: grid; gap: 0; }
-.l-step { position: relative; display: grid; grid-template-columns: 28px 1fr; gap: 0 var(--s-4); padding-bottom: var(--s-6); align-content: start; }
-.l-step:last-child { padding-bottom: 0; }
-.l-step .node { width: 28px; height: 28px; color: var(--muted); background: var(--bg); border-radius: 50%; position: relative; z-index: 1; }
-.l-step.done .node { color: var(--approved); } .l-step.current .node { color: var(--pending); filter: drop-shadow(0 0 8px var(--glow)); }
-.l-step::before { content: ""; position: absolute; left: 13px; top: 30px; bottom: -2px; width: 2px; background: var(--rule); }
-.l-step.done::before { background: linear-gradient(var(--approved), color-mix(in srgb, var(--approved) 35%, var(--rule))); }
-.l-step.current::before { background: linear-gradient(var(--accent), var(--rule)); }
-.l-step:last-child::before { display: none; }
+/* how it works: a real sequence, so numbered; the route itself is drawn once, in the hero */
+.l-steps { list-style: none; margin: var(--s-6) 0 0; padding: 0; display: grid; gap: var(--s-6); counter-reset: step; }
+.l-step { counter-increment: step; display: block; padding-top: var(--s-4); border-top: 1px solid var(--rule); }
+.l-step .node { display: none; }
+.l-step::before { content: counter(step); display: block; font-size: var(--t-2xl); line-height: 40px; font-weight: 300; letter-spacing: -.03em; color: var(--accent); margin-bottom: var(--s-2); }
 .l-step h3 { font-size: var(--t-lg); line-height: 28px; letter-spacing: -.02em; margin: 0 0 var(--s-1); }
 .l-step p { color: var(--muted); max-width: 40ch; margin: 0; }
-@media (min-width: 900px) {
-  .l-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-6); }
-  .l-step { grid-template-columns: 1fr; gap: var(--s-4) 0; padding-bottom: 0; }
-  .l-step::before { left: 36px; right: calc(-1 * var(--s-6) + 8px); top: 13px; bottom: auto; width: auto; height: 2px; }
-  .l-step.done::before { background: linear-gradient(90deg, var(--approved), color-mix(in srgb, var(--approved) 35%, var(--rule))); }
-  .l-step.current::before { background: linear-gradient(90deg, var(--accent), var(--rule)); }
-}
+@media (min-width: 900px) { .l-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-6); } }
 
 /* facts, a rehearsal message, and where it works */
 .l-facts { margin: 0; }
@@ -598,7 +610,7 @@ main:has(.landing), .body.solo main:has(.landing) { max-width: none; padding: 0;
 .l-cols p { color: var(--muted); max-width: 40ch; margin: 0; }
 @media (min-width: 900px) { .l-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-7); } }
 .l-close { border-top: 1px solid var(--rule); background: var(--surface); padding: var(--s-9) 0; }
-.l-close h2 { font-size: var(--t-3xl); line-height: 1.05; font-weight: 300; letter-spacing: -.035em; margin: 0 0 var(--s-4); }
+.l-close h2 { font-size: var(--t-3xl); line-height: 1.05; font-weight: 640; letter-spacing: -.035em; margin: 0 0 var(--s-4); }
 .l-foot { display: flex; justify-content: space-between; gap: var(--s-4); padding-top: var(--s-5); padding-bottom: var(--s-7); }
 @media (max-width: 559px) { .l-cta .btn.primary { flex: 1 1 100%; } }
 

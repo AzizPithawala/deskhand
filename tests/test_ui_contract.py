@@ -89,3 +89,24 @@ def test_the_landing_page_makes_no_claim_the_product_cannot_back_up():
     block = JS[JS.index("async function pageWelcome()"):JS.index("async function pageLogin()")].lower()
     for claim in ("trusted by", "customers", "% ", "free forever", "soc 2", "iso 27001", "guarantee", "99."):
         assert claim not in block, claim
+
+
+def test_the_font_is_self_hosted_checked_and_referenced_and_the_old_one_is_gone():
+    css = open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "app.css")).read()
+    fonts = os.path.join(os.path.dirname(__file__), "..", "app", "static", "fonts")
+    files = sorted(os.listdir(fonts))
+    assert {"AtkinsonHyperlegibleNext-latin.woff2", "AtkinsonHyperlegibleNext-latin-ext.woff2", "OFL.txt"} <= set(files) and not any("Geist" in f for f in files)
+    for f in files:
+        if f.endswith(".woff2"):
+            assert f in css and open(os.path.join(fonts, f), "rb").read(4) == b"wOF2"  # a real WOFF2 file, and the stylesheet loads it
+    assert "SIL OPEN FONT LICENSE" in open(os.path.join(fonts, "OFL.txt")).read().upper()
+    assert "Geist" not in css + JS + HTML and "/static/fonts/AtkinsonHyperlegibleNext-latin.woff2" in HTML  # preloaded once, from our own server (no font CDN at run time)
+    assert "fonts.googleapis" not in css + HTML and "jsdelivr" not in css + JS + HTML
+
+
+def test_every_line_colour_the_script_picks_is_defined_for_both_themes_and_styled():
+    css = open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "app.css")).read()
+    lines = set(re.findall(r"'(\w+)'", re.search(r"const LINE = \{(.*?)\};", JS).group(1))) - {"leave", "software_seat", "access", "equipment", "accessories", "it_help", "policy_question"}
+    assert lines == {"time", "tools", "gear", "help"}
+    for name in lines:
+        assert css.count(f"--line-{name}:") >= 3 and f".line-{name} {{ --line: var(--line-{name}); }}" in css  # day, night by system, night by choice; and the class that uses it

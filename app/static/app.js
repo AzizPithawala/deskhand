@@ -407,7 +407,7 @@ async function pageMine(id) {
 }
 function paintMine(id, changed) {
   const lst = $('#lst'); if (!lst) return;
-  lst.innerHTML = REQS.length ? REQS.map(r => listRow(r, 'mine', r.id === id)).join('') : `<div class="list-empty">${emptyState('No requests yet', 'Ask for something in Ask. Each request you make is listed here with who has it.')}</div>`;
+  lst.innerHTML = REQS.length ? REQS.map(r => listRow(r, 'mine', r.id === id)).join('') : `<div class="list-empty">${emptyState('No requests yet', 'Ask for something on the Ask page. Each request you make is listed here with who has it.')}</div>`;
   flash(changed);
 }
 
@@ -555,7 +555,7 @@ async function pageHealth() {
     ${dash.breaker_open.length ? `<p><b>Intake is paused on: ${esc(dash.breaker_open.join(', '))}.</b> <button class="btn small" id="brk">Reset the breaker</button></p>` : ''}
     ${g ? `<h3 style="margin-top:20px">Weekly digest preview for ${esc(g.person)}</h3><dl class="kv" style="margin-top:8px"><dt>Approved</dt><dd>${g.as_approver.approved}</dd><dt>Rejected</dt><dd>${g.as_approver.rejected}</dd><dt>Pending</dt><dd>${g.as_approver.pending}</dd><dt>Oldest pending</dt><dd>${g.as_approver.oldest_pending_hours} h</dd></dl>
     ${g.as_employee.length ? `<div class="scroll"><table class="t" style="margin-top:8px"><tr><th>Request</th><th>Type</th><th>Status</th></tr>${g.as_employee.map(x => `<tr><td class="num">${x.id}</td><td>${esc(nice(x.type))}</td><td>${esc(x.status)}</td></tr>`).join('')}</table></div>` : '<p class="meta" style="margin-top:8px">No open requests of their own.</p>'}` : ''}`;
-  const brk = $('#brk'); if (brk) brk.onclick = async () => { try { await api('/admin/breaker_reset', {}); toast('Breaker reset.'); } catch (e) { toast(e.message, 6000); } pageHealth(); };
+  const brk = $('#brk'); if (brk) brk.onclick = async () => { try { await api('/admin/breaker_reset', {}); toast('Intake is open again.'); } catch (e) { toast(e.message, 6000); } pageHealth(); };
   if (!isDemo()) $('#hlab').hidden = true;
   else $('#hlab').innerHTML = `<h2>Reliability lab</h2><p class="meta">Each button breaks something on purpose and shows whether the guard held. Runs use Neha Gupta's requests and never send to Slack or email.</p>
     ${LAB.map(([k, t, p]) => `<div class="labrow"><div><b>${esc(t)}</b></div><div><p class="meta">${esc(p)}</p><button class="btn small" data-lab="${k}">Run</button><div class="verdict-box" id="v_${k}" aria-live="polite"></div></div></div>`).join('')}`;
