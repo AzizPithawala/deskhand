@@ -196,7 +196,7 @@ function journeyHTML(r, tl) {
       <div class="rail">${icon(NODE[s.state], 'node' + (changed ? ' pop' : ''))}<span class="thread${changed ? ' draw' : ''}"></span></div>
       <div><div class="what"><span>${esc(s.title)}</span><span class="meta">${s.because ? esc(s.because) : (s.state === 'current' ? '' : esc(WORD[s.state]))}</span></div>
         ${s.wait ? `<div class="note"><span class="wait">${esc(s.wait)}</span></div>` : ''}
-        ${s.who && !s.wait && s.time ? `<div class="meta">${esc(nm(s.who))} · ${stamp(s.time)}</div>` : (s.time ? `<div class="meta">${stamp(s.time)}</div>` : '')}
+        ${s.who && !s.wait && s.time ? `<div class="meta">${esc(nm(s.who))}, ${stamp(s.time)}</div>` : (s.time ? `<div class="meta">${stamp(s.time)}</div>` : '')}
         ${s.note ? `<div class="note meta">${esc(s.note)}</div>` : ''}</div></li>`;
   }).join('');
   PREV[r.id] = states;
@@ -207,6 +207,17 @@ function journeyHTML(r, tl) {
 function miniHTML(r) {
   const st = stagesFor(r, null);
   return `<div class="mini" aria-hidden="true">${st.map((s, i) => `${i ? `<span class="seg ${st[i - 1].state === 'done' ? 'done' : ''}"></span>` : ''}${icon(NODE[s.state], 'n ' + s.state)}`).join('')}</div>`;
+}
+
+/* ---------- a request's line (presentation only): the colour its route is drawn in; the type's name is always written beside it ---------- */
+const LINE = { leave: 'time', software_seat: 'tools', access: 'tools', equipment: 'gear', accessories: 'gear', it_help: 'help', policy_question: 'help' };
+const lineOf = r => 'line-' + (LINE[r.type_code] || 'help');
+const typeName = r => (TYPE[r.type_code] && TYPE[r.type_code].name) || nice(r.type_code);
+const waitText = s => (s < 45 ? 'just now' : dur(s));
+function holding(r) {  // who has a request that is waiting for a decision, and for how long: the two facts a board leads with
+  if (r.status !== 'PENDING_APPROVAL') return null;
+  const holder = r.escalated_to || (r.chain || [])[r.chain_index];
+  return { who: nm(holder), wait: waitText(NOW - ((r.escalated_to && r.escalated_at) || r.assigned_at || r.created_at)) };
 }
 
 /* ---------- small ui pieces ---------- */
@@ -333,7 +344,7 @@ const SAMPLES = ['I need Friday and Monday off, family function.', 'Need a Claud
   'VPN is not connecting since morning.', 'Why is my salary lower this month?', 'New joiner Rohan starts Monday. Needs a laptop and a Slack account.'];
 
 function reqCard(r) {
-  return `<div class="reqcard" data-req="${r.id}"><div class="h"><b>${esc(r.summary)}</b>${chip(r)}</div>${miniHTML(r)}<div class="meta">${esc(sentence(r))}</div><div style="margin-top:6px"><a href="#request/${r.id}">Open request ${r.id}</a></div></div>`;
+  return `<div class="reqcard ${lineOf(r)}" data-req="${r.id}"><div class="h"><b>${esc(r.summary)}</b>${chip(r)}</div>${miniHTML(r)}<div class="meta">${esc(typeName(r))}, request ${r.id}. ${esc(sentence(r))}</div><div style="margin-top:6px"><a href="#request/${r.id}">Open request ${r.id}</a></div></div>`;
 }
 
 async function pageAsk() {
@@ -380,10 +391,12 @@ async function sendMsg() {
   await updateAsk();
 }
 
-function listRow(r, hrefBase, selected, extra = '') {
-  return `<a class="item" href="#${hrefBase}/${r.id}" data-req="${r.id}" ${selected ? 'aria-current="true"' : ''}>
-    <div class="t"><span class="id num">${r.id}</span><span>${esc(r.summary)}</span></div>
-    <div class="s">${chip(r)}</div>${miniHTML(r)}<div class="meta">${esc(extra || sentence(r))}</div></a>`;
+function listRow(r, hrefBase, selected) {
+  const h = holding(r);
+  return `<a class="item board ${lineOf(r)}" href="#${hrefBase}/${r.id}" data-req="${r.id}" ${selected ? 'aria-current="true"' : ''}>
+    <span class="id num"><span class="sr">Request </span>${r.id}</span>
+    <span class="what"><b>${esc(r.summary)}</b><span class="meta">${esc(typeName(r))}</span></span>${miniHTML(r)}
+    <span class="who">${h ? `<span class="meta">With ${esc(h.who)}</span><span class="wait num">${esc(h.wait)}</span>` : chip(r)}</span></a>`;
 }
 
 async function pageMine(id) {
@@ -394,7 +407,7 @@ async function pageMine(id) {
 }
 function paintMine(id, changed) {
   const lst = $('#lst'); if (!lst) return;
-  lst.innerHTML = REQS.length ? REQS.map(r => listRow(r, 'mine', r.id === id)).join('') : `<div class="list-empty">${emptyState('No requests yet', 'Ask for something in Ask. Each request you make is listed here with who has it.')}</div>`;
+  lst.innerHTML = REQS.length ? REQS.map(r => listRow(r, 'mine', r.id === id)).join('') : `<div class="list-empty">${emptyState('No requests yet', 'Ask for something on the Ask page. Each request you make is listed here with who has it.')}</div>`;
   flash(changed);
 }
 
@@ -409,9 +422,13 @@ async function pageNeeds(id) {
 const KIND = { approval: 'Needs your decision', task: 'Needs you to finish it', parked: 'Parked: needs an admin' };
 function paintNeeds(id, changed) {
   const lst = $('#lst'); if (!lst) return;
-  lst.innerHTML = INBOX.length ? INBOX.map(r => `<a class="item" href="#needs/${r.id}" data-req="${r.id}" ${r.id === id ? 'aria-current="true"' : ''}>
-      <div class="t"><span class="id num">${r.id}</span><span>${esc(r.summary)}</span></div>
-      <div class="s meta">${esc(r.employee_name)} · ${esc(KIND[r.inbox_kind] || '')}</div><div class="meta">${esc(sentence(r))}</div></a>`).join('')
+  lst.innerHTML = INBOX.length ? INBOX.map(r => {
+    const h = holding(r);
+    return `<a class="item board ${lineOf(r)}" href="#needs/${r.id}" data-req="${r.id}" ${r.id === id ? 'aria-current="true"' : ''}>
+      <span class="id num"><span class="sr">Request </span>${r.id}</span>
+      <span class="what"><b>${esc(r.summary)}</b><span class="meta">${esc(r.employee_name)} asked. ${esc(KIND[r.inbox_kind] || '')}.</span></span>${miniHTML(r)}
+      <span class="who">${h ? `<span class="meta">Waiting</span><span class="wait num">${esc(h.wait)}</span>` : chip(r)}</span></a>`;
+  }).join('')
     : `<div class="list-empty">${emptyState('Nothing waiting for you', 'New requests assigned to you appear here within a few seconds.')}</div>`;
   flash(changed);
 }
@@ -439,15 +456,16 @@ async function paintDetail(id, base) {
   diffStatuses([r]);
   const act = INBOX.find(x => x.id === id);
   det.dataset.id = id;
-  det.innerHTML = `<div data-req="${r.id}">
+  det.innerHTML = `<div class="ticket ${lineOf(r)}" data-req="${r.id}">
     <a class="back" href="#${base}">Back to the list</a>
-    <div class="page-head" style="margin-top:12px"><h1>${esc(r.summary)}</h1>${chip(r)}</div>
-    <p class="meta">Request ${r.id} · ${esc(nm(r.employee_id))}${EMP[r.employee_id] ? ', ' + esc(EMP[r.employee_id].department) : ''} · via ${esc(r.channel)} · asked ${stamp(r.created_at)}</p>
+    <p class="ticket-kind">${esc(typeName(r))}, request ${r.id}</p>
+    <div class="page-head" style="margin-bottom:var(--s-2)"><h1>${esc(r.summary)}</h1>${chip(r)}</div>
+    <p class="meta ticket-sub">Asked by ${esc(nm(r.employee_id))}${EMP[r.employee_id] && EMP[r.employee_id].department ? ' (' + esc(EMP[r.employee_id].department) + ')' : ''} in ${esc(r.channel)} on ${stamp(r.created_at)}.</p>
     <section aria-label="Journey of this request">${journeyHTML(r, d.timeline)}</section>
     ${act ? decisionHTML(act) : ''}
     <section class="sec"><h3>What Deskhand understood</h3>${whatWasUnderstood(r)}</section>
     <section class="sec"><h3>${r.email_subject ? 'Original email' : 'Original message'}</h3>${r.email_subject ? `<p class="meta">Subject: ${esc(r.email_subject)}</p>` : ''}<div class="quote">${esc(r.message)}</div></section>
-    <section class="sec"><h3>Record</h3><p class="meta">Every change is written once and never edited.</p><ul class="record">${d.timeline.map(e => `<li><span class="meta">${new Date(e.ts * 1000).toLocaleTimeString('en-GB', { timeZone: 'UTC' })}</span><span>${esc(recLine(e))} <span class="meta">· ${esc(nm(e.actor))}</span></span></li>`).join('')}</ul></section></div>`;
+    <section class="sec"><h3>Record</h3><p class="meta">Every change is written once and never edited.</p><ul class="record">${d.timeline.map(e => `<li><span class="meta">${new Date(e.ts * 1000).toLocaleTimeString('en-GB', { timeZone: 'UTC' })}</span><span>${esc(recLine(e))} <span class="meta">by ${esc(nm(e.actor))}</span></span></li>`).join('')}</ul></section></div>`;
   wireDecision(r);
   if (NUNREAD > 0 && current.id === id) api('/notifications/read', { request_id: id }).then(j => { NUNREAD = NSTATE.painted = j.unread; paintBadge(); }).catch(() => {});  // opening a request is reading what was said about it; the list's own first pick is not
 }
@@ -537,7 +555,7 @@ async function pageHealth() {
     ${dash.breaker_open.length ? `<p><b>Intake is paused on: ${esc(dash.breaker_open.join(', '))}.</b> <button class="btn small" id="brk">Reset the breaker</button></p>` : ''}
     ${g ? `<h3 style="margin-top:20px">Weekly digest preview for ${esc(g.person)}</h3><dl class="kv" style="margin-top:8px"><dt>Approved</dt><dd>${g.as_approver.approved}</dd><dt>Rejected</dt><dd>${g.as_approver.rejected}</dd><dt>Pending</dt><dd>${g.as_approver.pending}</dd><dt>Oldest pending</dt><dd>${g.as_approver.oldest_pending_hours} h</dd></dl>
     ${g.as_employee.length ? `<div class="scroll"><table class="t" style="margin-top:8px"><tr><th>Request</th><th>Type</th><th>Status</th></tr>${g.as_employee.map(x => `<tr><td class="num">${x.id}</td><td>${esc(nice(x.type))}</td><td>${esc(x.status)}</td></tr>`).join('')}</table></div>` : '<p class="meta" style="margin-top:8px">No open requests of their own.</p>'}` : ''}`;
-  const brk = $('#brk'); if (brk) brk.onclick = async () => { try { await api('/admin/breaker_reset', {}); toast('Breaker reset.'); } catch (e) { toast(e.message, 6000); } pageHealth(); };
+  const brk = $('#brk'); if (brk) brk.onclick = async () => { try { await api('/admin/breaker_reset', {}); toast('Intake is open again.'); } catch (e) { toast(e.message, 6000); } pageHealth(); };
   if (!isDemo()) $('#hlab').hidden = true;
   else $('#hlab').innerHTML = `<h2>Reliability lab</h2><p class="meta">Each button breaks something on purpose and shows whether the guard held. Runs use Neha Gupta's requests and never send to Slack or email.</p>
     ${LAB.map(([k, t, p]) => `<div class="labrow"><div><b>${esc(t)}</b></div><div><p class="meta">${esc(p)}</p><button class="btn small" data-lab="${k}">Run</button><div class="verdict-box" id="v_${k}" aria-live="polite"></div></div></div>`).join('')}`;
@@ -655,7 +673,7 @@ async function testConn(action) {
   try {
     const r = await api('/connections/test', { action, email: action === 'slack_lookup' ? ($('#lk').value || '') : null });
     const ok = r.outcome === 'success';
-    box.innerHTML = `<ul class="verdict"><li class="${ok ? 'ok' : 'no'}">${icon(ok ? 's-check' : 's-cross')}<b>${ok ? 'It worked' : esc(nice(r.outcome))}</b></li>${r.error ? `<li class="meta" style="margin-left:24px">${esc(r.error)}</li>` : ''}${r.data ? `<li class="meta" style="margin-left:24px">${esc(Object.entries(r.data).map(([k, v]) => `${k}: ${v}`).join(' · '))}</li>` : ''}</ul>`;
+    box.innerHTML = `<ul class="verdict"><li class="${ok ? 'ok' : 'no'}">${icon(ok ? 's-check' : 's-cross')}<b>${ok ? 'It worked' : esc(nice(r.outcome))}</b></li>${r.error ? `<li class="meta" style="margin-left:24px">${esc(r.error)}</li>` : ''}${r.data ? `<li class="meta" style="margin-left:24px">${esc(Object.entries(r.data).map(([k, v]) => `${k}: ${v}`).join('; '))}</li>` : ''}</ul>`;
   } catch (e) { box.innerHTML = `<p role="alert" style="color:var(--rejected)">${esc(e.message)}</p>`; }
 }
 
@@ -669,7 +687,7 @@ async function pageAudit() {
     const q = $('#af').value.trim().toLowerCase();
     const list = rows.filter(e => !q || `${e.request_id ?? ''} ${nm(e.actor)} ${nice(e.type)}`.toLowerCase().includes(q));
     $('#at').innerHTML = list.length ? `<div class="scroll"><table class="t"><tr><th class="num">#</th><th>Request</th><th>Who</th><th>What</th><th>Detail</th></tr>${list.map(e => {
-      let det = ''; try { const o = JSON.parse(e.data_json || '{}'); det = Object.entries(o).filter(([, v]) => v !== '' && v !== null && v !== undefined).map(([k, v]) => `${nice(k)}: ${typeof v === 'object' ? JSON.stringify(v) : (EMP[v] ? nm(v) : v)}`).join(' · '); } catch { /* ignore */ }
+      let det = ''; try { const o = JSON.parse(e.data_json || '{}'); det = Object.entries(o).filter(([, v]) => v !== '' && v !== null && v !== undefined).map(([k, v]) => `${nice(k)}: ${typeof v === 'object' ? JSON.stringify(v) : (EMP[v] ? nm(v) : v)}`).join('; '); } catch { /* ignore */ }
       return `<tr><td class="num">${e.id}</td><td class="num">${e.request_id ? `<a href="#request/${e.request_id}">${e.request_id}</a>` : ''}</td><td>${esc(nm(e.actor))}</td><td>${esc(nice(e.type))}</td><td class="meta">${esc(det)}</td></tr>`;
     }).join('')}</table></div>` : emptyState('No events match', q ? 'Clear the filter to see every event.' : 'Events appear here as soon as something happens.');
   };
@@ -699,7 +717,7 @@ function paintShell() {
   const ab = $('#acctbtn'); ab.hidden = !inn;
   if (inn) {
     ab.setAttribute('aria-label', `Account: ${ME.user.name}, ${ME.org.name}`);
-    ab.innerHTML = `<span class="av" aria-hidden="true">${esc(initials(ME.user.name))}</span><span class="acct-name">${esc(ME.user.name)}<span class="meta"> · ${esc(ME.org.name)}</span></span>`;
+    ab.innerHTML = `<span class="av" aria-hidden="true">${esc(initials(ME.user.name))}</span><span class="acct-name">${esc(ME.user.name)}<span class="acct-org">${esc(ME.org.name)}</span></span>`;
   } else { $('#status').hidden = true; $('#statusbtn').hidden = true; $('#statuspanel').hidden = true; $('#banner').innerHTML = ''; }
 }
 async function enter(me) {
@@ -726,7 +744,7 @@ function submitForm(form, errId, work) {
 function journeyArt() {  // a drawn example of the real request journey, not live data
   const stage = (cls, ic, title, meta, note) => `<li class="stage ${cls}"><div class="rail">${icon(ic, 'node')}<span class="thread"></span></div>
     <div><div class="what"><span>${title}</span>${meta ? `<span class="meta">${meta}</span>` : ''}</div>${note ? `<div class="note">${note}</div>` : ''}</div></li>`;
-  return `<figure class="art" aria-label="Example: a leave request and where it is now">
+  return `<figure class="art line-time" aria-label="Example: a leave request and where it is now">
     <div class="msg me"><div class="tx">I need Tuesday off, personal errand.</div></div>
     <p class="art-read meta">Deskhand read: casual leave, 1 working day. Balance 12 to 11.</p>
     <ol class="journey" style="list-style:none;padding:0">
@@ -965,7 +983,6 @@ async function personLink(id) {
 const ADMIN_LINKS = [['setup', 'Setup', 'Roles, request types, policies and a routing test.'], ['people', 'People', 'Invite people, set managers and access.'],
   ['integrations', 'Integrations', 'Connect Slack and Gmail; switch viaSocket AI.'], ['health', 'Health', 'Is everything working, and can it be proven?'],
   ['deliverylog', 'Delivery log', 'Every message Deskhand sent: to whom, by Slack or email, and how it ended.'], ['audit', 'Audit', 'Every change, who made it, when.']];
-const HUBICON = { setup: 'i-setup', people: 'i-people', integrations: 'i-plug', health: 'i-health', deliverylog: 'i-log', audit: 'i-audit' };  // presentation only: the icon beside each admin card
 const amount = n => `₹${Number(n).toLocaleString('en-IN')}`;
 const afterSetup = async () => { try { await loadCore(); } catch { /* the page shows its own errors */ } };  // people, roles and rules feed the journeys and the status bar
 
@@ -975,7 +992,7 @@ async function pageAdmin() {
     try { const c = await api('/setup/checklist'); if (!c.dismissed && c.done < c.total) note = `<div class="state" style="margin-bottom:16px"><b>Company setup: ${c.done} of ${c.total} steps done</b><a href="#setup">Continue setting up</a></div>`; } catch { /* the hub still works without it */ }
   }
   $('#main').innerHTML = `<div class="page-head"><h1>Admin</h1><span class="meta">${esc(ME.org.name)}</span></div>${note}
-    <div class="hub">${ADMIN_LINKS.map(([k, t, d]) => `<a href="#${k}"><span class="hubicon">${icon(HUBICON[k] || 'i-admin')}</span><b>${esc(t)}</b><span class="meta">${esc(d)}</span></a>`).join('')}</div>`;
+    <div class="hub">${ADMIN_LINKS.map(([k, t, d]) => `<a href="#${k}"><b>${esc(t)}</b><span class="meta">${esc(d)}</span></a>`).join('')}</div>`;
 }
 
 async function pageIntegrations() {
@@ -999,7 +1016,7 @@ async function setupOverview() {
   if (c.demo) { $('#sbody').innerHTML = '<div class="state"><b>This is the demo company</b>Its roles and rules are prepared and cannot be changed. Read them in the sections above and try the routing test. Create your own company to set up yours.</div>'; return; }
   $('#sbody').innerHTML = `<h2>Get your company ready <span class="meta num" style="margin-left:8px">${c.done} of ${c.total} done</span></h2>
     <p class="meta" style="max-width:640px">Each step ticks itself when it is true. Nothing here blocks anyone from asking for things.</p>
-    <ol class="checklist">${c.steps.map(s => `<li class="${s.done ? 'done' : ''}">${icon(s.done ? 's-done' : 's-upcoming')}<div><a href="${esc(s.link)}"><b>${esc(s.title)}</b></a><div class="meta">${esc(s.detail)}${s.done ? ' · done' : ''}</div></div></li>`).join('')}</ol>
+    <ol class="checklist">${c.steps.map(s => `<li class="${s.done ? 'done' : ''}">${icon(s.done ? 's-done' : 's-upcoming')}<div><a href="${esc(s.link)}"><b>${esc(s.title)}</b></a><div class="meta">${esc(s.detail)}${s.done ? ' Done.' : ''}</div></div></li>`).join('')}</ol>
     ${c.done === c.total && !c.dismissed ? '<button class="btn" id="chkdone">Hide the reminder on the Admin page</button>' : ''}`;
   const b = $('#chkdone'); if (b) b.onclick = async () => { try { await api('/setup/checklist/dismiss', {}); toast('Hidden.'); setupOverview(); } catch (e) { toast(e.message, 6000); } };
 }
@@ -1357,13 +1374,13 @@ async function nLoad(more) {
 function nItemHTML(n) {
   const line = String(n.text || '').replace(/\s+/g, ' ').slice(0, 220);
   const href = n.request_id ? `#${n.needs_action ? 'needs' : 'request'}/${n.request_id}` : '#notifications';
-  const about = n.request_id ? ` · Request ${n.request_id}${n.type_name ? ' · ' + esc(n.type_name) : ''}` : '';
+  const about = n.request_id ? `<span>Request ${n.request_id}${n.type_name ? ', ' + esc(n.type_name) : ''}</span>` : '';
   return `<a class="nitem ${n.read ? '' : 'unread'}" href="${href}" data-nid="${n.id}">
     <span class="ndot" aria-hidden="true"></span>
     <span class="nbody">
       <span class="nt"><b>${n.read ? '' : '<span class="sr">Unread. </span>'}${esc(n.subject)}</b><span class="meta">${stamp(n.created_at)}</span></span>
       <span class="nl">${esc(line)}</span>
-      <span class="meta">${esc(n.category_title)}${about}${n.needs_action ? ' · <span class="act">waiting for you</span>' : ''}</span>
+      <span class="meta nmeta"><span>${esc(n.category_title)}</span>${about}${n.needs_action ? '<span class="act">waiting for you</span>' : ''}</span>
       <span class="nc">${copyChip('Slack', n.slack)}${copyChip('Email', n.email)}</span>
     </span></a>`;
 }
@@ -1483,7 +1500,7 @@ async function dlLoad(more) {
 }
 function dlRowHTML(r) {
   const [cls, ic, w] = DSTATE[r.status] || DSTATE.skipped;
-  const detail = [r.error ? `<span class="neg">${esc(r.error)}</span>` : '', r.note ? esc(r.note) : '', r.sent_to && r.sent_to !== r.to.name ? `sent to ${esc(r.sent_to)}` : ''].filter(Boolean).join(' · ');
+  const detail = [r.error ? `<span class="neg">${esc(r.error)}</span>` : '', r.note ? esc(r.note) : '', r.sent_to && r.sent_to !== r.to.name ? `sent to ${esc(r.sent_to)}` : ''].filter(Boolean).map(x => `<span class="dline">${x}</span>`).join('');
   return `<tr><td data-l="When" class="num">${stamp(r.created_at)}</td><td data-l="To">${esc(r.to.name)}</td><td data-l="What">${esc(nice(r.kind))}</td>
     <td data-l="Request" class="num">${r.request_id ? `<a href="#request/${r.request_id}">${r.request_id}</a>${r.type_name ? ' ' + esc(r.type_name) : ''}` : ''}</td>
     <td data-l="Via">${r.channel === 'slack' ? 'Slack' : 'Email'}</td><td data-l="Status"><span class="chip ${cls}">${icon(ic)}${w}</span></td><td data-l="Tries" class="num">${r.attempts}</td>
@@ -1558,7 +1575,7 @@ async function render(userNav) {
   if (userNav && changedPage) window.scrollTo(0, 0);
   paintShell();
   $$('#nav a').forEach(a => { if (a.dataset.page === route.page || (a.dataset.page === 'health' && route.page === 'deliverylog') || (a.hasAttribute('data-hub') && ADMIN_PAGES.includes(route.page))) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
-  document.title = TITLES[route.page] + ' · Deskhand';
+  document.title = TITLES[route.page] + ' - Deskhand';
   const m = $('#main');
   try {
     if (authPage) {

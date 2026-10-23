@@ -13,7 +13,7 @@ pip install -r requirements-dev.txt
 DESKHAND_SIGNUP_CODES=any-code-you-like make dev        # or: uvicorn app.main:app --reload --port 8000
 ```
 Open http://localhost:8000. Without `DESKHAND_SIGNUP_CODES` registration is closed and only "Try the demo" works. Needs Python 3.11+. Run the tests with
-`make test` (461 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
+`make test` (463 tests, including the 7-minute demo script, two-company isolation and a golden check of the router). `make reset` deletes the local data directory (`.deskhand/`).
 Requests are understood by a deterministic rules classifier. An admin of a real company can switch on viaSocket AI (a Claude model, no model key needed)
 on the Health page; it only proposes the request type and details, waits at most 25 seconds, falls back to the rules on any failure, and never sees salary or
 payroll messages. (`requirements.txt` is the deploy list; `requirements-dev.txt` adds pytest.)
@@ -63,11 +63,11 @@ Weekend-only dates ask again instead of reaching an approver. A weekday named on
 - Reliability lab (demo only): seven live failure buttons. Dashboard with guard counters. Weekly digest preview (JSON).
 
 ## The interface ("Dusk")
-Static HTML, CSS and JS in `app/static` (no build step, no dependencies; the Geist font is self-hosted under its OFL licence). Signed out: a **landing page** at the bare address (what Deskhand does, how a request moves, why nothing gets lost, rehearsal, Slack and Gmail; its hero is the real request journey drawn as an example, and it makes no claim the product cannot back up),
+Static HTML, CSS and JS in `app/static` (no build step, no dependencies; the Atkinson Hyperlegible Next font is self-hosted under its OFL licence). Signed out: a **landing page** at the bare address (what Deskhand does, how a request moves, why nothing gets lost, rehearsal, Slack and Gmail; its hero is the real request journey drawn as an example, and it makes no claim the product cannot back up),
 then **Sign in**, **Create a company** and the join link (each shows the same example beside the form on wide screens). A link to a page still goes to sign-in and comes back; a signed-in person never sees the landing. Signed in: **Ask** (a chat; every request appears inline with its journey), **My requests**, **Needs you** (the approver queue, with a decision bar made for
 one-handed phone use), **Notifications** (everyone, with an unread badge), and for admins **Setup**, **People**, **Integrations**, **Health**, the **Delivery log** and **Audit**. The account button (top right) has your details, the theme, change password
 and Sign out. The request journey shows each stage, who holds it, how long it has waited and what happens next; every status has its
-own shape as well as a colour. Light and dark follow the system; reduced motion is respected. **Design system:** one stylesheet organised as tokens (type scale, spacing, radius, elevation, motion; the colour names the script uses are unchanged), base, controls, shell, request pages, journey, health and tables, dialogs, admin, notifications, landing.
+own shape as well as a colour. Light and dark follow the system; reduced motion is respected. **Design system ("Route map", notes in `docs/DESIGN.md`):** every request is a route of stations (the status shapes) joined by a line coloured by request type; the side menu, board rows, request tickets, the Admin line and the landing hero all use the same drawing. One typeface, Atkinson Hyperlegible Next; day and night service themes. One stylesheet organised as tokens, base, controls, shell, routes, boards and tickets, health and tables, dialogs, admin, notifications, landing.
 Every text and background colour pair is at least 4.5:1 in both themes, form-field borders are at least 3:1, there is a visible focus ring, and touch targets are 44px. `tests/test_ui_contract.py` checks that every API path the script calls exists, that the landing page makes only the two calls the sign-in page makes, and that the delivery log page never reads message text.
 
 ## Messaging: Slack, email and rehearsal (Phase 3, step 2)
