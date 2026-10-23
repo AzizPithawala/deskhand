@@ -63,7 +63,7 @@ Weekend-only dates ask again instead of reaching an approver. A weekday named on
 - Reliability lab (demo only): seven live failure buttons. Dashboard with guard counters. Weekly digest preview (JSON).
 
 ## The interface ("Dusk")
-Static HTML, CSS and JS in `app/static` (no build step, no dependencies; the Geist font is self-hosted under its OFL licence). Signed out: a **landing page** at the bare address (what Deskhand does, how a request moves, why nothing gets lost, rehearsal, Slack and Gmail; its hero is the real request journey drawn as an example, and it makes no claim the product cannot back up),
+Static HTML, CSS and JS in `app/static` (no build step, no dependencies; the Atkinson Hyperlegible Next font is self-hosted under its OFL licence). Signed out: a **landing page** at the bare address (what Deskhand does, how a request moves, why nothing gets lost, rehearsal, Slack and Gmail; its hero is the real request journey drawn as an example, and it makes no claim the product cannot back up),
 then **Sign in**, **Create a company** and the join link (each shows the same example beside the form on wide screens). A link to a page still goes to sign-in and comes back; a signed-in person never sees the landing. Signed in: **Ask** (a chat; every request appears inline with its journey), **My requests**, **Needs you** (the approver queue, with a decision bar made for
 one-handed phone use), **Notifications** (everyone, with an unread badge), and for admins **Setup**, **People**, **Integrations**, **Health**, the **Delivery log** and **Audit**. The account button (top right) has your details, the theme, change password
 and Sign out. The request journey shows each stage, who holds it, how long it has waited and what happens next; every status has its

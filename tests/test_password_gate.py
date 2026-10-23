@@ -22,7 +22,7 @@ def make(tmp_path, monkeypatch):
     return build
 
 
-ROUTES = ["/static/app.css", "/static/app.js", "/static/fonts/Geist-Variable.woff2", "/", "/api/auth/options", "/api/state", "/api/dashboard",
+ROUTES = ["/static/app.css", "/static/app.js", "/static/fonts/AtkinsonHyperlegibleNext-latin.woff2", "/", "/api/auth/options", "/api/state", "/api/dashboard",
           "/api/outbox", "/api/requests", "/api/audit", "/api/clock", "/api/connections", "/api/connections/token", "/api/delivery", "/docs", "/openapi.json"]
 
 
@@ -73,7 +73,7 @@ def test_brute_force_brake(make):
 
 def test_static_files_are_behind_the_gate_and_served_with_it(make):
     c, _ = make(DESKHAND_DEMO_PASSWORD=PW)
-    for r in ("/static/app.css", "/static/app.js", "/static/fonts/Geist-Variable.woff2", "/static/fonts/OFL.txt"):
+    for r in ("/static/app.css", "/static/app.js", "/static/fonts/AtkinsonHyperlegibleNext-latin.woff2", "/static/fonts/OFL.txt"):
         assert c.get(r).status_code == 401
         assert c.get(r, headers=basic(PW)).status_code == 200
 
