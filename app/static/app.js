@@ -255,7 +255,7 @@ function dialogPrompt({ title, body = '', label = '', confirm = 'OK', match = nu
 }
 
 /* ---------- routing ---------- */
-const AUTH_PAGES = ['login', 'register', 'join'];
+const AUTH_PAGES = ['login', 'register', 'join', 'welcome'];
 const APP_PAGES = ['ask', 'mine', 'needs', 'notifications', 'leave', 'mailbox', 'admin', 'setup', 'people', 'integrations', 'health', 'deliverylog', 'audit'];
 const ADMIN_PAGES = ['admin', 'setup', 'people', 'integrations', 'health', 'deliverylog', 'audit'];
 function parseHash() {
@@ -394,7 +394,7 @@ async function pageMine(id) {
 }
 function paintMine(id, changed) {
   const lst = $('#lst'); if (!lst) return;
-  lst.innerHTML = REQS.length ? REQS.map(r => listRow(r, 'mine', r.id === id)).join('') : `<div style="padding-top:16px">${emptyState('No requests yet', 'Ask for something in Ask. Each request you make is listed here with who has it.')}</div>`;
+  lst.innerHTML = REQS.length ? REQS.map(r => listRow(r, 'mine', r.id === id)).join('') : `<div class="list-empty">${emptyState('No requests yet', 'Ask for something in Ask. Each request you make is listed here with who has it.')}</div>`;
   flash(changed);
 }
 
@@ -412,7 +412,7 @@ function paintNeeds(id, changed) {
   lst.innerHTML = INBOX.length ? INBOX.map(r => `<a class="item" href="#needs/${r.id}" data-req="${r.id}" ${r.id === id ? 'aria-current="true"' : ''}>
       <div class="t"><span class="id num">${r.id}</span><span>${esc(r.summary)}</span></div>
       <div class="s meta">${esc(r.employee_name)} · ${esc(KIND[r.inbox_kind] || '')}</div><div class="meta">${esc(sentence(r))}</div></a>`).join('')
-    : `<div style="padding-top:16px">${emptyState('Nothing waiting for you', 'New requests assigned to you appear here within a few seconds.')}</div>`;
+    : `<div class="list-empty">${emptyState('Nothing waiting for you', 'New requests assigned to you appear here within a few seconds.')}</div>`;
   flash(changed);
 }
 
@@ -711,7 +711,7 @@ async function enter(me) {
   await render(true);
 }
 function authShell(title, lede, inner) {
-  $('#main').innerHTML = `<div class="auth"><h1 class="display">${esc(title)}</h1>${lede ? `<p class="lede">${esc(lede)}</p>` : ''}${inner}</div>`;
+  $('#main').innerHTML = `<div class="authwrap"><div class="auth"><h1 class="display">${esc(title)}</h1>${lede ? `<p class="lede">${esc(lede)}</p>` : ''}${inner}<p class="meta authabout"><a href="#welcome">What is Deskhand?</a></p></div><aside class="authside" aria-hidden="true">${journeyArt()}</aside></div>`;
 }
 const fld = (id, label, type = 'text', extra = '', hint = '') => `<div><label class="l" for="${id}">${esc(label)}</label><input class="field" id="${id}" type="${type}" ${extra}>${hint ? `<div class="meta">${esc(hint)}</div>` : ''}</div>`;
 function submitForm(form, errId, work) {
@@ -720,6 +720,92 @@ function submitForm(form, errId, work) {
     const btn = $('button[type=submit]', form); btn.disabled = true; $(errId).textContent = '';
     try { await work(); } catch (err) { $(errId).textContent = err.message; btn.disabled = false; }
   };
+}
+
+/* ---------- the first screen for signed-out visitors (presentation only: static copy, links, and the same demo call the sign-in page makes) ---------- */
+function journeyArt() {  // a drawn example of the real request journey, not live data
+  const stage = (cls, ic, title, meta, note) => `<li class="stage ${cls}"><div class="rail">${icon(ic, 'node')}<span class="thread"></span></div>
+    <div><div class="what"><span>${title}</span>${meta ? `<span class="meta">${meta}</span>` : ''}</div>${note ? `<div class="note">${note}</div>` : ''}</div></li>`;
+  return `<figure class="art" aria-label="Example: a leave request and where it is now">
+    <div class="msg me"><div class="tx">I need Tuesday off, personal errand.</div></div>
+    <p class="art-read meta">Deskhand read: casual leave, 1 working day. Balance 12 to 11.</p>
+    <ol class="journey" style="list-style:none;padding:0">
+      ${stage('done', 's-done', 'Asked', 'Done', '<span class="meta">Priya Sharma</span>')}
+      ${stage('current', 's-pending', 'Approval', '', '<span class="wait">with Rahul Mehta, waiting 2 h 10 min</span>')}
+      ${stage('upcoming', 's-upcoming', 'Recorded in the leave balance', 'Upcoming', '')}
+      ${stage('upcoming', 's-upcoming', 'Completed', 'Upcoming', '<span class="meta">Priya is told in Slack and by email.</span>')}
+    </ol>
+    <div class="art-chips"><span class="chip approved">${icon('s-check')}Rahul told in Slack</span><span class="chip approved">${icon('s-check')}Rahul told by email</span></div>
+  </figure>`;
+}
+
+async function pageWelcome() {
+  try { AUTHOPT = await api('/auth/options'); } catch { /* keep what we knew */ }
+  const demo = AUTHOPT.demo_available, open = AUTHOPT.registration_open;
+  const demoBtn = (cls = 'btn primary') => (demo ? `<button class="${cls}" type="button" data-demo>Try the demo</button>` : '');
+  const createLink = (cls = 'btn') => (open ? `<a class="${cls}" href="#register">Create a company</a>` : '');
+  const step = (state, ic, title, text) => `<li class="l-step ${state}">${icon(ic, 'node')}<div><h3>${title}</h3><p>${text}</p></div></li>`;
+  $('#main').innerHTML = `<div class="landing">
+    <header class="l-wrap l-top"><a class="brand" href="#welcome">Deskhand</a><span class="grow"></span><a class="btn quiet" href="#login">Sign in</a>${demoBtn('btn primary small')}</header>
+
+    <section class="l-wrap l-hero" aria-labelledby="l-h1">
+      <div class="l-hero-text">
+        <h1 id="l-h1">Say what you need. Deskhand gets it decided.</h1>
+        <p class="l-lede">Employees ask for leave, tool seats, equipment or IT help in one sentence. Deskhand finds the right approver by your rules, keeps everyone posted in Slack and email, and records every step.</p>
+        <div class="l-cta">${demoBtn()}${createLink()}<a class="btn quiet" href="#login">Sign in</a></div>
+        ${demo ? '<p class="meta l-note">The demo uses made-up people and never sends a message.</p>' : ''}
+      </div>
+      <div class="l-hero-art">${journeyArt()}</div>
+    </section>
+
+    <section class="l-sec" aria-labelledby="l-how"><div class="l-wrap">
+      <h2 id="l-how">From one sentence to done</h2>
+      <ol class="l-steps">
+        ${step('done', 's-done', 'Ask', 'Type what you need in plain words. Deskhand shows you what it understood and who has it.')}
+        ${step('done', 's-done', 'Route', 'Your own rules pick the approver: the manager, a role such as IT admin, or a named person. Never the message text, never the AI.')}
+        ${step('current', 's-pending', 'Decide', 'The approver is told in Slack and by email and decides with Approve or Reject. A rejection always carries a reason.')}
+        ${step('upcoming', 's-upcoming', 'Record', 'Leave comes off the balance once, the requester is told, and the step is written to a log that nobody can edit.')}
+      </ol>
+    </div></section>
+
+    <section class="l-sec" aria-labelledby="l-safe"><div class="l-wrap l-split">
+      <div><h2 id="l-safe">Built so nothing gets lost</h2><p class="l-lede">Requests are about people's time and money. Deskhand is designed to fail loudly, never quietly.</p></div>
+      <dl class="l-facts">
+        <div><dt>A request is handled once.</dt><dd>Duplicate messages and Deskhand's own replies are recognised and ignored.</dd></div>
+        <div><dt>A failure waits, it does not vanish.</dt><dd>Actions retry with backoff, then are parked for an admin to replay. A leave is never applied twice.</dd></div>
+        <div><dt>Slow approvers get chased.</dt><dd>Reminders and escalations go out on time to the next person in line.</dd></div>
+        <div><dt>Every change is on the record.</dt><dd>Who did what and why, written once and never edited.</dd></div>
+        <div><dt>The AI only suggests.</dt><dd>It proposes the type of request and a summary. Your rules choose the approver and Deskhand's code chooses the action.</dd></div>
+      </dl>
+    </div></section>
+
+    <section class="l-sec" aria-labelledby="l-rehearse"><div class="l-wrap l-split">
+      <div><h2 id="l-rehearse">Rehearse before it reaches anyone</h2><p class="l-lede">A new company starts in rehearsal. Every Slack message and email goes only to one admin, labelled with the person it was meant for. When it looks right, go live.</p></div>
+      <figure class="l-msg" aria-label="Example of a rehearsal message">
+        <figcaption class="meta">Slack, direct message to the rehearsing admin</figcaption>
+        <p><b>[Rehearsal] To Rahul Mehta: Approval needed: Leave #12</b></p>
+        <p>New request #12 from Priya Sharma. Casual leave, 1 working day. Balance: casual 12 to 11.</p>
+        <p class="meta">Rahul gets nothing until you go live.</p>
+      </figure>
+    </div></section>
+
+    <section class="l-sec" aria-labelledby="l-where"><div class="l-wrap">
+      <h2 id="l-where">Works where your people already are</h2>
+      <div class="l-cols">
+        <div><h3>Slack</h3><p>Each person gets a direct message, found from their company email. Approvers can decide right in Slack once you switch the buttons on.</p></div>
+        <div><h3>Gmail</h3><p>Email comes from the requester's or the approver's own mailbox when they connect it, and from the company mailbox otherwise.</p></div>
+        <div><h3>Deskhand</h3><p>Everyone gets an inbox of what they were told, with unread counts and filters. Admins also get a log of every message and how it ended.</p></div>
+      </div>
+    </div></section>
+
+    <section class="l-close" aria-labelledby="l-end"><div class="l-wrap">
+      <h2 id="l-end">See it handle a request.</h2>
+      <p class="l-lede">${demo ? 'The demo takes a minute and sends nothing.' : 'Sign in to start.'}</p>
+      <div class="l-cta">${demoBtn()}${createLink()}<a class="btn quiet" href="#login">Sign in</a></div>
+    </div></section>
+    <footer class="l-wrap l-foot meta"><span>Deskhand</span><a href="#login">Sign in</a></footer>
+  </div>`;
+  $$('[data-demo]').forEach(b => b.onclick = async () => { b.disabled = true; try { await enter(await api('/demo/enter', null)); } catch (e) { toast(e.message, 6000); b.disabled = false; } });
 }
 
 async function pageLogin() {
@@ -879,6 +965,7 @@ async function personLink(id) {
 const ADMIN_LINKS = [['setup', 'Setup', 'Roles, request types, policies and a routing test.'], ['people', 'People', 'Invite people, set managers and access.'],
   ['integrations', 'Integrations', 'Connect Slack and Gmail; switch viaSocket AI.'], ['health', 'Health', 'Is everything working, and can it be proven?'],
   ['deliverylog', 'Delivery log', 'Every message Deskhand sent: to whom, by Slack or email, and how it ended.'], ['audit', 'Audit', 'Every change, who made it, when.']];
+const HUBICON = { setup: 'i-setup', people: 'i-people', integrations: 'i-plug', health: 'i-health', deliverylog: 'i-log', audit: 'i-audit' };  // presentation only: the icon beside each admin card
 const amount = n => `₹${Number(n).toLocaleString('en-IN')}`;
 const afterSetup = async () => { try { await loadCore(); } catch { /* the page shows its own errors */ } };  // people, roles and rules feed the journeys and the status bar
 
@@ -888,7 +975,7 @@ async function pageAdmin() {
     try { const c = await api('/setup/checklist'); if (!c.dismissed && c.done < c.total) note = `<div class="state" style="margin-bottom:16px"><b>Company setup: ${c.done} of ${c.total} steps done</b><a href="#setup">Continue setting up</a></div>`; } catch { /* the hub still works without it */ }
   }
   $('#main').innerHTML = `<div class="page-head"><h1>Admin</h1><span class="meta">${esc(ME.org.name)}</span></div>${note}
-    <div class="hub">${ADMIN_LINKS.map(([k, t, d]) => `<a href="#${k}"><b>${esc(t)}</b><span class="meta">${esc(d)}</span></a>`).join('')}</div>`;
+    <div class="hub">${ADMIN_LINKS.map(([k, t, d]) => `<a href="#${k}"><span class="hubicon">${icon(HUBICON[k] || 'i-admin')}</span><b>${esc(t)}</b><span class="meta">${esc(d)}</span></a>`).join('')}</div>`;
 }
 
 async function pageIntegrations() {
@@ -1456,14 +1543,14 @@ async function pageDeliveryLog(arrive) {
 }
 
 /* ---------- render loop ---------- */
-const TITLES = { login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', leave: 'My leave', mailbox: 'Your mailbox', admin: 'Admin', setup: 'Setup', people: 'People', integrations: 'Integrations', health: 'Health', audit: 'Audit', notifications: 'Notifications', deliverylog: 'Delivery log' };
+const TITLES = { welcome: 'Say what you need', login: 'Sign in', register: 'Create a company', join: 'Join', ask: 'Ask', mine: 'My requests', needs: 'Needs you', leave: 'My leave', mailbox: 'Your mailbox', admin: 'Admin', setup: 'Setup', people: 'People', integrations: 'Integrations', health: 'Health', audit: 'Audit', notifications: 'Notifications', deliverylog: 'Delivery log' };
 const LOADING = { notifications: 'your notifications', deliverylog: 'the delivery log', leave: 'your leave', health: 'health', people: 'people', setup: 'setup', integrations: 'integrations', admin: 'the admin page', audit: 'the audit record' };
 async function render(userNav) {
   const my = ++seq;
   const route = parseHash();
   const authPage = AUTH_PAGES.includes(route.page);
-  if (!ME && !authPage) { NEXT = location.hash; return go('#login'); }
-  if (ME && (route.page === 'login' || route.page === 'register')) return go('#ask');
+  if (!ME && !authPage) { NEXT = location.hash; return go(location.hash.replace('#', '') ? '#login' : '#welcome'); }  // a bare address shows the overview; a link to a page still goes to sign-in and comes back
+  if (ME && (route.page === 'login' || route.page === 'register' || route.page === 'welcome')) return go('#ask');
   if (ME && isDemo() && ['leave', 'mailbox'].includes(route.page)) return go('#ask');  // the demo's figures are prepared, not a record
   if (ME && ADMIN_PAGES.includes(route.page) && !isAdmin()) return go('#ask');
   const changedPage = route.page !== current.page || route.id !== current.id;
@@ -1475,7 +1562,7 @@ async function render(userNav) {
   const m = $('#main');
   try {
     if (authPage) {
-      if (route.page === 'login') await pageLogin(); else if (route.page === 'register') await pageRegister(); else await pageJoin(route.id);
+      if (route.page === 'welcome') await pageWelcome(); else if (route.page === 'login') await pageLogin(); else if (route.page === 'register') await pageRegister(); else await pageJoin(route.id);
       if (userNav) m.focus({ preventScroll: true });
       return;
     }
