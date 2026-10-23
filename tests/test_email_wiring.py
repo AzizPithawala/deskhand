@@ -1,8 +1,10 @@
 """The email layout wired into delivery: what is stored with an email row, what is sent, old rows, and what the API never returns. Fake transport; no network."""
 import json
 import re
+from datetime import date
 
 from app import emailkit
+from app.engine import Engine
 from tests import apiutil
 from tests.test_delivery import env, live, rows  # noqa: F401 - fixtures are used by name
 from tests.test_delivery_people import mail_calls
@@ -106,3 +108,15 @@ def test_the_outbox_api_never_returns_the_layout_data_but_the_database_has_it(tm
     stored = [emailkit.loads(r["email_json"]) for r in owner.engine.s.all("SELECT email_json FROM outbox WHERE channel='email' AND kind='approval_request'")]
     assert stored and stored[0]["requester"] == "Ann Employee" and stored[0]["why"] == "You are Ann's manager."
     assert re.search(r"1 working day of casual leave", emailkit.template_sentence(stored[0]))
+
+
+def test_a_date_note_such_as_includes_today_is_only_in_the_first_approval_email_not_a_later_reminder(live, monkeypatch):
+    e, d, fake = live
+    monkeypatch.setattr(Engine, "today", lambda self: date(2026, 10, 23))  # a Friday, so "Friday and Monday" includes today
+    e.ingest("chat", "e02", "I need Friday and Monday off, family function.")
+    first = emailkit.loads(rows(e, kind="approval_request", channel="email")[0]["email_json"])
+    assert ["Note", "Includes today"] in first["details"]
+    e.advance_hours(9)
+    assert e.sweep()["reminders"] == 1
+    reminder = emailkit.loads(rows(e, kind="reminder", channel="email")[0]["email_json"])
+    assert reminder["details"] and ["Dates", "Fri 23 Oct, Mon 26 Oct"] in reminder["details"] and not [r for r in reminder["details"] if r[0] == "Note"]

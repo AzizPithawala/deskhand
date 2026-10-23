@@ -139,10 +139,11 @@ def summary_sentence(p, ai_sentence=None):
 
 
 # ---------------- the HTML ----------------
-def _row(label, value, warn=False):
+def _row(label, value, warn=False, first=False):
     bg, ink = (WARN_BG, WARN_INK) if warn else (CARD, INK)
-    return (f'<tr><td style="padding:8px 12px;border-top:1px solid {RULE};font-size:13px;color:{MUTED};width:34%;vertical-align:top;background:{bg}">{esc(label)}</td>'
-            f'<td style="padding:8px 12px;border-top:1px solid {RULE};font-size:14px;color:{ink};vertical-align:top;background:{bg};word-break:break-word">{esc(value)}</td></tr>')
+    top = "" if first else f"border-top:1px solid {RULE};"
+    return (f'<tr><td style="padding:8px 12px;{top}font-size:13px;color:{MUTED};width:34%;vertical-align:top;background:{bg}">{esc(label)}</td>'
+            f'<td style="padding:8px 12px;{top}font-size:14px;color:{ink};vertical-align:top;background:{bg};word-break:break-word">{esc(value)}</td></tr>')
 
 
 def render(p, *, link, rehearsal_for=None, ai_sentence=None):
@@ -152,7 +153,7 @@ def render(p, *, link, rehearsal_for=None, ai_sentence=None):
     kind, rich = p["kind"], p["kind"] in RICH
     sentence, by_ai = summary_sentence(p, ai_sentence if kind == "approval_request" else None)
     out = [f'<div style="background:{PAGE};padding:24px 12px;font-family:Arial,Helvetica,sans-serif;color:{INK};line-height:1.5">'
-           f'<table role="presentation" align="center" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;border-collapse:collapse">']
+           f'<table role="presentation" align="center" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;border-collapse:separate;border-spacing:0">']
     if rehearsal_for:
         out.append(f'<tr><td style="padding:10px 14px;margin-bottom:12px;background:{WARN_BG};color:{WARN_INK};font-size:13px;border:1px solid {RULE}">'
                    f'Rehearsal: this is the message {esc(rehearsal_for)} would get once Deskhand is live.</td></tr><tr><td style="height:12px;line-height:12px">&nbsp;</td></tr>')
@@ -169,8 +170,8 @@ def render(p, *, link, rehearsal_for=None, ai_sentence=None):
                    f'<div style="font-size:12px;color:{MUTED};margin-bottom:2px">Summary by Deskhand{" (drafted by AI from the request details)" if by_ai else ""}</div>'
                    f'<div style="font-size:15px">{esc(sentence)}</div></div>')
         if p.get("details"):
-            out.append(f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid {RULE};border-radius:8px;margin:0 0 20px">'
-                       + "".join(_row(a, b, warn=a in ("Check", "Note")) for a, b in p["details"]) + "</table>")
+            out.append(f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0;border:1px solid {RULE};border-radius:8px;margin:0 0 20px">'
+                       + "".join(_row(a, b, warn=a in ("Check", "Note"), first=i == 0) for i, (a, b) in enumerate(p["details"])) + "</table>")
     else:
         out.append(f'<p style="margin:0 0 20px;font-size:15px">{esc(p.get("line") or sentence)}</p>')
     label = BUTTON.get(kind, SHORT_OPEN)

@@ -176,9 +176,10 @@ class Engine:
             d, chk = req["details"], req["details"].get("leave_check") or {}
             facts = {"type_code": req["type_code"], "dates_text": dict(req["details_view"]).get("Dates"), "leave_type": d.get("leave_type"), "days": chk.get("days"), "balance": chk.get("balance"),
                      "after": chk.get("after"), "reason": d.get("reason"), "item": d.get("item"), "tool": d.get("tool"), "project": d.get("project"), "resource": d.get("resource"), "issue": d.get("issue")}
+        # the date notes ("includes today") are true when the request is made, so only the first approval email carries them, not a later reminder
         return emailkit.build_payload(kind, rid=rid, to_first=(self.name(to_id) or "there").split()[0], type_name=t["name"] if t else "", type_code=req["type_code"] if req else "",
                                       summary=req["summary"] if req else "", requester=emp["name"] if emp else "", department=(emp or {}).get("department") or "",
-                                      details_rows=req["details_view"] if (req and rich) else [], facts=facts, message=req["message"] if (req and rich) else "",
+                                      details_rows=[r for r in req["details_view"] if kind == "approval_request" or r[0] != "Note"] if (req and rich) else [], facts=facts, message=req["message"] if (req and rich) else "",
                                       line="" if kind == "approval_request" else body, why=self._why_you(kind, req, t, emp, to_id))
 
     def _why_you(self, kind, req, t, emp, to_id):
