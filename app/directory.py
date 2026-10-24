@@ -108,14 +108,15 @@ class Directory:
     def type(self, code):
         return self.types.get(code)
 
-    def custom_matchers(self):
-        """This company's own types that can be recognised right now: [{code, name, regex}]. Switched off and archived types never match."""
+    def custom_matchers(self, switched_off_too=False):
+        """This company's own types that can be recognised: [{code, name, description, enabled, regex}]. Archived types never match. A type that is switched off matches only when asked
+        (so the person gets the polite "not handled here" answer, as for the built-ins); the AI is only ever offered the ones that are on."""
         out = []
         for code, words in self.triggers.items():
             t = self.types.get(code)
-            rx = trigger_pattern(words) if t and t.get("enabled") and not t.get("archived") else None
+            rx = trigger_pattern(words) if t and not t.get("archived") and (switched_off_too or t.get("enabled")) else None
             if rx:
-                out.append({"code": code, "name": t["name"], "description": t.get("description", ""), "regex": rx})
+                out.append({"code": code, "name": t["name"], "description": t.get("description", ""), "enabled": bool(t.get("enabled")), "regex": rx})
         return out
 
     def resolve_sender(self, sender):

@@ -48,7 +48,7 @@ class OrgRegistry:
         engine.live = Delivery(engine, tenant=org["id"])  # live-only delivery, per company
         if org["is_demo"]:
             steps.seed_demo(store, directory)  # one read-only example step, so the demo can show the feature without ever calling an app
-        ai = vsai.ViaSocketClassifier(engine.s, org["id"])
+        ai = vsai.ViaSocketClassifier(engine.s, org["id"], directory=directory)
         engine.ai_classify, engine.ai_enabled = ai, ai.enabled
         engine.vs_ai = ai
         engine.ai_write = vsai.ViaSocketWriter(engine.s, org["id"])  # the same switch and budget as the classifier
