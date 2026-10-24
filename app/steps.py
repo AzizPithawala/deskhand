@@ -572,6 +572,8 @@ def validate_steps(d, code, steps, catalog):
     ok, why = eligible(d, code)
     if not ok:
         raise StepError(why, 404 if why.startswith("No such") else 422)
+    if steps and d.types[code].get("custom") and not d.types[code].get("requires_approval", True):
+        raise StepError("Switch approval on for this request type before adding steps: an app action must not run with no one deciding.")
     if not isinstance(steps, list) or len(steps) > MAX_STEPS:
         raise StepError(f"A request type can have up to {MAX_STEPS} steps.")
     allowed, rows = tokens_for(code), []

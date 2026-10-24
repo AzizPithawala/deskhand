@@ -7,7 +7,8 @@ from tests import apiutil
 from tests.apiutil import Browser
 
 SETUP_GETS = ("/api/setup/roles", "/api/setup/types", "/api/setup/policies", "/api/setup/checklist")
-SETUP_POSTS = (("/api/setup/roles", {"name": "Facilities"}), ("/api/setup/roles/it_admin", {"holder_id": None}), ("/api/setup/roles/it_admin/delete", {}),
+SETUP_POSTS = (("/api/setup/types", {"name": "Business travel", "description": "Flights and hotels for work trips", "trigger_words": ["business trip"], "approver_rule": "manager"}),
+               ("/api/setup/types/x_business_travel/remove", {}), ("/api/setup/roles", {"name": "Facilities"}), ("/api/setup/roles/it_admin", {"holder_id": None}), ("/api/setup/roles/it_admin/delete", {}),
                ("/api/setup/types/equipment", {"reminder_hours": 3}), ("/api/setup/types/equipment/reset", {}), ("/api/setup/types/equipment/reviewed", {}),
                ("/api/setup/policies", {"title": "Dress code", "text": "Smart casual."}), ("/api/setup/policies/dress_code/delete", {}),
                ("/api/setup/simulate", {"person_id": "x", "type_code": "leave"}), ("/api/setup/checklist/dismiss", {}))

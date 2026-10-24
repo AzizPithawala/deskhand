@@ -5,11 +5,18 @@ import json
 import re
 import time
 
-from .directory import EDITABLE_FIELDS, Directory, normalize_type
+from . import classifier
+from .directory import CUSTOM_DEFAULTS, CUSTOM_PREFIX, EDITABLE_FIELDS, Directory, normalize_type
 
 DEFAULT_ROLES = [("it_admin", "IT admin"), ("office_admin", "Office admin"), ("hr_lead", "HR lead"), ("finance_lead", "Finance lead")]
 RESERVED_ROLES = {"admin", "manager", "person", "system", "role"}
 MAX_CUSTOM_ROLES, MAX_POLICIES, MAX_EXTRA = 20, 30, 2
+MAX_CUSTOM_TYPES, MAX_TRIGGERS = 20, 10
+TYPE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 &'.,()/-]{1,39}$")
+DESCRIPTION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,'()-]{4,139}$")  # it is shown to the AI as data, so only plain characters
+TRIGGER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 '\u2019-]{2,39}$")
+CUSTOM_FIELDS = ["name", "description", "trigger_words", "enabled", "requires_approval", "approver_rule", "backup_rule", "extra_approvers", "reminder_hours", "escalate_hours", "fulfiller_rule"]
+CUSTOM_ONLY = ("name", "description", "trigger_words")
 HOURS_MAX, AMOUNT_MAX = 720, 10_000_000
 RULE = re.compile(r"^(manager|role:[a-z][a-z0-9_]{1,30}|person:[A-Za-z0-9_-]{1,64})$")
 WORD = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,29}$")
@@ -111,6 +118,8 @@ def delete_role(store, d, code):
 
 # ---------------- request types ----------------
 def fields_for(t):
+    if t.get("custom"):
+        return list(CUSTOM_FIELDS)
     code = t["code"]
     if code == "payroll":
         return ["redirect"]
@@ -143,7 +152,15 @@ def describe_rule(d, rule):
 
 
 def type_view(d, store, code):
-    t, base = d.types[code], _template()[code]
+    t = d.types[code]
+    if t.get("custom"):  # a type this company made: nothing in the template, so no "default" to compare with
+        return {"code": code, "name": t["name"], "notes": t.get("description", ""), "description": t.get("description", ""), "trigger_words": d.triggers.get(code, []), "custom": True,
+                "archived": bool(t.get("archived")), "currency": None, "blocked": False, "fulfilment_kind": "manual_task", "fields": fields_for(t), "changed": [], "reviewed_at": 1.0,
+                "condition_fields": [], "details_known": [],
+                **{k: t.get(k) for k in ("enabled", "requires_approval", "approver_rule", "backup_rule", "extra_approvers", "auto_allow_up_to", "reminder_hours", "escalate_hours", "fulfiller_rule",
+                                         "details_needed", "redirect")},
+                "labels": {r: describe_rule(d, r) for r in sorted(set(_rules_of(t)))}}
+    base = _template()[code]
     row = store.one("SELECT reviewed_at FROM type_rules WHERE code=?", (code,)) or {}
     fields = fields_for(t)
     changed = [k for k in fields if t.get(k) != base.get(k)]
@@ -156,7 +173,7 @@ def type_view(d, store, code):
 
 
 def list_types(d, store):
-    return [type_view(d, store, c) for c in d.types]
+    return [type_view(d, store, c) for c in d.types if not d.types[c].get("archived")]
 
 
 def _rule(d, v, what, none_ok=False):
@@ -194,6 +211,8 @@ def _extras(d, code, v):
         if when in (None, {}):
             out.append({"rule": rule, "when": None})
         elif isinstance(when, dict) and set(when) == {"cost_above"}:
+            if d.types[code].get("custom"):
+                raise SetupError(f"Extra approver {i}: this type does not record a cost, so it cannot have a cost limit.")
             out.append({"rule": rule, "when": {"cost_above": _number(when["cost_above"], f"Extra approver {i}: the cost limit")}})
         elif isinstance(when, dict) and set(when) == {"detail_contains"} and isinstance(when["detail_contains"], dict):
             dc = when["detail_contains"]
@@ -216,9 +235,15 @@ def validate_patch(d, code, patch):
     allowed = fields_for(t)
     out = {}
     for k, v in patch.items():
-        if k not in EDITABLE_FIELDS or k not in allowed:
+        if (k not in EDITABLE_FIELDS and k not in CUSTOM_ONLY) or k not in allowed:
             raise SetupError(f"{k.replace('_', ' ')} cannot be changed for {t['name']}.")
-        if k in ("enabled", "requires_approval"):
+        if k == "name":
+            out[k] = _type_name(d, v, own=code)
+        elif k == "description":
+            out[k] = _description(v)
+        elif k == "trigger_words":
+            out[k] = _triggers(d, v, own=code)
+        elif k in ("enabled", "requires_approval"):
             if not isinstance(v, bool):
                 raise SetupError(f"{k.replace('_', ' ')} must be on or off.")
             out[k] = v
@@ -263,6 +288,8 @@ def _save(store, code, overrides, actor, reviewed):
 def patch_type(store, d, code, patch, actor):
     """Apply a validated edit. Returns {field: [old, new]} for the audit record."""
     clean = validate_patch(d, code, patch)
+    if d.types[code].get("custom"):
+        return _patch_custom(store, d, code, clean, actor)
     base, t = _template()[code], d.types[code]
     over, changes = _overrides(store, code), {}
     for k, v in clean.items():
@@ -277,6 +304,8 @@ def patch_type(store, d, code, patch, actor):
 
 
 def reset_type(store, d, code, actor):
+    if d.types.get(code, {}).get("custom"):
+        raise SetupError("A type you created has no default to go back to. Edit it, or remove it.")
     if code not in _template():
         raise SetupError("No such request type.", 404)
     changes = {k: [d.types[code].get(k), _template()[code].get(k)] for k in fields_for(d.types[code]) if d.types[code].get(k) != _template()[code].get(k)}
@@ -285,9 +314,116 @@ def reset_type(store, d, code, actor):
 
 
 def mark_reviewed(store, code, actor):
+    if store.one("SELECT 1 x FROM custom_types WHERE code=?", (code,)):
+        return  # a type you made was reviewed when you made it
     if code not in _template():
         raise SetupError("No such request type.", 404)
     _save(store, code, _overrides(store, code), actor, reviewed=True)
+
+
+# ---------------- request types a company creates ----------------
+def _builtin_names():
+    return {t["name"].strip().lower() for t in _template().values()} | {c.replace("_", " ") for c in _template()}
+
+
+def _type_name(d, v, own=None):
+    name = _clean(v, 2, 40, "The type name")
+    if not TYPE_NAME.match(name):
+        raise SetupError("The type name can use letters, numbers, spaces and - & ' . , ( ) / only.")
+    low = name.lower()
+    if low in _builtin_names():
+        raise SetupError(f"{name} is already one of Deskhand's built-in request types.")
+    if any(t["name"].strip().lower() == low and c != own for c, t in d.types.items()):
+        raise SetupError("There is already a request type with that name.")
+    return name
+
+
+def _description(v):
+    text = _clean(v, 5, 140, "The description")
+    if not DESCRIPTION.match(text):
+        raise SetupError("The description can use letters, numbers, spaces and . , ' - ( ) only, on one line.")
+    return text
+
+
+def _triggers(d, v, own=None):
+    """Words or short phrases that make a message this type. Matched literally, whole words, any case. A word that already means a built-in type, or belongs to another type here, is refused."""
+    if not isinstance(v, list) or not 1 <= len(v) <= MAX_TRIGGERS:
+        raise SetupError(f"Give 1 to {MAX_TRIGGERS} trigger words or short phrases.")
+    out = []
+    for w in v:
+        w = re.sub(r"\s+", " ", str(w)).strip().lower()
+        if not TRIGGER.match(w):
+            raise SetupError(f"\"{w[:40]}\" is not a usable trigger: use 3 to 40 letters, numbers, spaces or dashes.")
+        if w in out:
+            continue
+        if classifier.detect_types(w):
+            raise SetupError(f"\"{w}\" already means a built-in request type (or a payroll matter), so it cannot be a trigger.")
+        other = next((c for c, words in d.triggers.items() if c != own and w in words), None)
+        if other:
+            raise SetupError(f"\"{w}\" is already a trigger of {d.types[other]['name']}.")
+        out.append(w)
+    return out
+
+
+def create_type(store, d, name, description, triggers, approver_rule, actor):
+    """A new request type for this company only. It starts needing approval, with a reminder after 8 hours and an escalation after 24, and an admin completes it."""
+    name = _type_name(d, name)
+    if store.one("SELECT COUNT(*) c FROM custom_types")["c"] >= MAX_CUSTOM_TYPES:
+        raise SetupError(f"A company can have up to {MAX_CUSTOM_TYPES} request types of its own.")
+    slug = _slug(name)[:26].strip("_")
+    if len(slug) < 2:
+        raise SetupError("The type name needs some letters or numbers.")
+    code = CUSTOM_PREFIX + slug
+    if code in d.types or store.one("SELECT 1 x FROM custom_types WHERE code=?", (code,)):
+        raise SetupError("There is already a request type with that name.")
+    description, words = _description(description), _triggers(d, triggers)
+    rules = {**CUSTOM_DEFAULTS, "approver_rule": _rule(d, approver_rule, "The approver")}
+    now = time.time()
+    store.q("INSERT INTO custom_types(code,name,description,triggers_json,rules_json,archived,created_at,created_by,updated_at,updated_by) VALUES(?,?,?,?,?,0,?,?,?,?)",
+            (code, name, description, json.dumps(words), json.dumps(rules, sort_keys=True), now, actor, now, actor))
+    return code
+
+
+def _has_steps(store, code, only_enabled=False):
+    return bool(store.one("SELECT 1 x FROM type_steps WHERE type_code=?" + (" AND enabled=1" if only_enabled else ""), (code,)))
+
+
+def _patch_custom(store, d, code, clean, actor):
+    row = store.one("SELECT * FROM custom_types WHERE code=?", (code,))
+    t, rules, changes = d.types[code], json.loads(row["rules_json"] or "{}"), {}
+    name, description, words = row["name"], row["description"], json.loads(row["triggers_json"] or "[]")
+    for k, v in clean.items():
+        old = {"name": name, "description": description, "trigger_words": words}.get(k, t.get(k))
+        if old != v:
+            changes[k] = [old, v]
+        if k == "name":
+            name = v
+        elif k == "description":
+            description = v
+        elif k == "trigger_words":
+            words = v
+        else:
+            rules[k] = v
+    if clean.get("requires_approval") is False and _has_steps(store, code, only_enabled=True):
+        raise SetupError("This type has steps in other apps that are switched on. Keep approval on, or switch the steps off first: an app action must not run with no one deciding.")
+    store.q("UPDATE custom_types SET name=?, description=?, triggers_json=?, rules_json=?, updated_at=?, updated_by=? WHERE code=?",
+            (name, description, json.dumps(words), json.dumps(rules, sort_keys=True), time.time(), actor, code))
+    return changes
+
+
+def remove_type(store, d, code, actor):
+    """Remove a type this company made. One nobody has used is deleted; one with requests or steps is archived (it stops matching and is hidden, old requests keep working)."""
+    if code not in d.types:
+        raise SetupError("No such request type.", 404)
+    if not d.types[code].get("custom"):
+        raise SetupError("Built-in request types cannot be removed. You can switch them off.")
+    used = store.one("SELECT 1 x FROM requests WHERE type_code=? LIMIT 1", (code,)) or _has_steps(store, code)
+    if used:
+        store.q("UPDATE custom_types SET archived=1, updated_at=?, updated_by=? WHERE code=?", (time.time(), actor, code))
+        return {"removed": "archived"}
+    store.q("DELETE FROM custom_types WHERE code=?", (code,))
+    store.q("DELETE FROM type_rules WHERE code=?", (code,))
+    return {"removed": "deleted"}
 
 
 # ---------------- policies ----------------
@@ -379,7 +515,7 @@ def checklist(d, store, people, connected, requests, mode="rehearsal", rehearsal
     roles = [r for r in list_roles(d) if r["builtin"]]
     assigned = [r for r in roles if r["holder_state"] == "ok"]
     reviewed = {r["code"] for r in store.all("SELECT code FROM type_rules WHERE reviewed_at IS NOT NULL")}
-    codes = list(d.types)
+    codes = [c for c in d.types if not d.types[c].get("custom")]  # the built-ins; a type the company made was reviewed when it was made
     steps = [
         {"key": "people", "title": "Invite your people", "done": len(joined) >= 2, "detail": f"{len(joined)} {'person' if len(joined) == 1 else 'people'} so far", "link": "#people"},
         {"key": "managers", "title": "Set who reports to whom", "done": bool(others) and len(managed) == len(others), "detail": f"{len(managed)} of {len(others)} have a manager", "link": "#people"},
