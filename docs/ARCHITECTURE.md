@@ -87,6 +87,12 @@ Invalid transitions raise an error and are never applied silently.
 - Secrets: never store, log or forward passwords, keys or tokens. Redact obvious secret patterns in logs.
 - Sensitive: payroll, salary, health and legal topics are blocked (sensitive=true) and redirected to HR.
 
+## Request types a company creates (Phase 5B)
+`custom_types` (per company; code `x_<slug>`, name, description, trigger words, the editable routing fields, archived) is loaded by `Directory.for_company` after the built-in types; the trigger words live in `Directory.triggers`,
+not in the type dicts that `/api/state` sends to every member. `classify_rules(text, today, custom)` adds a request for each created type whose literal whole-word trigger matches (never when the message is payroll), with a
+summary made from the type's name. The AI classifier builds its answer schema and a data block of the company's types for every call (`viasocket_ai.schema_for`, `company_types_block`); the shared `SCHEMA`, `classifier.TYPES`
+and the setup template are never changed, so companies cannot see each other's types. `Engine._classify` checks the answer against the company's allowed codes; `ingest` refuses a code the company does not have.
+
 ## After-approval steps (Phase 5)
 An admin chooses, per request type, up to three steps in other apps from viaSocket's public catalog (`app/viasocket_catalog.py`: apps, actions, each action's form definition). `app/steps.py` validates a step: a closed list
 of request fields (never the raw message), the form definition's own rules (visibility conditions are evaluated by a small safe evaluator, never `eval`), bounds, neutralising of request text. The tables are

@@ -79,6 +79,10 @@ interfaces; the simulator stays the default until the spike (M1.5) proves each c
     A call is repeated by itself only when it provably did not leave (a rate limit); a timeout or any doubt parks the request as "outcome unknown" for an admin to decide, with a reason. HTTP 200 is success only if the answer
     looks like the one the test learned. A destructive action (delete, remove, clear, ...) runs only when a person presses Run. Every attempt is audited, an app's answer is stored reduced, and no script id or connection id ever
     leaves the server.
+22. Request types an admin creates are validated, bounded setup data of that company only. Their code lives in its own namespace (`x_`), a name or trigger word may not be a built-in's, a trigger may not
+    already mean a built-in type or a payroll matter, trigger words are matched literally (never as a pattern), and a message with payroll words is never typed by a trigger. The AI may only choose among the
+    company's own types (rebuilt for every call from that company's directory and checked again afterwards: a code from another company, an archived or switched-off type, or an unknown code is dropped); what it
+    writes never becomes a created type's summary. A created type needs approval whenever it has steps, is archived rather than deleted while requests or steps use it, and never appears to another company.
 
 ## Commands
 `make dev` (run the app on :8000), `make test` (pytest), `make reset` (delete the demo database).

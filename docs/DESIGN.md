@@ -39,6 +39,10 @@ Spend boldness in one place: everything else is flat and quiet (hairlines only w
 
 **Not in emails.** Mail clients block remote images and strip data: SVG, and an image link would sit behind the shared password, so emails keep the text header "Deskhand".
 
+## Request types a company creates
+They are cards like the built-ins with two extra lines (what it is, and the words that make a message this kind of request) and a Remove button; the Add button sits under the cards. They draw on the neutral slate line
+(the same fallback as help requests), because the colour of a line says the kind of work and a company can have more kinds than there are line colours; the type's name is always written beside it.
+
 ## Steps in other apps
 A step after approval is one more station on the request's route, between the approvals and "Done by". It is drawn before the approval as a planned station (dashed ahead, as everything not yet travelled), then takes
 the status shapes like any station, with its own words: Queued, Running, Waits for Run, Done, Not sent (rehearsal or demo), Check the app (outcome unknown), Needs attention, Skipped. The people who may act get a
