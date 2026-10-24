@@ -180,3 +180,14 @@ def test_the_steps_screens_only_draw_what_the_server_says_and_never_run_text_fro
             line = block[block.rfind("\n", 0, m.start()) + 1:block.find("\n", m.end())]
             assert "esc(" in m.group(1) or "dialogPrompt(" in line or "label: s.destructive" in line, m.group(0)  # whatever an app or the catalog calls things is escaped before it is drawn as HTML
 
+
+def test_the_screens_for_types_an_admin_creates_escape_what_was_typed_and_use_the_real_routes():
+    block = JS[JS.index("function typeLines"):JS.index("function ruleSelect")] + JS[JS.index("function approverOptions"):JS.index("function ruleSelect")]
+    assert 'id="addtype"' in JS and "data-deltype" in JS and "async function removeType" in JS and "function addType" in JS
+    edit = JS[JS.index("function editType"):JS.index("/* policies */")]
+    for text in (block, edit):
+        for m in re.finditer(r"\$\{([^}]*\b(?:t\.description|t\.name|trigger_words)[^}]*)\}", text):
+            line = text[text.rfind("\n", 0, m.start()) + 1:text.find("\n", m.end())]
+            assert "esc(" in m.group(1) or "dialogPrompt(" in line or ".textContent =" in line or "wordsOf(" in line, m.group(0)  # a name, description or word an admin typed is escaped before it is drawn as HTML
+    assert "'/setup/types', {" in JS and "/remove`" in JS  # the two new routes the page calls
+

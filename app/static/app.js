@@ -1111,11 +1111,12 @@ function typeLines(t) {
   if (t.blocked) return [`Never processed. The employee is told to contact ${L(t.redirect)} privately.`];
   if (t.code === 'policy_question') return ['Answered by Deskhand from your policies. No approval.'];
   const out = [];
+  if (t.custom) out.push(esc(t.description), `Recognised when a message says: ${(t.trigger_words || []).map(w => `<b>${esc(w)}</b>`).join(', ')}.`);
   if (!t.requires_approval) out.push('No approval needed.');
   else out.push(`Approved by ${L(t.approver_rule || 'manager')}${t.auto_allow_up_to != null ? ` (only above ${esc(amount(t.auto_allow_up_to))}; below that it needs no approval)` : ''}.`);
   if (!t.requires_approval && t.auto_allow_up_to != null) out[0] = `No approval up to ${esc(amount(t.auto_allow_up_to))}; above that ${L(t.approver_rule || 'manager')} approves.`;
   (t.extra_approvers || []).forEach(x => out.push(`Also ${L(x.rule)} when ${esc(whenText(t, x.when))}.`));
-  out.push(`Reminder after ${t.reminder_hours} h. If nobody acts, it escalates after ${t.escalate_hours} h to ${L(t.backup_rule)}${t.backup_rule ? '' : ' (an admin)'}.`);
+  out.push(`Reminder after ${t.reminder_hours} h. If nobody acts, it escalates after ${t.escalate_hours} h to ${t.backup_rule ? L(t.backup_rule) : 'an admin'}.`);
   out.push(t.fulfilment_kind === 'auto_action' ? `Applied by Deskhand in ${isHRDemo() ? 'the HR system' : 'your leave record'}.` : `Task done by ${L(t.fulfiller_rule)}.`);
   return out;
 }
@@ -1124,15 +1125,37 @@ const typeWarnings = t => Object.values(t.labels || {}).filter(l => !l.ok && l.r
 async function setupTypes() {
   TD = await api('/setup/types');
   const ro = TD.demo;
-  $('#sbody').innerHTML = `<p class="meta" style="max-width:640px">The kinds of request Deskhand understands. For each you choose who approves, what happens if nobody acts, and who does the task. Changes apply to new requests; one already with an approver keeps its approvers.</p>
+  $('#sbody').innerHTML = `<p class="meta" style="max-width:640px">The kinds of request Deskhand understands. For each you choose who approves, what happens if nobody acts, and who does the task. Changes apply to new requests; one already with an approver keeps its approvers. You can also add kinds of your own.</p>
     ${TD.types.map(t => `<div class="typecard" data-type="${esc(t.code)}"><div class="h"><b>${esc(t.name)}</b>
       <span class="chip ${t.enabled ? 'approved' : 'neutral'}">${icon(t.enabled ? 's-done' : 's-cancelled')}${t.enabled ? 'On' : 'Off'}</span>
-      ${t.changed.length ? '<span class="meta">edited</span>' : ''}${ro ? '' : `<span class="meta">${t.reviewed_at ? 'reviewed' : 'not reviewed yet'}</span>`}</div>
+      ${t.custom ? '<span class="meta">added by your company</span>' : (t.changed.length ? '<span class="meta">edited</span>' : '')}${ro || t.custom ? '' : `<span class="meta">${t.reviewed_at ? 'reviewed' : 'not reviewed yet'}</span>`}</div>
       ${typeLines(t).map(l => `<p class="sub">${l}</p>`).join('')}${t.steps && t.steps.eligible && (!ro || t.steps.count) ? `<p class="sub">After approval: ${t.steps.count ? `${plural(t.steps.count, 'step')} in other apps (${t.steps.on} switched on)${ro ? ', shown as an example: the demo never calls other apps' : ''}.` : 'nothing in other apps.'}</p>` : ''}${typeWarnings(t).map(w => `<div class="warnrow">${icon('s-alert')}<span>${esc(w)}</span></div>`).join('')}
-      ${ro ? '' : `<div class="btns"><button class="btn small" data-edit="${esc(t.code)}">Edit</button>${t.steps && t.steps.eligible ? `<button class="btn small" data-steps="${esc(t.code)}">After approval</button>` : ''}${t.reviewed_at ? '' : `<button class="btn small" data-ok="${esc(t.code)}">Looks right</button>`}</div>`}</div>`).join('')}`;
+      ${ro ? '' : `<div class="btns"><button class="btn small" data-edit="${esc(t.code)}">Edit</button>${t.steps && t.steps.eligible ? `<button class="btn small" data-steps="${esc(t.code)}">After approval</button>` : ''}${t.reviewed_at ? '' : `<button class="btn small" data-ok="${esc(t.code)}">Looks right</button>`}${t.custom ? `<button class="btn small danger" data-deltype="${esc(t.code)}">Remove</button>` : ''}</div>`}</div>`).join('')}
+    ${ro ? '' : '<p style="margin-top:16px"><button class="btn" id="addtype">Add a request type</button></p>'}`;
   $$('[data-edit]').forEach(b => b.onclick = () => editType(b.dataset.edit));
   $$('[data-steps]').forEach(b => b.onclick = () => openSteps(b.dataset.steps));
+  $$('[data-deltype]').forEach(b => b.onclick = () => removeType(b.dataset.deltype));
+  const add = $('#addtype'); if (add) add.onclick = addType;
   $$('[data-ok]').forEach(b => b.onclick = async () => { try { await api(`/setup/types/${encodeURIComponent(b.dataset.ok)}/reviewed`, {}); toast('Marked as reviewed.'); } catch (e) { toast(e.message, 6000); } setupTypes(); });
+}
+
+function approverOptions() {
+  return [['manager', "The requester's manager"], ['role:admin', 'An admin (the owner or any admin)'], ...TD.role_options.map(r => [`role:${r.code}`, r.name + (r.holder_name ? ` (${r.holder_name})` : ' (no holder)')]), ...TD.people.map(p => [`person:${p.id}`, p.name])];
+}
+const wordsOf = text => String(text || '').split(',').map(w => w.trim()).filter(Boolean);
+function addType() {
+  formDialog({ title: 'Add a request type', intro: 'A kind of request of your own, such as business travel or a parking pass. It works like the built-in kinds: it goes to the approver you choose, with a reminder and an escalation, and a person completes it.', confirm: 'Add request type',
+    fields: [{ key: 'name', label: 'Name', hint: 'For example Business travel.' },
+      { key: 'description', label: 'What it is, in one line', hint: 'It tells Deskhand (and the AI, if you switch it on) what this kind of request is. Plain letters and numbers only.' },
+      { key: 'words', label: 'Words that make a message this kind of request', hint: 'Separate them with commas, for example business trip, work travel. Words that already mean a built-in kind, such as laptop or leave, cannot be used.' },
+      { key: 'approver', label: 'Who approves', options: approverOptions(), value: 'manager' }],
+    submit: async v => { await api('/setup/types', { name: v.name, description: v.description, trigger_words: wordsOf(v.words), approver_rule: v.approver }); toast('Added. New messages with those words become this kind of request.'); await afterSetup(); setupTypes(); } });
+}
+async function removeType(code) {
+  const t = TD.types.find(x => x.code === code);
+  if (!await dialogPrompt({ title: `Remove ${t.name}?`, body: 'Requests already made keep working. If nobody has used this kind of request it is deleted; if someone has, it is hidden and stops matching new messages.', confirm: 'Remove', danger: true })) return;
+  try { const r = await api(`/setup/types/${encodeURIComponent(code)}/remove`, {}); toast(r.removed === 'archived' ? 'Removed. It stays in the record because requests used it.' : 'Removed.'); await afterSetup(); } catch (e) { toast(e.message, 6000); }
+  setupTypes();
 }
 
 function ruleSelect(id, value, o, t) {
@@ -1148,7 +1171,7 @@ function extraRow(i, x, t) {
   const kind = !x ? 'always' : (!w ? 'always' : (w.cost_above != null ? 'cost' : 'words'));
   const fields = t.condition_fields || [];
   return `<div class="extrarow" data-extra="${i}"><div><label class="l" for="t_x${i}_rule">Extra approver ${i + 1}</label>${ruleSelect(`t_x${i}_rule`, x ? x.rule : '', { none: 'None', manager: true }, t)}</div>
-    <div data-when><label class="l" for="t_x${i}_kind">When</label><select class="field" id="t_x${i}_kind"><option value="always" ${kind === 'always' ? 'selected' : ''}>Always</option><option value="cost" ${kind === 'cost' ? 'selected' : ''}>The cost is above</option>${fields.length ? `<option value="words" ${kind === 'words' ? 'selected' : ''}>A detail mentions</option>` : ''}</select></div>
+    <div data-when><label class="l" for="t_x${i}_kind">When</label><select class="field" id="t_x${i}_kind"><option value="always" ${kind === 'always' ? 'selected' : ''}>Always</option>${t.custom ? '' : `<option value="cost" ${kind === 'cost' ? 'selected' : ''}>The cost is above</option>`}${fields.length ? `<option value="words" ${kind === 'words' ? 'selected' : ''}>A detail mentions</option>` : ''}</select></div>
     <div data-show="cost"><label class="l" for="t_x${i}_cost">Amount${t.currency ? ' (' + esc(t.currency) + ')' : ''}</label><input class="field" id="t_x${i}_cost" type="number" min="0" step="any" value="${w && w.cost_above != null ? esc(w.cost_above) : ''}"></div>
     <div data-show="words"><label class="l" for="t_x${i}_field">Detail</label><select class="field" id="t_x${i}_field">${fields.map(f => `<option value="${esc(f)}" ${dc.field === f ? 'selected' : ''}>${esc(nice(f))}</option>`).join('')}</select>
       <label class="l" for="t_x${i}_words" style="margin-top:8px">Words, separated by commas</label><input class="field" id="t_x${i}_words" value="${esc((dc.words || []).join(', '))}" autocomplete="off"></div></div>`;
@@ -1157,6 +1180,9 @@ function editType(code) {
   const t = TD.types.find(x => x.code === code), f = new Set(t.fields), d = $('#tdlg');
   const num = (id, label, v, extra = '') => `<div><label class="l" for="${id}">${esc(label)}</label><input class="field" id="${id}" type="number" step="any" min="0" value="${v ?? ''}" ${extra}></div>`;
   const blocks = [];
+  if (f.has('name')) blocks.push(`<div class="tdgroup"><label class="l" for="t_name">Name</label><input class="field" id="t_name" value="${esc(t.name)}" maxlength="40" autocomplete="off">
+    <label class="l" for="t_description" style="margin-top:8px">What it is, in one line</label><input class="field" id="t_description" value="${esc(t.description)}" maxlength="140" autocomplete="off">
+    <label class="l" for="t_trigger_words" style="margin-top:8px">Words that make a message this kind of request, separated by commas</label><input class="field" id="t_trigger_words" value="${esc((t.trigger_words || []).join(', '))}" autocomplete="off"></div>`);
   if (f.has('enabled') && code !== 'payroll') blocks.push(`<label class="switch"><input type="checkbox" id="t_enabled" ${t.enabled ? 'checked' : ''}> This request type is switched on</label>`);
   if (f.has('requires_approval')) blocks.push(`<label class="switch"><input type="checkbox" id="t_requires_approval" ${t.requires_approval ? 'checked' : ''}> It needs approval before it is carried out</label>`);
   if (f.has('approver_rule')) blocks.push(`<div class="tdgroup"><label class="l" for="t_approver_rule">Who approves</label>${ruleSelect('t_approver_rule', t.approver_rule || 'manager', { manager: true }, t)}</div>`);
@@ -1184,6 +1210,7 @@ function editType(code) {
   $('#tdform').onsubmit = async e => {
     e.preventDefault();
     const patch = {}, num2 = id => ($(id).value === '' ? null : Number($(id).value)), set = (k, v) => { if (JSON.stringify(v) !== JSON.stringify(t[k])) patch[k] = v; };
+    if (f.has('name')) { set('name', $('#t_name').value.trim()); set('description', $('#t_description').value.trim()); set('trigger_words', wordsOf($('#t_trigger_words').value)); }
     if (f.has('enabled') && code !== 'payroll') set('enabled', $('#t_enabled').checked);
     if (f.has('requires_approval')) set('requires_approval', $('#t_requires_approval').checked);
     if (f.has('approver_rule') && $('#t_approver_rule').value !== (t.approver_rule || 'manager')) patch.approver_rule = $('#t_approver_rule').value;
