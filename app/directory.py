@@ -11,6 +11,26 @@ EDITABLE_FIELDS = ("enabled", "requires_approval", "approver_rule", "backup_rule
                    "reminder_hours", "escalate_hours", "fulfiller_rule", "details_needed", "redirect")
 
 
+# What a request type an admin creates starts with. Only these routing fields are editable (setup.CUSTOM_FIELDS); the rest is fixed here.
+CUSTOM_DEFAULTS = {"enabled": True, "requires_approval": True, "approver_rule": "manager", "backup_rule": None, "extra_approvers": [], "reminder_hours": 8, "escalate_hours": 24,
+                   "fulfiller_rule": "role:admin"}
+CUSTOM_PREFIX = "x_"
+
+
+def custom_type(row):
+    """A company-defined type as a directory type. It is recognised by its trigger words (never carried here: /api/state sends these dicts to every member) and holds no detail fields."""
+    t = {**CUSTOM_DEFAULTS, **json.loads(row["rules_json"] or "{}")}
+    archived = bool(row["archived"])
+    return {**t, "code": row["code"], "name": row["name"], "description": row["description"], "notes": row["description"], "fulfilment_kind": "manual_task", "details_needed": [],
+            "sensitive": False, "currency": None, "custom": True, "archived": archived, "enabled": bool(t.get("enabled", True)) and not archived}
+
+
+def trigger_pattern(words):
+    """One literal, whole-word, any-case matcher for a type's trigger words. No pattern language: what the admin typed is what is matched."""
+    alts = [re.escape(w.strip().lower()).replace("\\ ", r"\s+").replace("'", "['\u2019]") for w in words if w.strip()]
+    return re.compile(r"\b(?:" + "|".join(alts) + r")\b", re.I) if alts else None
+
+
 def normalize_type(t):
     """Canonical form of a request type. Adds the fields the UI reads (cost_threshold, second_approver_rule) from the first cost-based extra approver."""
     t = dict(t)
@@ -31,9 +51,10 @@ def _number(v):
 
 
 class Directory:
-    def __init__(self, employees, types, policies=None, balances=None, roles=None):
+    def __init__(self, employees, types, policies=None, balances=None, roles=None, triggers=None):
         self.employees = {e["id"]: e for e in employees}
         self.types = {t["code"]: normalize_type(t) for t in types}
+        self.triggers = triggers or {}  # custom type code -> its trigger words (for the matcher and for admins; not part of the type dicts everyone can read)
         self.policies = policies or {}
         self.balances = balances or {}
         self.roles = roles or {}  # business roles of a company: code -> {"name", "holder_id", "builtin"}. Empty for the demo, which uses its JSON roles.
@@ -65,23 +86,38 @@ class Directory:
         for t in cls.template(data_dir)["request_types"]:
             patch = {k: v for k, v in (edits.get(t["code"]) or {}).items() if k in EDITABLE_FIELDS}
             types.append({**t, **patch})
+        triggers = {}
+        for row in store.all("SELECT * FROM custom_types ORDER BY created_at, code"):  # after the built-ins; an archived type stays so old requests keep working
+            types.append(custom_type(row))
+            triggers[row["code"]] = json.loads(row["triggers_json"] or "[]")
         policies = {p["key"]: p["text"] for p in store.all("SELECT key, text FROM policies ORDER BY key")}
         held = {}
         for code, r in roles.items():
             if r["holder_id"]:
                 held.setdefault(r["holder_id"], []).append(code)
-        return cls([cls.employee_from_user(u, held.get(u["id"], ())) for u in users], types, policies, {}, roles)
+        return cls([cls.employee_from_user(u, held.get(u["id"], ())) for u in users], types, policies, {}, roles, triggers)
 
     def refresh(self, users, store):
         """Reload people, roles, type rules and policies in place: the engine keeps this object."""
         fresh = Directory.for_company(users, store)
-        self.employees, self.types, self.policies, self.roles = fresh.employees, fresh.types, fresh.policies, fresh.roles
+        self.employees, self.types, self.policies, self.roles, self.triggers = fresh.employees, fresh.types, fresh.policies, fresh.roles, fresh.triggers
 
     def emp(self, eid):
         return self.employees.get(eid)
 
     def type(self, code):
         return self.types.get(code)
+
+    def custom_matchers(self, switched_off_too=False):
+        """This company's own types that can be recognised: [{code, name, description, enabled, regex}]. Archived types never match. A type that is switched off matches only when asked
+        (so the person gets the polite "not handled here" answer, as for the built-ins); the AI is only ever offered the ones that are on."""
+        out = []
+        for code, words in self.triggers.items():
+            t = self.types.get(code)
+            rx = trigger_pattern(words) if t and not t.get("archived") and (switched_off_too or t.get("enabled")) else None
+            if rx:
+                out.append({"code": code, "name": t["name"], "description": t.get("description", ""), "enabled": bool(t.get("enabled")), "regex": rx})
+        return out
 
     def resolve_sender(self, sender):
         s = (sender or "").strip().lower()

@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS roles(
   code TEXT PRIMARY KEY, name TEXT NOT NULL, holder_id TEXT, builtin INTEGER DEFAULT 0, created_at REAL);
 CREATE TABLE IF NOT EXISTS type_rules(
   code TEXT PRIMARY KEY, rules_json TEXT NOT NULL DEFAULT '{}', reviewed_at REAL, updated_at REAL, updated_by TEXT);
+CREATE TABLE IF NOT EXISTS custom_types(
+  code TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', triggers_json TEXT NOT NULL DEFAULT '[]', rules_json TEXT NOT NULL DEFAULT '{}',
+  archived INTEGER NOT NULL DEFAULT 0, created_at REAL, created_by TEXT, updated_at REAL, updated_by TEXT);
 CREATE TABLE IF NOT EXISTS policies(
   key TEXT PRIMARY KEY, title TEXT NOT NULL, text TEXT NOT NULL, updated_at REAL);
 CREATE TABLE IF NOT EXISTS notification_prefs(
@@ -72,7 +75,7 @@ CREATE TRIGGER IF NOT EXISTS leave_ledger_no_delete BEFORE DELETE ON leave_ledge
 OUTBOX_MIGRATION = {"delivery_status": "TEXT DEFAULT 'skipped'", "delivery_attempts": "INTEGER DEFAULT 0", "delivery_error": "TEXT",
                     "delivery_next_at": "REAL", "delivered_at": "REAL", "delivery_note": "TEXT", "from_person": "TEXT", "read_at": "REAL", "sent_to": "TEXT", "email_json": "TEXT"}
 MIGRATIONS = {"outbox": OUTBOX_MIGRATION, "requests": {"steps_json": "TEXT"}}  # columns added after a table first shipped: older company databases get them when they open
-# "connections", "delivery_ledger", "roles", "type_rules", "policies", "leave_types", "leave_ledger", "slack_decisions" and "notification_prefs" are deliberately NOT here: a demo reset must not disconnect apps, reset the daily live-delivery cap or undo company setup
+# "connections", "delivery_ledger", "roles", "type_rules", "custom_types", "policies", "leave_types", "leave_ledger", "slack_decisions" and "notification_prefs" are deliberately NOT here: a demo reset must not disconnect apps, reset the daily live-delivery cap or undo company setup
 TABLES = ["settings", "inbound_events", "requests", "events", "action_runs", "outbox", "step_runs"]
 
 

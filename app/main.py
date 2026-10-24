@@ -579,8 +579,19 @@ class PolicyIn(BaseModel):
     text: str
 
 
+class TypeNew(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    description: str
+    trigger_words: list[str]
+    approver_rule: str
+
+
 class TypePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")  # an unknown or non-editable field is refused, never ignored
+    name: str | None = None
+    description: str | None = None
+    trigger_words: list[str] | None = None
     enabled: bool | None = None
     requires_approval: bool | None = None
     approver_rule: str | None = None
@@ -653,6 +664,20 @@ def setup_types(ctx: Ctx = Depends(admin)):
         c = counts.get(t["code"]) or {"n": 0, "on_": 0}
         t["steps"] = {"eligible": sp.eligible(ctx.engine.d, t["code"])[0], "count": c["n"], "on": int(c["on_"] or 0)}
     return {"types": types, **_pickable(ctx), "demo": ctx.is_demo}
+
+
+@app.post("/api/setup/types")
+def setup_type_add(b: TypeNew, ctx: Ctx = Depends(real_admin)):
+    code = _setup(st.create_type, ctx.engine.s, ctx.engine.d, b.name, b.description, b.trigger_words, b.approver_rule, ctx.uid)
+    _setup_changed(ctx, "types", code, {"added": True, "name": b.name.strip()})
+    return st.type_view(ctx.engine.d, ctx.engine.s, code)
+
+
+@app.post("/api/setup/types/{code}/remove")
+def setup_type_remove(code: str, ctx: Ctx = Depends(real_admin)):
+    result = _setup(st.remove_type, ctx.engine.s, ctx.engine.d, code, ctx.uid)
+    _setup_changed(ctx, "types", code, result)
+    return {"types": st.list_types(ctx.engine.d, ctx.engine.s), **result}
 
 
 @app.post("/api/setup/types/{code}")

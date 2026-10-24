@@ -128,5 +128,6 @@ Per phase: `make test` green including tenant-isolation tests, a browser demo of
   Run; rehearsal and the demo never call the app; a timeout parks the request for an admin ("outcome unknown"). The real calls of spike 5A.0 (`docs/VIASOCKET_FACTS.md`) proved the catalog, connecting Google Sheets, the pickers and a real add-row through the adapter. New rule 21; rule 3 amended.
   A full run of the finished screens and runner on the real Google Sheets passed on 2026-10-23 (test run and a live approval). Not yet done: any other app; apps that sign in with an API key; a step's answer feeding the next step.
   "My connections" (a person's own mailbox) was already built in Phase 3 as Your mailbox.
-- **Next:** 5C AI-drafted setup (AI only drafts, an admin reviews and saves, the same validator runs), 5B new request types and ordered approval-and-action steps, 5D "My connections" (a person's own mailbox), 5E people and
-  managers from an HR tool (needs a test account).
+- **Phase 5B (request types an admin creates; branch `phase-5b-custom-types`):** built. Name, description, trigger words and an approver; recognised by the literal trigger words, and by the AI only among the company's own types; a summary, not extracted
+  details; archived rather than deleted when in use; steps need approval. Rule 22. Interleaved approvals and actions were not built (decided).
+- **Next:** 5C AI-drafted setup (AI only drafts, an admin reviews and saves, the same validator runs), 5E people and managers from an HR tool (needs a test account). 5D "My connections" already exists as Your mailbox.

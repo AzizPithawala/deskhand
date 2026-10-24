@@ -306,7 +306,11 @@ class Engine:
         for it in cls["intents"]:
             code = it["type_code"]
             tdef = self.d.type(code)
-            if tdef and not tdef.get("enabled", True):
+            if not tdef:  # never create a request of a type this company does not have
+                self.audit(None, emp["id"], "unknown_type_refused", {"type": str(code)[:40]})
+                notes.append("I could not match that to a kind of request handled here. Could you tell me a bit more about what you need?")
+                continue
+            if not tdef.get("enabled", True):
                 self.audit(None, emp["id"], "disabled_type_refused", {"type": code})
                 admin = self.d.role_holder("admin")
                 notes.append(f"{tdef['name']} requests are not handled through Deskhand here. Please contact {admin['name'] if admin else 'an admin'} directly.")
@@ -350,6 +354,8 @@ class Engine:
             self.s.set_setting("ai_budget_warned", "1")
 
     def _classify(self, text):
+        custom = self.d.custom_matchers(switched_off_too=True)  # this company's own types the rules may recognise (a switched-off one gets the polite refusal below)
+        allowed = set(classifier.TYPES) | {m["code"] for m in custom if m["enabled"]}  # what the AI may choose from
         calls, budget = self.ai_usage()
         use_ai = bool(self.api_key) or bool(self.ai_classify and (self.ai_enabled() if self.ai_enabled else True))
         if use_ai and classifier.PAYROLL.search(text):  # salary and payroll text is never sent to any AI: the rules classify it and the HR redirect follows
@@ -365,8 +371,11 @@ class Engine:
                 fn = self.ai_classify or (lambda t, today: classifier.classify_anthropic(t, self.api_key, self.model, today))
                 res = fn(text, self.today())
                 self.ai_counted(calls + 1, budget)
-                res = classifier.validate_ai_result(res) if not isinstance(res, dict) or "provider" not in res else res
-                rules = classifier.classify_rules(text, self.today())
+                res = classifier.validate_ai_result(res, allowed) if not isinstance(res, dict) or "provider" not in res else res
+                res["intents"] = [it for it in res["intents"] if it["type_code"] in allowed]  # whatever came back, only this company's types
+                if not res["intents"] and not res["needs_clarification"]:
+                    res["needs_clarification"], res["clarifying_question"] = True, "Could you tell me a bit more about what you need?"
+                rules = classifier.classify_rules(text, self.today(), custom)
                 res["suspected_injection"] = res["suspected_injection"] or rules["suspected_injection"]
                 res["injection_flags"] = rules["injection_flags"]
                 for it in res["intents"]:
@@ -375,7 +384,7 @@ class Engine:
                 return res
             except Exception as ex:  # any AI failure falls back to the rules, never an error for the user
                 self.audit(None, "system", "ai_failed_fallback", {"error": str(ex)[:120]})
-        return classifier.classify_rules(text, self.today())
+        return classifier.classify_rules(text, self.today(), custom)
 
     def _create(self, emp, channel, eid, text, code, summary, details, cls, status):
         now = self.now()

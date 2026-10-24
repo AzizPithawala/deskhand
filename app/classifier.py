@@ -186,6 +186,12 @@ SUMMARY = {
 }
 
 
+def custom_summary(name):
+    """The one-line summary of a request of a company-defined type: its name, as a request."""
+    n = re.sub(r"\s+", " ", str(name or "")).strip()[:60]
+    return n if n.lower().endswith("request") else f"{n} request"
+
+
 def _summary(code, details):
     """One line a person can scan. Falls back to the generic label."""
     if code == "leave" and details.get("dates"):
@@ -201,10 +207,11 @@ def _summary(code, details):
         return "IT help: " + details["issue"][:60]
     if code == "access" and details.get("resource"):
         return "Access to " + details["resource"][:60]
-    return SUMMARY[code]
+    return SUMMARY.get(code) or "Request"
 
 
-def classify_rules(text, today=None):
+def classify_rules(text, today=None, custom=None):
+    """`custom` is this company's own types that can match right now (Directory.custom_matchers()): [{code, name, regex}]. Without it nothing changes for the built-in types."""
     today = today or date.today()
     clean, _ = redact(text)
     flags = injection_flags(clean)
@@ -213,9 +220,14 @@ def classify_rules(text, today=None):
     for c in types:
         det = _details(c, clean, today)
         intents.append({"type_code": c, "summary": _summary(c, det), "details": det})
+    if "payroll" not in types:  # salary and payroll words are never overridden by a company's own trigger words
+        for m in custom or []:
+            if m["regex"].search(clean) and m["code"] not in types:
+                intents.append({"type_code": m["code"], "summary": custom_summary(m["name"]), "details": {}})
     question = None
     if not intents:
-        question = "Could you tell me a bit more about what you need (for example leave, a software seat, equipment, or IT help)?"
+        items = ["leave", "a software seat", "equipment", "IT help"] + [m["name"].lower() for m in [m for m in (custom or []) if m.get("enabled", True)][:3]]
+        question = f"Could you tell me a bit more about what you need (for example {', '.join(items[:-1])}, or {items[-1]})?"
     return {"intents": intents, "needs_clarification": not intents, "clarifying_question": question,
             "confidence": 0.9 if len(intents) == 1 else (0.75 if intents else 0.2), "suspected_injection": bool(flags),
             "injection_flags": flags, "provider": "rules"}
@@ -231,17 +243,18 @@ SYSTEM_PROMPT = (
 )
 
 
-def validate_ai_result(raw):
-    """Strict validation. Unknown keys (for example approver or permissions) are dropped. Raises ValueError if unusable."""
+def validate_ai_result(raw, allowed=None):
+    """Strict validation. Unknown keys (for example approver or permissions) are dropped. Raises ValueError if unusable. `allowed` is the type codes this company may get (the built-ins plus its own)."""
+    allowed = set(allowed) if allowed else set(TYPES)
     if isinstance(raw, str):
         raw = json.loads(raw)
     if not isinstance(raw, dict) or not isinstance(raw.get("intents"), list):
         raise ValueError("bad shape")
     intents = []
     for it in raw["intents"]:
-        if not isinstance(it, dict) or it.get("type_code") not in TYPES:
+        if not isinstance(it, dict) or it.get("type_code") not in allowed:
             continue
-        intents.append({"type_code": it["type_code"], "summary": str(it.get("summary") or SUMMARY[it["type_code"]])[:200],
+        intents.append({"type_code": it["type_code"], "summary": str(it.get("summary") or SUMMARY.get(it["type_code"]) or "Request")[:200],
                         "details": it["details"] if isinstance(it.get("details"), dict) else {}})
     need = bool(raw.get("needs_clarification")) or not intents
     try:
